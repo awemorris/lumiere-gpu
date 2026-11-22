@@ -248,7 +248,7 @@ extern "C" {
 #define GHCI_FAULT_KIND_LOCKED_REG      7u /* Write to locked register while running */
 /* Kind 8 is reserved in GHCI 1.0 */
 #define GHCI_FAULT_KIND_PAGE_FAULT      9u /* Unmapped virtual page address (FAULT_INFO[20]: 0=Read, 1=Write) */
-#define GHCI_FAULT_KIND_PERM_FAULT      10u /* VM permission violation, LDS OOB, or unaligned access (FAULT_INFO[20]: 0=Read, 1=Write) */
+#define GHCI_FAULT_KIND_PERM_FAULT      10u /* VM permission violation or unaligned global access (FAULT_INFO[20]: 0=Read, 1=Write) */
 
 /* Source Units [7:4] */
 #define GHCI_UNIT_CP             0u

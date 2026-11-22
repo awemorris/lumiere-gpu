@@ -519,7 +519,7 @@ $$\text{irq} = \text{CTRL.IRQ\_GLOBAL} \ \&\& \ ((\text{IRQ\_STATUS} \ \& \ \tex
   - `7`: `GHCI_FAULT_KIND_LOCKED_REG` (Attempt to write protected MMIO register while running)
   - `8`: Reserved in GHCI 1.0
   - `9`: `GHCI_FAULT_KIND_PAGE_FAULT` (Unmapped GPU virtual address in shader or DMA; read vs write indicated by `FAULT_INFO[20]` / `SYNDROME[0]`)
-  - `10`: `GHCI_FAULT_KIND_PERM_FAULT` (Virtual memory page protection violation [READ/WRITE/EXEC flags], LDS out-of-bounds, or unaligned access; read vs write indicated by `FAULT_INFO[20]` / `SYNDROME[0]`)
+  - `10`: `GHCI_FAULT_KIND_PERM_FAULT` (Virtual memory page protection violation [READ/WRITE/EXEC flags], or unaligned global memory access; read vs write indicated by `FAULT_INFO[20]` / `SYNDROME[0]`)
 - `[7:4] UNIT`:
   - `0`: `GHCI_UNIT_CP` (Command Processor)
   - `1`: `GHCI_UNIT_VF` (Vertex Fetcher)
@@ -2154,7 +2154,7 @@ When `BOOT_CAPS[2]` (`CAP_BOOT_PROT`) and `DEVICE_CAPS[24]` (`CAP_PROT`) are `1`
   Instruction subsets are governed by host-visible registers:
   - Subgroup operations (`shfl`, `vote`, `ballot`): governed by `EXT_CAP_FEATURE[29]` (`CAP_SUBGROUP`).
   - Packed FP16 arithmetic (custom-2): governed by `DEVICE_CAPS[6]` / `EXT_CAP_FEATURE[28]` (`CAP_FP16`).
-  - Advanced texture addressing (.3 forms for 2D array, 3D, cube, depth compare `.c`, and gather `texg`): standard GSI1 ISA operations supported by the Texture Unit on all configurations (`GHCI_CAP_GSI1 == 1`). `DEVICE_CAPS[25]` (`CAP_TEX_FFILT`) specifically indicates whether floating-point linear filtering is supported in hardware; when `CAP_TEX_FFILT == 0`, UNORM8 bilinear filtering is performed, while FP16/FP32 textures fall back to nearest point-sampling, without restricting 2D array, 3D, or cube sampling.
+  - Texture view / `.3` coordinate forms follow `EXT_CAP_FMT0` (`CMD_QUERY_CAPS` Word 4): 1D/2D array `.3` sampling requires `EXT_CAP_FMT0[19]` (`CAP_TEX_ARRAY == 1`), 3D `.3` sampling requires `EXT_CAP_FMT0[20]` (`CAP_TEX_3D == 1`), and cubemap `.3` sampling requires `EXT_CAP_FMT0[21]` (`CAP_TEX_CUBE == 1`). Depth compare `.c` and gather `texg` are standard TU operations (`NUM_SU > 0`, `GHCI_CAP_GSI1 == 1`). `DEVICE_CAPS[25]` (`CAP_TEX_FFILT`) indicates whether floating-point linear filtering is supported in hardware; when `CAP_TEX_FFILT == 0`, UNORM8 bilinear filtering is performed (if `CAP_TU_BILINEAR == 1`), while FP16/FP32 textures fall back to nearest point-sampling.
   - Multisampling queries (`texsz.s`): governed by `DEVICE_CAPS[31]` (`CAP_MSAA`).
   - ROP format packing: governed by `DEVICE_CAPS[26]` (`CAP_ROP_PACK`).
   - Systolic-array instructions (`rq`, `sactl`): reserved in GHCI 1.0 (executing them raises `GHCI_FAULT_KIND_INVALID_OP`). Special operands 126..127 are reserved (read 0).
@@ -2264,6 +2264,7 @@ word1 (bits 63:32):
   and packed ones; on packed operands, to both halves).
 - `movi rd, imm32` is `lui` with imm[11:0] in word1.
 - `nop` is custom-3 funct3 111, sub 0.
+- **Instruction Fetch Read-Ahead Bound**: Instruction fetch does not speculatively fetch past `end` or statically unreachable branch targets, but an I$ line fill may read up to the end of any 64-byte aligned block that contains at least one executed instruction (and never reads any 64-byte aligned block containing no executed instruction). Compilers must ensure at least 64 bytes of padding (e.g., `nop`s) after the end of a shader program, and kernel drivers in flat physical mode must validate `[rounddown(start, 64), roundup(end, 64))` (i.e. `code_bytes + 64`).
 
 ### 12.5 Opcode map
 
@@ -2309,10 +2310,10 @@ The warp stops, and the GPU reports an ISA execution fault:
 - **Fault Classification**:
   - `kind 1` (`GHCI_FAULT_KIND_INVALID_OP`): Reported for illegal opcodes, undefined funct3/funct7/sub, unsupported sub-operations, invalid rounding modes, `.a64` forms when `VA_BITS <= 32`, or out-of-range / non-GPR register pairs `r_k` (`k > min(NREGS - 2, 61)`).
   - `kind 9` (`GHCI_FAULT_KIND_PAGE_FAULT`): Reported when an executed active lane's global memory load/store/atomic references an unmapped virtual address or a `.a64` effective address has non-zero upper bits `EA[63:VA_BITS] != 0` (`FAULT_INFO[20]`: `0` Read, `1` Write).
-  - `kind 10` (`GHCI_FAULT_KIND_PERM_FAULT`): Reported for VM page permission violations (`GHCI_VM_FLAG_READ`/`WRITE`/`EXEC`), LDS out-of-bounds access, or unaligned global memory access (`lw`/`sw`/`sw.x`/`atom.<op>` with `EA[1:0] != 0`, or `ld.64`/`sd.64` with `EA[2:0] != 0`, including `.a64` forms; `FAULT_INFO[20]`: `0` Read, `1` Write).
+  - `kind 10` (`GHCI_FAULT_KIND_PERM_FAULT`): Reported for VM page permission violations (`GHCI_VM_FLAG_READ`/`WRITE`/`EXEC`) or unaligned global memory access (`lw`/`sw`/`sw.x`/`atom.<op>` with `EA[1:0] != 0`, or `ld.64`/`sd.64` with `EA[2:0] != 0`, including `.a64` forms; `FAULT_INFO[20]`: `0` Read, `1` Write). (Shared memory LDS byte addresses wrap at the LDS size without faulting, §12.8.)
 - **Diagnostic Information**:
-  - `FAULT_ADDR` latches the faulting instruction Program Counter (PC) relative to the stage instruction base (`vs_code_va`, `fs_code_va`, `cs_code_va`, `ms_code_va`).
-  - `FAULT_INFO[7:4]` (`UNIT = 2`, Shader Unit) and `FAULT_INFO[19:16]` identifies the active shader stage (0: VS, 1: FS, 2: CS, 3: MS).
+  - `FAULT_ADDR` latches the faulting instruction Program Counter (PC) relative to the stage instruction base (`vs_code_va`, `fs_code_va`, `cs_code_va`, `ms_code_va`, or `tcs_code_va` / `tes_code_va` / `gs_code_va` when `has_ext_stages == 1`).
+  - `FAULT_INFO[7:4]` (`UNIT = 2`, Shader Unit) and `FAULT_INFO[19:16]` identifies the active shader stage (`0`: VS, `1`: FS, `2`: CS, `3`: MS, `4`: TS, `5`: TCS, `6`: TES, `7`: GS, matching §3.5).
   - `FAULT_INFO[15:8]` identifies the client `session_id`.
 
 - an undefined opcode, funct3, funct7 or sub; word0[1:0] other than 11;
@@ -2328,7 +2329,7 @@ The warp stops, and the GPU reports an ISA execution fault:
 
 Undefined encodings, in detail: OP funct7 0100000 with funct3 001, 010 or
 011; funct7 0000101 with funct3 0xx; an R-form custom instruction whose
-funct7 differs from its defined value (`texl`: 0, 1, 2, 3, 6, 10, 14; `texb`: 0, 1, 0010000; `texf`: 0); in `texl`/`texg`/`texb`/`texqlod`/`texf` (`custom-1, f3 = 0..2`), an undefined `funct7`, `w1[31] != 0`, a non-zero `samp_field` on `texf`, or when `w1[21] == 1` (Register mode) `tex_field >= min(NREGS, 63)` or (for sampler-using forms) `samp_field >= min(NREGS, 63)` raises `GHCI_FAULT_KIND_INVALID_OP`; in `texsz` (`custom-1, f3 = 3`), `w0[31:25] != 0`, `w0[24:20]` other than `0, 1, 2` or (with `DEVICE_CAPS[31]` `CAP_MSAA`) `3`, `w1[31:22] != 0` (including `w1[30]`), `w1[16] != 0`, `w1[9:6] != 0`, or when `w1[21] == 1` `tex_field >= min(NREGS, 63)` raises `INVALID_OP` (Register-mode index operands accept GPRs `r0..r62` only, never constant bank `c` or special operands); a `.c` form (`texl.c`, `texb.c`, `texg.c`) with rs1+2 past r62, NREGS, c31 or the specials;
+funct7 differs from its defined value (`texl`: `0, 1, 2, 3, 6, 10, 14` and `.3` forms `32, 33, 34, 35, 38, 42, 46` [i.e. `funct7[5]` `.3` with `funct7[4:0]` in `{0, 1, 2, 3, 6, 10, 14}` and `funct7[6] == 0`]; `texb`: `0, 1, 16 (0010000)` and `.3` forms `32, 33, 48` [i.e. `funct7[5]` `.3` with `funct7[4:0]` in `{0, 1, 16}` and `funct7[6] == 0`]; `texf`: `0` and `.3` form `32` [i.e. `funct7[5]` `.3` with `funct7[4:0] == 0` and `funct7[6] == 0`]); in `texl`/`texg`/`texb`/`texqlod`/`texf` (`custom-1, f3 = 0..2`), an undefined `funct7`, `w1[31] != 0`, a non-zero `samp_field` on `texf`, or when `w1[21] == 1` (Register mode) `tex_field >= min(NREGS, 63)` or (for sampler-using forms) `samp_field >= min(NREGS, 63)` raises `GHCI_FAULT_KIND_INVALID_OP`; in `texsz` (`custom-1, f3 = 3`), `w0[31:25] != 0`, `w0[24:20]` other than `0, 1, 2` or (with `DEVICE_CAPS[31]` `CAP_MSAA`) `3`, `w1[31:22] != 0` (including `w1[30]`), `w1[16] != 0`, `w1[9:6] != 0`, or when `w1[21] == 1` `tex_field >= min(NREGS, 63)` raises `INVALID_OP` (Register-mode index operands accept GPRs `r0..r62` only, never constant bank `c` or special operands); a `.c` form (`texl.c`, `texb.c`, `texg.c`) with rs1+2 past r62, NREGS, c31 or the specials;
 `LOAD` `sub` other than `0` or `2` on `lw`/`ld.64` (or `!= 0` on `lwc`); `STORE` `sub` other than `0, 1, 2` on `sw` (or `0, 2` on `sd.64`); `custom-0` `funct3 = 3` (`atom.<op>.a64`) with `sub[4] != 0`; `atom` `sub[3:0]` above `10`; `qd` `sub` above `5`; `shfl` `sub` above `4`; transcendental
 sub above `6`; `exec.*` `sub` above `3`; `vote` `sub` above `1`; `unpackh` `sub` above
 `1`; `nop` `sub` other than `0`.
