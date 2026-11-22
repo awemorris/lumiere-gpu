@@ -50,8 +50,9 @@ Contents
   window at a physical address with one interrupt line. The PCIe binding
   maps the same interface onto a PCIe function and adds nothing else
   (section 15).
-- **Bring-up without a driver.** A debug port and direct unit starts let a
-  board be tested with register accesses alone (section 14).
+- **Bring-up without a full driver.** Early MMIO identification (`GHCI_MAGIC`,
+  `GHCI_VERSION`, `BOOT_CAPS`) and a minimal ring fence test let a board be
+  verified with register and ring accesses alone (section 14).
 
 ### 1.2 Overview
 
@@ -84,7 +85,7 @@ autonomous page table walker and TLB, and starts the units. A fence command
 writes a value to memory, and optionally raises an interrupt, when all
 earlier work has completed.
 
-#### Key Architecture Tenets (GHCI 1.0 TO-BE Specification)
+#### Key Architecture Tenets (GHCI 1.0)
 
 - **Host Control Registers:** Control-path MMIO occupies Page 0 offsets
   `0x000`–`0x1FF` (512 bytes; `0x200`–`0xFFF` reserved 0). All normal GPU operations
@@ -112,7 +113,7 @@ earlier work has completed.
 | Unit | Logical functional unit identifier used in `FAULT_INFO.UNIT` reporting (`0` CP, `1` VF, `2` SU, `3` RX, `4` TU, `5` ROP, `6` BLT); internal hardware block partitioning is implementation-defined |
 | Ring | The circular buffer of commands that the driver writes and the CP reads |
 | Dword | 32 bits |
-| GPU address | An address in the GPU's 32-bit address space (section 11.2) |
+| GPU address | An address in the GPU's virtual address space (`VA_BITS`, 30..40 bits; section 11.2) |
 | Local memory | Memory attached to the GPU itself (a discrete GPU) |
 | Host memory | The host's memory, reached by the GPU through DMA |
 | Unified / discrete | Without / with local memory |
@@ -124,11 +125,11 @@ earlier work has completed.
 
 | Part | State |
 | --- | --- |
-| Host control registers, extended capabilities, CP states, the ring, fences, interrupts, faults, quiesce and reset, the debug port, the display capabilities | Approved (GHCI 1.0) |
+| Host control registers, extended capabilities, CP states, the ring, fences, interrupts, faults, quiesce and reset, bring-up and timestamping, the display capabilities | Approved (GHCI 1.0) |
 | Memory model (unified and discrete, the MEM capability), platform and PCIe bindings | Approved |
 | Session protection (optional, the PROT capability) | Approved: Autonomous per-session virtual memory isolation (16 sessions, 0..15) |
-| The command set | Approved: Structured native ring packet architecture (GHCI 1.0 opcodes 0x00..0x37, 0x40..0x51) |
-| In-memory pipeline state and descriptors | Approved: 128-byte immutable PSO (16 vertex attributes packed) and flat descriptors |
+| The command set | Approved: Structured native ring packet architecture (GHCI 1.0 opcodes 0x00..0x3C, 0x40..0x46, 0x50..0x57) |
+| In-memory pipeline state and descriptors | Approved: 128-byte immutable PSO (`256-byte` extended PSO) and flat descriptors |
 | The standard shader ISA (GSI1) | Approved (section 12) |
 
 ### 1.5 Related files
@@ -290,11 +291,11 @@ Detailed execution unit topologies, optional rendering features, and stage exten
 - Early boot capabilities (MMU walker, session protection, address width encodings) are read directly from `BOOT_CAPS` (`0x008`).
 - Comprehensive device architecture capabilities, unit counts, and execution configurations are queried authoritatively via `CMD_QUERY_CAPS` Word 2 (`DEVICE_CAPS`).
 - Capability discovery is authoritative via `CMD_QUERY_CAPS` Word 2 (`DEVICE_CAPS`) and Word 3 (`EXT_CAP_FEATURE`).
-- Shader ISA architecture identification: `NATIVE_ISA_ID` is queryable via `CMD_QUERY_CAPS` (Word 6 reports `"GSI1"` = `0x47534931`). MMIO register `0x068` is strictly reserved (reads 0). Register `0x048` is strictly reserved for `WDT_CYCLES`. Extended architecture registers reside in the capability block queried via `CMD_QUERY_CAPS`: L2 capacity and associativity are reported in Word 12 (`MEM_CACHE_CFG`).
+- Shader ISA architecture identification: `NATIVE_ISA_ID` is queryable via `CMD_QUERY_CAPS` (Word 6 reports `"GSI1"` = `0x47534931`). Extended architecture parameters reside in the capability block queried via `CMD_QUERY_CAPS`: L2 capacity and associativity are reported in Word 12 (`MEM_CACHE_CFG`).
 
 #### 3.2.2 EXT_CAP_FEATURE (Capability Block Word 3) — Extended Feature & Address Width Descriptor
 
-In GHCI 1.0, MMIO register `0x084` is strictly reserved and reads 0. Extended rendering capabilities, address widths, and pipeline flags are authoritatively queried via structured command `CMD_QUERY_CAPS` (§7.2) into Capability Block Word 3 (`GHCI_CAP_WORD_EXT_CAP_FEATURE`):
+Extended rendering capabilities, address widths, and pipeline flags are authoritatively queried via structured command `CMD_QUERY_CAPS` (§7.2) into Capability Block Word 3 (`GHCI_CAP_WORD_EXT_CAP_FEATURE`):
 - `[3:0] VA_BITS_ENC`: Supported GPU virtual address width offset encoding.
   Only the explicitly defined encodings are valid: `0x0` = 30-bit (1 GiB), `0x2` = 32-bit (4 GiB), `0xA` = 40-bit (1 TiB); all other 4-bit encodings are reserved.
   For valid encodings, $\text{VA\_BITS} = 30 + \text{raw}$.
@@ -318,7 +319,7 @@ In GHCI 1.0, MMIO register `0x084` is strictly reserved and reads 0. Extended re
 - `[31] CAP_BLT_SCALE`: Hardware 2D blitter scaling and unaligned byte window alignment supported. When 1, `CMD_BLIT` supports arbitrary resolution scaling. When 0, hardware blitter supports 1:1 direct rectangular copies and fills only, and scaling blits are delegated to 3D pipeline draw passes.
 
 **EXT_CAP_FMT0 (Capability Block Word 4)**:
-Provides summary hardware texture and blitter capability flags via `CMD_QUERY_CAPS` (Word 4; MMIO `0x080` is reserved and reads 0):
+Provides summary hardware texture and blitter capability flags via `CMD_QUERY_CAPS` (Word 4):
 - `[6:0]`: `CAP_BC[1..7]` — Hardware BC1 through BC7 texture compression decoders present.
 - `[7]`: `CAP_ETC2` — Hardware ETC2 / EAC texture compression decoders present.
 - `[8]`: `CAP_ASTC` — Reserved (reads 0 in GHCI 1.0).
@@ -334,6 +335,17 @@ Provides summary hardware texture and blitter capability flags via `CMD_QUERY_CA
 - `[21]`: `CAP_TEX_CUBE` — Cubemap texture sampling and seamless cube face edge filtering supported.
 - `[22]`: `CAP_TEX_TRILINEAR` — Hardware trilinear mipmap filtering supported across LOD levels.
 - `[31:23]`: Reserved (reads 0 in GHCI 1.0).
+
+#### 3.2.3 Clocks, Timestamps and PCI Identification
+
+- **Core Clock Frequency Discovery**:
+  Exposed via `CMD_QUERY_CAPS` Capability Block Word 7 as an integer in Hertz.
+  - Dynamically reflects target core clock frequency.
+- **Timestamp Period Calculation**:
+  $$\text{timestamp\_period\_ns} = \frac{1\,000\,000\,000}{\text{GCLK\_HZ}} \quad (\text{ns})$$
+  At 200 MHz, the core cycle period is `5.0` ns (`TIMESTAMP` counter increments independently at `TIMESTAMP_HZ` in Word 30).
+- **Vendor & Device Identification**:
+  - `VENDOR_ID`, `DEVICE_ID`, `SUBSYSTEM`, and `DEVICE_VERSION` are queried via `CMD_QUERY_CAPS` Capability Block Words 8–11 (`GHCI_CAP_WORD_VENDOR_ID` through `GHCI_CAP_WORD_DEVICE_VERSION`).
 
 #### 3.2.4 Pipeline Stages & Limits Discovery (CMD_QUERY_CAPS Block Words 19 & 20)
 
@@ -361,17 +373,6 @@ In GHCI 1.0, pipeline stage capabilities and physical limits are queried authori
    > To support concurrent multi-warp execution, `CAP_GEOMETRY_SHADER` and `CAP_TESSELLATION` strictly require an on-chip LDS capacity of at least 16 KiB (`CAP_LDS_SIZE_KB >= 16`). In constrained configurations where `CAP_LDS_SIZE_KB < 16`, both capability bits MUST report 0.
    > For workloads generating primitive streams exceeding local LDS burst buffers, the driver configures an off-chip spill ring buffer in GPU virtual address space via `GhciPipelineStateExt` dw41-44 (`geom_spill_va`, `geom_spill_size_bytes`, `geom_spill_stride_bytes`). The hardware LDS Burst DMA export pipeline autonomously spills emitted primitives to this ring buffer in LLC/DRAM.
    > Additional architectural stage invariants guaranteed when these capabilities are reported: geometry input/output components per vertex = `64`, tessellation per-vertex input/output components = `64`, tessellation per-patch output components = `128`, and tessellation evaluation input components = `64`.
-
-#### 3.2.3 Clocks, Timestamps and PCI Identification
-
-- **Core Clock Frequency Discovery**:
-  Exposed via `CMD_QUERY_CAPS` Capability Block Word 7 as an integer in Hertz. MMIO `0x064` is strictly reserved (reads 0).
-  - Dynamically reflects target core clock frequency.
-- **Timestamp Period Calculation**:
-  $$\text{timestamp\_period\_ns} = \frac{1\,000\,000\,000}{\text{GCLK\_HZ}} \quad (\text{ns})$$
-  At 200 MHz, the core cycle period is `5.0` ns (`TIMESTAMP` counter increments independently at `TIMESTAMP_HZ` in Word 30).
-- **Vendor & Device Identification**:
-  - `VENDOR_ID`, `DEVICE_ID`, `SUBSYSTEM`, and `DEVICE_VERSION` are queried via `CMD_QUERY_CAPS` Capability Block Words 8–11 (`GHCI_CAP_WORD_VENDOR_ID` through `GHCI_CAP_WORD_DEVICE_VERSION`).
 
 #### 3.2.5 Capability Block Layout (`CMD_QUERY_CAPS`, `CAP_DWORDS` Dwords)
 
@@ -564,12 +565,24 @@ windows at fixed offsets within `0x100`–`0x1FF`, gated by `BOOT_CAPS` (`0x008`
 | `0x1D0..0x1DF` | `PROT` | `BOOT_CAPS[2]` (`CAP_BOOT_PROT`) | `PROT_CAPS`, `PROT_TABLE_BYTES`, 64-bit `PROT_TABLE_LO/HI` (§11.6) |
 | `0x1E0..0xFFF` | — | — | Reserved (reads 0, writes ignored) |
 
-- **`CPFW` (`0x170..0x17F`, `0x1A0..0x1BF`)**: In GHCI 1.0, the contents of the `CPFW` window and how CP firmware is loaded or started are vendor-defined, and standard drivers do not touch them (whether firmware is initialized via on-chip ROM, a vendor-specific tool, or a vendor extension is implementation-defined). It belongs to the control path because it brings the CP into a runnable state before the command ring operates.
-- **`PROT` (`0x1D0..0x1DF`, `BOOT_CAPS[2] == 1`)**:
-  - `0x1D0` (`PROT_CAPS`, RO): Mirrors `CMD_QUERY_CAPS` Word 13 when `CAP_BOOT_PROT == 1` (`0` otherwise).
-  - `0x1D4` (`PROT_TABLE_BYTES`, RO): Required byte size of the protection table (`0` when `CAP_BOOT_PROT == 0`).
-  - `0x1D8` (`PROT_TABLE_LO`, RW): `[0] ENABLE` (`1` = protection table active, `0` = disabled and address ignored), `[11:1]` reserved `0`, `[31:12]` 4 KiB-aligned GPU physical address `[31:12]`. Writable only in `IDLE` with zero open client sessions.
-  - `0x1DC` (`PROT_TABLE_HI`, RW): Protection table GPU physical address `[63:32]`. Writable only in `IDLE` with zero open client sessions.
+#### 4.1 MEM Window (`0x100..0x13F`, `BOOT_CAPS[3] == 1`)
+
+Exposes physical VRAM base/size, firmware-reserved VRAM carveout, host physical address limit, BAR local window size, and `MEM_WINDOW_CTRL` for unified vs discrete memory discovery and boot framebuffer window management (§11.3).
+
+#### 4.2 BOOT_DISP Window (`0x140..0x15F`, `BOOT_CAPS[5] == 1`)
+
+Exposes read-only pre-OS GOP boot display framebuffer offset, geometry, stride, format, and takeover state in the PCIe binding (§13.3, §15.2).
+
+#### 4.3 CPFW Window (`0x170..0x17F`, `0x1A0..0x1BF`, `BOOT_CAPS[4] == 1`)
+
+In GHCI 1.0, the contents of the `CPFW` window and how CP firmware is loaded or started are vendor-defined, and standard drivers do not touch them (whether firmware is initialized via on-chip ROM, a vendor-specific tool, or a vendor extension is implementation-defined). It belongs to the control path because it brings the CP into a runnable state before the command ring operates.
+
+#### 4.4 PROT Window (`0x1D0..0x1DF`, `BOOT_CAPS[2] == 1`)
+
+- `0x1D0` (`PROT_CAPS`, RO): Mirrors `CMD_QUERY_CAPS` Word 13 when `CAP_BOOT_PROT == 1` (`0` otherwise).
+- `0x1D4` (`PROT_TABLE_BYTES`, RO): Required byte size of the protection table (`0` when `CAP_BOOT_PROT == 0`).
+- `0x1D8` (`PROT_TABLE_LO`, RW): `[0] ENABLE` (`1` = protection table active, `0` = disabled and address ignored), `[11:1]` reserved `0`, `[31:12]` 4 KiB-aligned GPU physical address `[31:12]`. Writable only in `IDLE` with zero open client sessions.
+- `0x1DC` (`PROT_TABLE_HI`, RW): Protection table GPU physical address `[63:32]`. Writable only in `IDLE` with zero open client sessions (§11.6).
 
 **Format Capability Discovery (`CMD_QUERY_CAPS`).** Format properties are queried authoritatively via structured command `CMD_QUERY_CAPS` (§7.3) into a host-allocated memory buffer:
 - **Capability Block Word 4**: `EXT_CAP_FMT0` bitmap shortcut.
@@ -1390,7 +1403,7 @@ Executes a DDC (EDID or sink I2C register) transfer in the DSQ control queue (10
 #### Reserved Future Opcodes (`0x38`..`0x3B`)
 Opcodes `0x38`..`0x3B` are reserved for future extensions. In GHCI 1.0, executing any opcode in `0x38`..`0x3B` raises `GHCI_FAULT_KIND_INVALID_OP` (Kind 1).
 
-### 7.5 Unallocated & Reserved Command Ranges
+### 7.4 Unallocated & Reserved Command Ranges
 
 All conforming GHCI 1.0 drivers and hardware operate exclusively using the structured command packets (§7.2, §7.3) and virtual memory commands (§11.2). Unlisted opcodes outside §7.2 raise `GHCI_FAULT_KIND_INVALID_OP` (Kind 1).
 
@@ -1757,18 +1770,11 @@ Drivers querying GHCI 1.0 architectural limits use the following hardware parame
 | Max 3D image dimension | Word 31`[15:0]` (e.g. `2,048`) | `MAX_TEX_DEPTH_3D` in `CMD_QUERY_CAPS` Word 31`[15:0]` (`0` if `TEX_3D == 0`) |
 | Max Cube image dimension | Word 27`[31:16]` (e.g. `16,384`) | Cube face extent limit from Word 27`[31:16]` |
 | Max image array layers | Word 27`[15:4] + 1` (e.g. `2,048`) | `MAX_ARRAY_LAYERS_M1 + 1` in `CMD_QUERY_CAPS` Word 27`[15:4]` |
-| Max texel buffer elements | 67,108,864 | 256 MiB maximum texel buffer size |
-| Max uniform buffer range | 65,536 | 64 KiB uniform buffer window (8 KiB on-chip constant cache) |
-| Max storage buffer range | 4,294,967,295 | 4 GiB max buffer range per descriptor in 64-bit GPU VA space |
-| Max push constants size | 128 bytes | Full `c[0..31]` loaded via `CMD_LOAD_CONST` into on-chip constant bank |
-| Max memory allocation count | 4,096 | Supported concurrent OS DMA mappings |
-| Max sampler allocation count | 4,000 | In-memory descriptor limit |
+| Max storage buffer range | `4,294,967,295` | `uint32_t size_bytes` field in `GhciBufferDescriptor` |
+| Max push constants size | `128` bytes | Full `c[0..31]` loaded via `CMD_LOAD_CONST` into on-chip constant bank |
 | Max bound descriptor sets | `8` (`Word 26[7:0]`) | `MAX_DESCRIPTOR_SETS` (`set 0..7` in `CMD_BIND_DESCRIPTOR_TABLE`) |
 | Max per-stage samplers | `8,192` (`64` immediate) | `2^INDEX_BITS` (`Word 26[19:16] = 13`) via `.idx` register mode; `64` via static immediate mode |
-| Max per-stage uniform buffers | `>= 16` | Software/constant-bank backed buffer descriptors |
-| Max per-stage storage buffers | `>= 16` | Software/constant-bank backed buffer descriptors |
 | Max per-stage sampled images | `8,192` (`64` immediate) | `2^INDEX_BITS` (`Word 26[19:16] = 13`) via `.idx` register mode; `64` via static immediate mode |
-| Max per-stage storage images | `8` | Storage image descriptors |
 | Max descriptor set samplers | `8,192` | `13`-bit per-set index range (`0..8191`) |
 | Max descriptor set sampled images | `8,192` | `13`-bit per-set index range (`0..8191`) |
 | Max vertex input attributes | 16 | Hardware vertex fetcher attribute channels (0..15) |
@@ -1779,13 +1785,15 @@ Drivers querying GHCI 1.0 architectural limits use the following hardware parame
 | Max compute workgroup count | {65535, 65535, 65535} | 16-bit workgroup dispatch counters |
 | Max compute workgroup invocations | 256 | Maximum invocations per compute workgroup ($\le 256$) |
 | Max compute workgroup size | {256, 256, 64} | Max workgroup dimensions (total invocations $\le 256$) |
-| Max compute shared memory (LDS) | 16,384 bytes | On-chip Local Data Share (LDS) RAM per SU (reported via `EXT_CAP_FEATURE[27:20]`; constrained prototype profiles are documented in implementation datasheets) |
+| Max compute shared memory (LDS) | `Word 3[27:20] * 1024` bytes (e.g. `16,384`) | On-chip Local Data Share (LDS) RAM per SU (`CAP_LDS_SIZE_KB` in `EXT_CAP_FEATURE[27:20]`) |
 | Subgroup width | 32 | Native SIMD warp width |
 | Core cycle period (ns) | `1.0e9 / GCLK_HZ` ns | Dynamically computed from `CMD_QUERY_CAPS` Word 7 (`GHCI_CAP_WORD_GCLK_HZ`) |
 | Subpixel precision bits | 4 | 4 bits subpixel precision (1/16 pixel grid rasterization) |
 | Viewport subpixel bits | 0 | Integer viewport coordinate snapping |
 | Max viewport dimensions | {16384, 16384} | Maximum viewport width and height |
 | Viewport coordinate bounds | [-32768.0, 32767.0] | Viewport coordinate bounds range |
+
+*(Note: Host-API resource limits such as memory/sampler allocation counts, texel/uniform buffer ranges, and per-stage uniform/storage descriptor counts are software-defined by the driver rather than fixed in GHCI 1.0 hardware.)*
 
 9. Fences and interrupts
 ------------------------
@@ -1891,8 +1899,6 @@ for example) and a boot console can use it; a driver that does not use it
 closes it (WINDOW_CTRL.ENABLE = 0 in the MEM capability, section 11.3).
 While it is closed, host writes through the window are dropped and host reads
 return 0; the bus transactions still complete normally.
-The debug port (section 14) is for bring-up only; a driver does not depend
-on it.
 
 ### 11.2 Addresses, Virtual Memory & Autonomous MMU
 
@@ -2058,7 +2064,7 @@ need to know it.
 
 ### 11.5.1 Cache Hierarchy Configuration Reporting
 
-Cache hierarchy parameters are reported to the host via `CMD_QUERY_CAPS` Word 12 (`MEM_CACHE_CFG`; MMIO offset `0x1F4` is reserved and reads 0):
+Cache hierarchy parameters are reported to the host via `CMD_QUERY_CAPS` Word 12 (`MEM_CACHE_CFG`):
 - `[15:0]`: Shared L2 cache capacity in KiB (0 = no L2 / bypass)
 - `[23:16]`: L2 cache associativity ways
 - `[27:24]`: Texture L1 cache capacity in KiB
@@ -2143,7 +2149,7 @@ When `BOOT_CAPS[2]` (`CAP_BOOT_PROT`) and `DEVICE_CAPS[24]` (`CAP_PROT`) are `1`
   `0x47534931`, version 1). Every GHCI GPU with a shader unit accepts GSI1
   programs: it runs them natively, or its command processor translates
   them to the GPU's native ISA, invisibly to the driver.
-- A native ISA is optional and vendor-specific; MMIO offset `0x068` is strictly reserved and reads 0. `NATIVE_ISA_ID` is queried via `CMD_QUERY_CAPS` Word 6 (reports `"GSI1"` for Lumiere).
+- A native ISA is optional and vendor-specific; `NATIVE_ISA_ID` is queried via `CMD_QUERY_CAPS` Word 6 (reports `"GSI1"` for Lumiere).
 - GSI1 is an ISA of its own. The low 32 bits of each instruction follow
   the field layout of the RISC-V 32-bit instruction formats, and the
   instructions it shares with RISC-V keep their major opcodes,
@@ -2152,8 +2158,8 @@ When `BOOT_CAPS[2]` (`CAP_BOOT_PROT`) and `DEVICE_CAPS[24]` (`CAP_PROT`) are `1`
   "Zbb"). It does not claim RISC-V compatibility.
 - Optional capabilities and ISA execution features are reported through `CMD_QUERY_CAPS`:
   - `CMD_QUERY_CAPS` Word 2 (`GHCI_CAP_WORD_DEVICE_CAPS`): `bit 6` packed fp16/int16 arithmetic (`GHCI_CAP_FP16`), `bit 7` native GSI1 core (`GHCI_CAP_GSI1`), `bits [15:8]` physical lanes per SU (`PHYS_LANES`), `bits [23:16]` number of Shader Units (`NUM_SU`), `bit 24` memory protection (`CAP_PROT`), `bit 25` float texture filter (`CAP_TEX_FFILT`), `bit 26` ROP packer (`CAP_ROP_PACK`), `bit 27` task shaders, `bit 28` mesh shaders, `bit 31` multisampling (`CAP_MSAA`).
-  - `CMD_QUERY_CAPS` Word 3 (`GHCI_CAP_WORD_EXT_CAP_FEATURE`): Rendering capabilities, address widths, `[19:16] MAX_MRT`, `[27:20] CAP_LDS_SIZE_KB`, `[28] CAP_FP16`, `[29] CAP_SUBGROUP` (MMIO offset `0x084` is strictly reserved and reads 0).
-  - `CMD_QUERY_CAPS` Word 5 (`GHCI_CAP_WORD_RESIDENT_WARPS`): `[15:0]` Maximum resident warp capacity across all Shader Units (`[23:16]` register count per thread; MMIO offset `0x04C` is strictly reserved and reads 0).
+  - `CMD_QUERY_CAPS` Word 3 (`GHCI_CAP_WORD_EXT_CAP_FEATURE`): Rendering capabilities, address widths, `[19:16] MAX_MRT`, `[27:20] CAP_LDS_SIZE_KB`, `[28] CAP_FP16`, `[29] CAP_SUBGROUP`.
+  - `CMD_QUERY_CAPS` Word 5 (`GHCI_CAP_WORD_RESIDENT_WARPS`): `[15:0]` Maximum resident warp capacity across all Shader Units (`[23:16]` register count per thread).
 - **Architectural Capability Mapping for GSI1 Core**:
   Instruction subsets are governed by host-visible registers:
   - Subgroup operations (`shfl`, `vote`, `ballot`): governed by `EXT_CAP_FEATURE[29]` (`CAP_SUBGROUP`).
