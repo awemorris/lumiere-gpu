@@ -1,5 +1,5 @@
 /*
- * Amaterrace GPU
+ * Lumiere GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -179,24 +179,44 @@ extern "C" {
  */
 
 /* DEVICE_CAPS bits (CMD_QUERY_CAPS Word 2) */
-#define GHCI_CAP_UMA             (1u << 0)  /* 1 = Unified Memory (Shared DRAM), 0 = Discrete */
-#define GHCI_CAP_IOMMU           (1u << 1)  /* 1 = Platform / System IOMMU active */
-#define GHCI_CAP_HW_WALKER       (1u << 2)  /* 1 = Autonomous HW Page Table Walker present */
-#define GHCI_CAP_INDIRECT_DRAW   (1u << 3)  /* 1 = Multi-draw indirect supported */
-#define GHCI_CAP_SECONDARY_RING  (1u << 4)  /* 1 = CMD_EXECUTE_COMMANDS supported */
-#define GHCI_CAP_DUAL_SOURCE     (1u << 5)  /* 1 = Dual-source color blending supported */
-#define GHCI_CAP_FP16            (1u << 6)  /* 1 = Packed FP16 arithmetic supported */
-#define GHCI_CAP_GSI1            (1u << 7)  /* 1 = GSI1 standard shader ISA native */
-#define GHCI_CAP_PHYS_LANES(caps)(((caps) >> 8) & 0xFFu)  /* Physical execution lanes (default 8) */
-#define GHCI_CAP_NUM_SU(caps)    (((caps) >> 16) & 0xFFu) /* Number of Shader Units (1..4) */
-#define GHCI_CAP_PROT            (1u << 24) /* 1 = Session protection hardware present */
-#define GHCI_CAP_TEX_FFILT       (1u << 25) /* 1 = Hardware floating-point texture filter present */
-#define GHCI_CAP_ROP_PACK        (1u << 26) /* 1 = ROP integer/float RT packer present */
-#define GHCI_CAP_TASK_SHADER     (1u << 27) /* 1 = Task Shader stage supported */
-#define GHCI_CAP_MESH_SHADER     (1u << 28) /* 1 = Mesh Shader stage supported */
-#define GHCI_CAP_BLT             (1u << 29) /* 1 = Blitter 2D engine present */
-#define GHCI_CAP_DISP            (1u << 30) /* 1 = Display subsystem present */
-#define GHCI_CAP_MSAA            (1u << 31) /* 1 = MSAA multisampling supported */
+#define GHCI_DEV_CAP_UMA            (1u << 0)  /* 1 = Unified Memory (Shared DRAM), 0 = Discrete */
+#define GHCI_DEV_CAP_IOMMU          (1u << 1)  /* 1 = Platform / System IOMMU active */
+#define GHCI_DEV_CAP_HW_WALKER      (1u << 2)  /* 1 = Autonomous HW Page Table Walker present */
+#define GHCI_DEV_CAP_INDIRECT_DRAW  (1u << 3)  /* 1 = Multi-draw indirect supported */
+#define GHCI_DEV_CAP_SECONDARY_RING (1u << 4)  /* 1 = CMD_EXECUTE_COMMANDS supported */
+#define GHCI_DEV_CAP_DUAL_SOURCE    (1u << 5)  /* 1 = Dual-source color blending supported */
+#define GHCI_DEV_CAP_FP16           (1u << 6)  /* 1 = Packed FP16 arithmetic supported */
+#define GHCI_DEV_CAP_GSI1           (1u << 7)  /* 1 = GSI1 standard shader ISA native */
+#define GHCI_DEV_CAP_PHYS_LANES(c)  (((c) >> 8) & 0xFFu)  /* Physical execution lanes */
+#define GHCI_DEV_CAP_NUM_SU(c)      (((c) >> 16) & 0xFFu) /* Number of Shader Units (0 = none, >=1 = SUs) */
+#define GHCI_DEV_CAP_PROT           (1u << 24) /* 1 = Physical-range PROT hardware present */
+#define GHCI_DEV_CAP_TEX_FFILT      (1u << 25) /* 1 = Hardware floating-point texture filter present */
+#define GHCI_DEV_CAP_ROP_PACK       (1u << 26) /* 1 = ROP integer/float RT packer present */
+#define GHCI_DEV_CAP_TASK_SHADER    (1u << 27) /* 1 = Task Shader stage supported */
+#define GHCI_DEV_CAP_MESH_SHADER    (1u << 28) /* 1 = Mesh Shader stage supported */
+#define GHCI_DEV_CAP_BLT            (1u << 29) /* 1 = Blitter 2D engine present */
+#define GHCI_DEV_CAP_DISP           (1u << 30) /* 1 = Display subsystem present */
+#define GHCI_DEV_CAP_MSAA           (1u << 31) /* 1 = MSAA multisampling supported */
+
+/* Compatibility aliases for DEVICE_CAPS (canonical names are GHCI_DEV_CAP_*) */
+#define GHCI_CAP_UMA             GHCI_DEV_CAP_UMA
+#define GHCI_CAP_IOMMU           GHCI_DEV_CAP_IOMMU
+#define GHCI_CAP_HW_WALKER       GHCI_DEV_CAP_HW_WALKER
+#define GHCI_CAP_INDIRECT_DRAW   GHCI_DEV_CAP_INDIRECT_DRAW
+#define GHCI_CAP_SECONDARY_RING  GHCI_DEV_CAP_SECONDARY_RING
+#define GHCI_CAP_DUAL_SOURCE     GHCI_DEV_CAP_DUAL_SOURCE
+#define GHCI_CAP_FP16            GHCI_DEV_CAP_FP16
+#define GHCI_CAP_GSI1            GHCI_DEV_CAP_GSI1
+#define GHCI_CAP_PHYS_LANES(caps) GHCI_DEV_CAP_PHYS_LANES(caps)
+#define GHCI_CAP_NUM_SU(caps)    GHCI_DEV_CAP_NUM_SU(caps)
+#define GHCI_CAP_PROT            GHCI_DEV_CAP_PROT
+#define GHCI_CAP_TEX_FFILT       GHCI_DEV_CAP_TEX_FFILT
+#define GHCI_CAP_ROP_PACK        GHCI_DEV_CAP_ROP_PACK
+#define GHCI_CAP_TASK_SHADER     GHCI_DEV_CAP_TASK_SHADER
+#define GHCI_CAP_MESH_SHADER     GHCI_DEV_CAP_MESH_SHADER
+#define GHCI_CAP_BLT             GHCI_DEV_CAP_BLT
+#define GHCI_CAP_DISP            GHCI_DEV_CAP_DISP
+#define GHCI_CAP_MSAA            GHCI_DEV_CAP_MSAA
 
 /* CTRL bits (0x014) */
 #define GHCI_CTRL_RESET          (1u << 0)  /* Soft reset GPU (self-clearing) */
@@ -270,8 +290,8 @@ extern "C" {
 #define GHCI_FAULT_STAGE_GS      7u
 
 /* Feature Field Decoding (CMD_QUERY_CAPS Word 3) */
-#define GHCI_FEATURE_VA_BITS(f)   ((f) & 0x0Fu)        /* [3:0] Virtual Address bits (32..40) */
-#define GHCI_FEATURE_PA_BITS(f)   (((f) >> 4) & 0x0Fu) /* [7:4] Physical Address bits (40..48) */
+#define GHCI_FEATURE_VA_BITS(f)   ((f) & 0x0Fu)        /* [3:0] Raw VA encoding (VA_BITS = 30 + raw: 0=30, 2=32, 0xA=40) */
+#define GHCI_FEATURE_PA_BITS(f)   (((f) >> 4) & 0x0Fu) /* [7:4] Raw PA encoding (PA_BITS = 40 + raw: 0=40, 8=48) */
 
 /* Short register aliases mapped to GHCI 1.0 canonical registers */
 #define GHCI_MAGIC           GHCI_REG_MAGIC
@@ -290,46 +310,11 @@ extern "C" {
 #define GHCI_WDT_CYCLES      GHCI_REG_WDT_CYCLES
 #define GHCI_SESSION_ACTIVE  GHCI_REG_SESSION_ACTIVE
 
-/* CPFW Control-Path Window (0x170..0x17F and 0x1A0..0x1BF; vendor-defined) */
-#define GHCI_CPFW_CTRL 0x170u
-#define GHCI_CPFW_STATUS 0x174u
-#define GHCI_CPFW_VERSION 0x178u
-#define GHCI_CPFW_IBASE 0x1A0u
-#define GHCI_CPFW_IWORDS 0x1A4u
-#define GHCI_CPFW_DBASE 0x1A8u
-#define GHCI_CPFW_DWORDS 0x1ACu
-#define GHCI_CPFW_MBOX(n) (0x1B0u + 4u * (n)) /* n = 0..3 */
-
-/* CPFW_CTRL and CPFW_STATUS. */
-#define GHCI_CPFW_CTRL_LOAD (1u << 0)
-#define GHCI_CPFW_CTRL_RUN (1u << 1)
-#define GHCI_CPFW_CTRL_HALT (1u << 2)
-#define GHCI_CPFW_STATUS_READY (1u << 0)
-#define GHCI_CPFW_STATUS_FAULT (1u << 1)
-#define GHCI_CPFW_STATUS_ALIVE (1u << 2)
-#define GHCI_CPFW_STATUS_STOPPED (1u << 3) /* the core is stopped or held in reset */
-#define GHCI_CPFW_STATUS_LOADING (1u << 4)
-#define GHCI_CPFW_STATUS_STATE(s) (((s) >> 8) & 0xFFu)
-
-/* DEVICE_CAPS (CMD_QUERY_CAPS Word 2) bits */
-#define GHCI_DEV_CAP_UMA (1u << 0)
-#define GHCI_DEV_CAP_IOMMU (1u << 1)
-#define GHCI_DEV_CAP_HW_WALKER (1u << 2)
-#define GHCI_DEV_CAP_INDIRECT_DRAW (1u << 3)
-#define GHCI_DEV_CAP_SECONDARY_RING (1u << 4)
-#define GHCI_DEV_CAP_DUAL_SOURCE (1u << 5)
-#define GHCI_DEV_CAP_FP16 (1u << 6)
-#define GHCI_DEV_CAP_GSI1 (1u << 7)
-#define GHCI_DEV_CAP_PHYS_LANES(c) (((c) >> 8) & 0xFFu)
-#define GHCI_DEV_CAP_NUM_SU(c) (((c) >> 16) & 0xFFu)
-#define GHCI_DEV_CAP_PROT (1u << 24)
-#define GHCI_DEV_CAP_TEX_FFILT (1u << 25)
-#define GHCI_DEV_CAP_ROP_PACK (1u << 26)
-#define GHCI_DEV_CAP_TASK_SHADER (1u << 27)
-#define GHCI_DEV_CAP_MESH_SHADER (1u << 28)
-#define GHCI_DEV_CAP_BLT (1u << 29)
-#define GHCI_DEV_CAP_DISP (1u << 30)
-#define GHCI_DEV_CAP_MSAA (1u << 31)
+/* CPFW Control-Path Window Ranges (present when BOOT_CAPS[4] CAP_BOOT_CPFW == 1; contents vendor-defined) */
+#define GHCI_CPFW_LO_BASE    0x170u
+#define GHCI_CPFW_LO_SIZE    0x010u /* 0x170..0x17F */
+#define GHCI_CPFW_HI_BASE    0x1A0u
+#define GHCI_CPFW_HI_SIZE    0x020u /* 0x1A0..0x1BF */
 
 /* Capability Block Word 4 (EXT_CAP_FMT0) bits */
 
@@ -441,32 +426,6 @@ extern "C" {
 #define GHCI_TEX_LIMIT_MAX_ARRAY_LAYERS_M1(w)(((w) >> 4) & 0x0FFFu) /* Word 27[15:4]: MAX_ARRAY_LAYERS - 1 */
 #define GHCI_TEX_LIMIT_MAX_EXTENT(w)         (((w) >> 16) & 0xFFFFu)/* Word 27[31:16]: MAX_TEX_EXTENT */
 #define GHCI_TEX_LIMIT_MAX_DEPTH_3D(w)       ((w) & 0xFFFFu)        /* Word 31[15:0]: MAX_TEX_DEPTH_3D */
-
-/* Per-Format Capability Word Bitfields (Words 32 + id) */
-#define GHCI_FMT_FEAT_OPTIMAL_SAMPLED          (1u << 0)
-#define GHCI_FMT_FEAT_OPTIMAL_FILTER_LINEAR    (1u << 1)
-#define GHCI_FMT_FEAT_OPTIMAL_COLOR_ATTACHMENT (1u << 2)
-#define GHCI_FMT_FEAT_OPTIMAL_BLEND            (1u << 3)
-#define GHCI_FMT_FEAT_OPTIMAL_DEPTH_STENCIL    (1u << 4)
-#define GHCI_FMT_FEAT_OPTIMAL_STORAGE_ATOMIC   (1u << 5)
-#define GHCI_FMT_FEAT_OPTIMAL_BLIT_SRC         (1u << 6)
-#define GHCI_FMT_FEAT_OPTIMAL_BLIT_DST         (1u << 7)
-#define GHCI_FMT_FEAT_OPTIMAL_STORAGE_IMAGE    (1u << 8)
-#define GHCI_FMT_FEAT_LINEAR_SHIFT             9u
-#define GHCI_FMT_FEAT_LINEAR_SAMPLED           (1u << 9)
-#define GHCI_FMT_FEAT_LINEAR_FILTER_LINEAR     (1u << 10)
-#define GHCI_FMT_FEAT_LINEAR_COLOR_ATTACHMENT  (1u << 11)
-#define GHCI_FMT_FEAT_LINEAR_BLEND             (1u << 12)
-#define GHCI_FMT_FEAT_LINEAR_DEPTH_STENCIL     (1u << 13)
-#define GHCI_FMT_FEAT_LINEAR_STORAGE_ATOMIC    (1u << 14)
-#define GHCI_FMT_FEAT_LINEAR_BLIT_SRC          (1u << 15)
-#define GHCI_FMT_FEAT_LINEAR_BLIT_DST          (1u << 16)
-#define GHCI_FMT_FEAT_LINEAR_STORAGE_IMAGE     (1u << 17)
-#define GHCI_FMT_FEAT_BUFFER_UNIFORM_TEXEL     (1u << 18) /* 0 in GHCI 1.0 */
-#define GHCI_FMT_FEAT_BUFFER_STORAGE_TEXEL     (1u << 19)
-#define GHCI_FMT_FEAT_BUFFER_STORAGE_ATOMIC    (1u << 20)
-#define GHCI_FMT_FEAT_BUFFER_VERTEX            (1u << 21)
-#define GHCI_FMT_FEAT_SCANOUT                  (1u << 22)
 
 #ifdef __cplusplus
 }

@@ -1,5 +1,5 @@
 /*
- * Amaterrace GPU
+ * Lumiere GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -16,6 +16,7 @@
 #ifndef GHCI_CMD_H
 #define GHCI_CMD_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -40,41 +41,77 @@ extern "C" {
 #define GHCI_CMD_MMU_ENABLE             0x18u
 
 /*
- * Capability block dword layout (CMD_QUERY_CAPS, 192 dwords / 768 bytes)
+ * Capability block dword layout (CMD_QUERY_CAPS, 32 + FMT_COUNT dwords, variable size)
+ * Canonical names are GHCI_CAP_WORD_* (matching ghci_regs.h); GHCI_CAPS_* and
+ * GHCI_CAPS_WORD_* below are compatibility aliases.
  */
-#define GHCI_CAPS_BLOCK_ID              0u
-#define GHCI_CAPS_BLOCK_INFO            1u
-#define GHCI_CAPS_DEVICE_CAPS           2u
-#define GHCI_CAPS_EXT_CAP_FEATURE       3u
-#define GHCI_CAPS_EXT_CAP_FMT0          4u
-#define GHCI_CAPS_RESIDENT_WARPS        5u
-#define GHCI_CAPS_NATIVE_ISA_ID         6u
-#define GHCI_CAPS_GCLK_HZ               7u
-#define GHCI_CAPS_VENDOR_ID             8u
-#define GHCI_CAPS_DEVICE_ID             9u
-#define GHCI_CAPS_SUBSYSTEM             10u
-#define GHCI_CAPS_DEVICE_VERSION        11u
-#define GHCI_CAPS_MEM_CACHE_CFG         12u
-#define GHCI_CAPS_PROT_CAPS             13u
+#define GHCI_CAP_WORD_BLOCK_ID          0u
+#define GHCI_CAP_WORD_BLOCK_INFO        1u
+#define GHCI_CAP_WORD_DEVICE_CAPS       2u
+#define GHCI_CAP_WORD_EXT_CAP_FEATURE   3u
+#define GHCI_CAP_WORD_EXT_CAP_FMT0      4u
+#define GHCI_CAP_WORD_RESIDENT_WARPS    5u
+#define GHCI_CAP_WORD_NATIVE_ISA_ID     6u
+#define GHCI_CAP_WORD_GCLK_HZ           7u
+#define GHCI_CAP_WORD_VENDOR_ID         8u
+#define GHCI_CAP_WORD_DEVICE_ID         9u
+#define GHCI_CAP_WORD_SUBSYSTEM         10u
+#define GHCI_CAP_WORD_DEVICE_VERSION    11u
+#define GHCI_CAP_WORD_MEM_CACHE_CFG     12u
+#define GHCI_CAP_WORD_PROT_CAPS         13u
 /* Word 14 is reserved (0) in GHCI 1.0 */
-#define GHCI_CAPS_FMT_LIMITS            15u
-#define GHCI_CAPS_FMT_FIRST_REG         16u
-#define GHCI_CAPS_FMT_COUNT_REG         17u
+#define GHCI_CAP_WORD_FMT_LIMITS        15u
+#define GHCI_CAP_WORD_FMT_FIRST_REG     16u
+#define GHCI_CAP_WORD_FMT_COUNT         17u
 /* Word 18 is reserved (0) in GHCI 1.0 */
-#define GHCI_CAPS_SHADER_STAGES         19u
-#define GHCI_CAPS_STAGE_LIMITS          20u
-#define GHCI_CAPS_DISP_PCLK_MIN_KHZ     21u
-#define GHCI_CAPS_DISP_PCLK_MAX_KHZ     22u
-#define GHCI_CAPS_DISP_PCLK_INFO        23u
-#define GHCI_CAPS_DISP_LIMITS_H         24u
-#define GHCI_CAPS_DISP_LIMITS_V         25u
-#define GHCI_CAPS_DESC_LIMITS           26u
-#define GHCI_CAPS_TEX_LIMITS            27u
-#define GHCI_CAPS_DISP_MIN_H_BLANK      28u
-#define GHCI_CAPS_DISP_MIN_V_BLANK      29u
-#define GHCI_CAPS_TIMESTAMP_HZ          30u
-#define GHCI_CAPS_TEX_LIMITS_3D         31u
-#define GHCI_CAPS_FMT_BASE              32u
+#define GHCI_CAP_WORD_SHADER_STAGES     19u
+#define GHCI_CAP_WORD_STAGE_LIMITS      20u
+#define GHCI_CAP_WORD_DISP_PCLK_MIN_KHZ 21u
+#define GHCI_CAP_WORD_DISP_PCLK_MAX_KHZ 22u
+#define GHCI_CAP_WORD_DISP_PCLK_INFO    23u
+#define GHCI_CAP_WORD_DISP_LIMITS_H     24u
+#define GHCI_CAP_WORD_DISP_LIMITS_V     25u
+#define GHCI_CAP_WORD_DESC_LIMITS       26u
+#define GHCI_CAP_WORD_TEX_LIMITS        27u
+#define GHCI_CAP_WORD_DISP_MIN_H_BLANK  28u
+#define GHCI_CAP_WORD_DISP_MIN_V_BLANK  29u
+#define GHCI_CAP_WORD_TIMESTAMP_HZ      30u
+#define GHCI_CAP_WORD_TEX_LIMITS_3D     31u
+#define GHCI_CAP_WORD_FMT_BASE          32u
+
+#define GHCI_CAPS_BLOCK_ID              GHCI_CAP_WORD_BLOCK_ID
+#define GHCI_CAPS_BLOCK_INFO            GHCI_CAP_WORD_BLOCK_INFO
+#define GHCI_CAPS_DEVICE_CAPS           GHCI_CAP_WORD_DEVICE_CAPS
+#define GHCI_CAPS_EXT_CAP_FEATURE       GHCI_CAP_WORD_EXT_CAP_FEATURE
+#define GHCI_CAPS_EXT_CAP_FMT0          GHCI_CAP_WORD_EXT_CAP_FMT0
+#define GHCI_CAPS_RESIDENT_WARPS        GHCI_CAP_WORD_RESIDENT_WARPS
+#define GHCI_CAPS_NATIVE_ISA_ID         GHCI_CAP_WORD_NATIVE_ISA_ID
+#define GHCI_CAPS_GCLK_HZ               GHCI_CAP_WORD_GCLK_HZ
+#define GHCI_CAPS_VENDOR_ID             GHCI_CAP_WORD_VENDOR_ID
+#define GHCI_CAPS_DEVICE_ID             GHCI_CAP_WORD_DEVICE_ID
+#define GHCI_CAPS_SUBSYSTEM             GHCI_CAP_WORD_SUBSYSTEM
+#define GHCI_CAPS_DEVICE_VERSION        GHCI_CAP_WORD_DEVICE_VERSION
+#define GHCI_CAPS_MEM_CACHE_CFG         GHCI_CAP_WORD_MEM_CACHE_CFG
+#define GHCI_CAPS_PROT_CAPS             GHCI_CAP_WORD_PROT_CAPS
+/* Word 14 is reserved (0) in GHCI 1.0 */
+#define GHCI_CAPS_FMT_LIMITS            GHCI_CAP_WORD_FMT_LIMITS
+#define GHCI_CAPS_FMT_FIRST_REG         GHCI_CAP_WORD_FMT_FIRST_REG
+#define GHCI_CAPS_FMT_COUNT_REG         GHCI_CAP_WORD_FMT_COUNT
+/* Word 18 is reserved (0) in GHCI 1.0 */
+#define GHCI_CAPS_SHADER_STAGES         GHCI_CAP_WORD_SHADER_STAGES
+#define GHCI_CAPS_STAGE_LIMITS          GHCI_CAP_WORD_STAGE_LIMITS
+#define GHCI_CAPS_DISP_PCLK_MIN_KHZ     GHCI_CAP_WORD_DISP_PCLK_MIN_KHZ
+#define GHCI_CAPS_DISP_PCLK_MAX_KHZ     GHCI_CAP_WORD_DISP_PCLK_MAX_KHZ
+#define GHCI_CAPS_DISP_PCLK_INFO        GHCI_CAP_WORD_DISP_PCLK_INFO
+#define GHCI_CAPS_DISP_LIMITS_H         GHCI_CAP_WORD_DISP_LIMITS_H
+#define GHCI_CAPS_DISP_LIMITS_V         GHCI_CAP_WORD_DISP_LIMITS_V
+#define GHCI_CAPS_DESC_LIMITS           GHCI_CAP_WORD_DESC_LIMITS
+#define GHCI_CAPS_TEX_LIMITS            GHCI_CAP_WORD_TEX_LIMITS
+#define GHCI_CAPS_DISP_MIN_H_BLANK      GHCI_CAP_WORD_DISP_MIN_H_BLANK
+#define GHCI_CAPS_DISP_MIN_V_BLANK      GHCI_CAP_WORD_DISP_MIN_V_BLANK
+#define GHCI_CAPS_TIMESTAMP_HZ          GHCI_CAP_WORD_TIMESTAMP_HZ
+#define GHCI_CAPS_TEX_LIMITS_3D         GHCI_CAP_WORD_TEX_LIMITS_3D
+#define GHCI_CAPS_FMT_BASE              GHCI_CAP_WORD_FMT_BASE
 #define GHCI_CAPS_MIN_QUERY_BYTES       64u
 #define GHCI_CAPS_STD_FMT_COUNT         160u
 #define GHCI_CAPS_MAX_FMT_COUNT         255u /* 0x00..0xFE; 0xFF (GHCI_FMT_INVALID) excluded */
@@ -176,40 +213,40 @@ extern "C" {
 /* Invalid sentinel (excluded from CMD_QUERY_CAPS per-format table) */
 #define GHCI_FMT_INVALID                0xFFu
 
-/* Word-prefixed aliases */
-#define GHCI_CAPS_WORD_BLOCK_ID         0u
-#define GHCI_CAPS_WORD_BLOCK_INFO       1u
-#define GHCI_CAPS_WORD_DEVICE_CAPS      2u
-#define GHCI_CAPS_WORD_EXT_CAP_FEATURE  3u
-#define GHCI_CAPS_WORD_EXT_CAP_FMT0     4u
-#define GHCI_CAPS_WORD_RESIDENT_WARPS   5u
-#define GHCI_CAPS_WORD_NATIVE_ISA_ID    6u
-#define GHCI_CAPS_WORD_GCLK_HZ          7u
-#define GHCI_CAPS_WORD_VENDOR_ID        8u
-#define GHCI_CAPS_WORD_DEVICE_ID        9u
-#define GHCI_CAPS_WORD_SUBSYSTEM        10u
-#define GHCI_CAPS_WORD_DEVICE_VERSION   11u
-#define GHCI_CAPS_WORD_MEM_CACHE_CFG    12u
-#define GHCI_CAPS_WORD_PROT_CAPS        13u
+/* Compatibility aliases for GHCI_CAP_WORD_* */
+#define GHCI_CAPS_WORD_BLOCK_ID         GHCI_CAP_WORD_BLOCK_ID
+#define GHCI_CAPS_WORD_BLOCK_INFO       GHCI_CAP_WORD_BLOCK_INFO
+#define GHCI_CAPS_WORD_DEVICE_CAPS      GHCI_CAP_WORD_DEVICE_CAPS
+#define GHCI_CAPS_WORD_EXT_CAP_FEATURE  GHCI_CAP_WORD_EXT_CAP_FEATURE
+#define GHCI_CAPS_WORD_EXT_CAP_FMT0     GHCI_CAP_WORD_EXT_CAP_FMT0
+#define GHCI_CAPS_WORD_RESIDENT_WARPS   GHCI_CAP_WORD_RESIDENT_WARPS
+#define GHCI_CAPS_WORD_NATIVE_ISA_ID    GHCI_CAP_WORD_NATIVE_ISA_ID
+#define GHCI_CAPS_WORD_GCLK_HZ          GHCI_CAP_WORD_GCLK_HZ
+#define GHCI_CAPS_WORD_VENDOR_ID        GHCI_CAP_WORD_VENDOR_ID
+#define GHCI_CAPS_WORD_DEVICE_ID        GHCI_CAP_WORD_DEVICE_ID
+#define GHCI_CAPS_WORD_SUBSYSTEM        GHCI_CAP_WORD_SUBSYSTEM
+#define GHCI_CAPS_WORD_DEVICE_VERSION   GHCI_CAP_WORD_DEVICE_VERSION
+#define GHCI_CAPS_WORD_MEM_CACHE_CFG    GHCI_CAP_WORD_MEM_CACHE_CFG
+#define GHCI_CAPS_WORD_PROT_CAPS        GHCI_CAP_WORD_PROT_CAPS
 /* Word 14 is reserved (0) in GHCI 1.0 */
-#define GHCI_CAPS_WORD_FMT_LIMITS       15u
-#define GHCI_CAPS_WORD_FMT_FIRST_REG    16u
-#define GHCI_CAPS_WORD_FMT_COUNT_REG    17u
+#define GHCI_CAPS_WORD_FMT_LIMITS       GHCI_CAP_WORD_FMT_LIMITS
+#define GHCI_CAPS_WORD_FMT_FIRST_REG    GHCI_CAP_WORD_FMT_FIRST_REG
+#define GHCI_CAPS_WORD_FMT_COUNT_REG    GHCI_CAP_WORD_FMT_COUNT
 /* Word 18 is reserved (0) in GHCI 1.0 */
-#define GHCI_CAPS_WORD_SHADER_STAGES    19u
-#define GHCI_CAPS_WORD_STAGE_LIMITS     20u
-#define GHCI_CAPS_WORD_DISP_PCLK_MIN_KHZ 21u
-#define GHCI_CAPS_WORD_DISP_PCLK_MAX_KHZ 22u
-#define GHCI_CAPS_WORD_DISP_PCLK_INFO   23u
-#define GHCI_CAPS_WORD_DISP_LIMITS_H    24u
-#define GHCI_CAPS_WORD_DISP_LIMITS_V    25u
-#define GHCI_CAPS_WORD_DESC_LIMITS      26u
-#define GHCI_CAPS_WORD_TEX_LIMITS       27u
-#define GHCI_CAPS_WORD_DISP_MIN_H_BLANK 28u
-#define GHCI_CAPS_WORD_DISP_MIN_V_BLANK 29u
-#define GHCI_CAPS_WORD_TIMESTAMP_HZ     30u
-#define GHCI_CAPS_WORD_TEX_LIMITS_3D    31u
-#define GHCI_CAPS_WORD_FMT_BASE         32u
+#define GHCI_CAPS_WORD_SHADER_STAGES    GHCI_CAP_WORD_SHADER_STAGES
+#define GHCI_CAPS_WORD_STAGE_LIMITS     GHCI_CAP_WORD_STAGE_LIMITS
+#define GHCI_CAPS_WORD_DISP_PCLK_MIN_KHZ GHCI_CAP_WORD_DISP_PCLK_MIN_KHZ
+#define GHCI_CAPS_WORD_DISP_PCLK_MAX_KHZ GHCI_CAP_WORD_DISP_PCLK_MAX_KHZ
+#define GHCI_CAPS_WORD_DISP_PCLK_INFO   GHCI_CAP_WORD_DISP_PCLK_INFO
+#define GHCI_CAPS_WORD_DISP_LIMITS_H    GHCI_CAP_WORD_DISP_LIMITS_H
+#define GHCI_CAPS_WORD_DISP_LIMITS_V    GHCI_CAP_WORD_DISP_LIMITS_V
+#define GHCI_CAPS_WORD_DESC_LIMITS      GHCI_CAP_WORD_DESC_LIMITS
+#define GHCI_CAPS_WORD_TEX_LIMITS       GHCI_CAP_WORD_TEX_LIMITS
+#define GHCI_CAPS_WORD_DISP_MIN_H_BLANK GHCI_CAP_WORD_DISP_MIN_H_BLANK
+#define GHCI_CAPS_WORD_DISP_MIN_V_BLANK GHCI_CAP_WORD_DISP_MIN_V_BLANK
+#define GHCI_CAPS_WORD_TIMESTAMP_HZ     GHCI_CAP_WORD_TIMESTAMP_HZ
+#define GHCI_CAPS_WORD_TEX_LIMITS_3D    GHCI_CAP_WORD_TEX_LIMITS_3D
+#define GHCI_CAPS_WORD_FMT_BASE         GHCI_CAP_WORD_FMT_BASE
 
 /* Pipeline State & Execution Commands (0x20..0x2F) */
 #define GHCI_CMD_BIND_PIPELINE          0x20u
@@ -485,13 +522,20 @@ typedef struct GhciPipelineStateExt {
 	uint32_t shader_resource_limits_ext; /* dw40: [7:0] used_regs_tcs (1..63), [15:8] used_regs_tes (1..63), [23:16] used_regs_gs (1..63), [31:24] reserved */
 
 	/* 0xA4: Geometry Shader Spill Memory Buffer (For Amplification Exceeding LDS) */
-	uint64_t geom_spill_va;          /* dw41-42: 64-bit GPU virtual address of driver-allocated spill ring buffer (64-byte aligned; 0 = LDS only) */
+	uint32_t geom_spill_va_lo;       /* dw41: 64-bit GPU VA [31:0] of spill ring buffer (64B aligned; 0 = LDS only) */
+	uint32_t geom_spill_va_hi;       /* dw42: 64-bit GPU VA [63:32] of spill ring buffer */
 	uint32_t geom_spill_size_bytes;  /* dw43: Size in bytes of spill ring buffer */
 	uint32_t geom_spill_stride_bytes;/* dw44: Maximum per-invocation spill slice size */
 
 	/* 0xB4..0xFF: Reserved for Future Extensions (76 Bytes / 19 Dwords) */
 	uint32_t reserved_ext[19];       /* dw45-63: Must be 0 */
 } GhciPipelineStateExt;
+
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(sizeof(GhciPipelineStateExt) == 256, "GhciPipelineStateExt must be 256 bytes");
+_Static_assert(offsetof(GhciPipelineStateExt, geom_spill_va_lo) == 0xA4, "geom_spill_va_lo must be at 0xA4");
+_Static_assert(offsetof(GhciPipelineStateExt, reserved_ext) == 0xB4, "reserved_ext must be at 0xB4");
+#endif
 
 /*
  * ============================================================================
@@ -604,10 +648,18 @@ typedef struct GhciCmdSetScissor {
 } GhciCmdSetScissor;
 
 /* CMD_SET_DYNAMIC_STATE (0x26): 6 dwords */
-#define GHCI_DYNAMIC_STATE_DEPTH_BIAS        0x01u
-#define GHCI_DYNAMIC_STATE_BLEND_CONSTANTS   0x02u
-#define GHCI_DYNAMIC_STATE_STENCIL_PARAMS    0x03u
-#define GHCI_DYNAMIC_STATE_LINE_WIDTH        0x04u
+#define GHCI_DYNAMIC_STATE_DEPTH_BIAS         0x01u
+#define GHCI_DYNAMIC_STATE_BLEND_CONSTANTS    0x02u
+#define GHCI_DYNAMIC_STATE_STENCIL_PARAMS     0x03u
+#define GHCI_DYNAMIC_STATE_LINE_WIDTH         0x04u
+#define GHCI_DYNAMIC_STATE_BLEND_ATTACHMENT_0 0x07u
+#define GHCI_DYNAMIC_STATE_BLEND_ATTACHMENT_1 0x08u
+#define GHCI_DYNAMIC_STATE_BLEND_ATTACHMENT_2 0x09u
+#define GHCI_DYNAMIC_STATE_BLEND_ATTACHMENT_3 0x0Au
+#define GHCI_DYNAMIC_STATE_BLEND_ATTACHMENT_4 0x0Bu
+#define GHCI_DYNAMIC_STATE_BLEND_ATTACHMENT_5 0x0Cu
+#define GHCI_DYNAMIC_STATE_BLEND_ATTACHMENT_6 0x0Du
+#define GHCI_DYNAMIC_STATE_BLEND_ATTACHMENT_7 0x0Eu
 #define GHCI_DYNAMIC_STATE_BORDER_COLOR_TABLE 0x10u
 
 #define GHCI_STRIDE_FROM_PSO                 0xFFFFFFFFu
@@ -634,6 +686,10 @@ typedef struct GhciCmdSetDynamicState {
 			float    line_width;
 			uint32_t reserved[3];
 		} line_width;
+		struct {
+			uint32_t blend_state;   /* Matches PSO dw11 format */
+			uint32_t reserved[3];
+		} blend_attachment;
 		struct {
 			uint32_t table_va_lo;   /* 64-bit GPU virtual address [31:0] */
 			uint32_t table_va_hi;   /* 64-bit GPU virtual address [63:32] */
@@ -739,7 +795,7 @@ typedef struct GhciCmdExecuteCommands {
 	uint32_t command_dwords;
 } GhciCmdExecuteCommands;
 
-/* CMD_FENCE (0x33): 6 dwords (24 bytes, J13, N11, N32) */
+/* CMD_FENCE (0x33): 6 dwords (24 bytes) */
 #define GHCI_FENCE_FLAG_IRQ             (1u << 0)
 #define GHCI_FENCE_FLAG_MEM_WRITE       (1u << 1)
 #define GHCI_FENCE_FLAG_HOST_FLUSH      (1u << 2)

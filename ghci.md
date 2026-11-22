@@ -137,9 +137,11 @@ earlier work has completed.
   [`include/ghci_regs.vh`](include/ghci_regs.vh) (Verilog) hold the
   register values of this document. An operating-system driver copies the
   C header.
-- [`include/ghci_packets.h`](include/ghci_packets.h) and
-  [`include/ghci_frame.h`](include/ghci_frame.h) hold the packet formats
-  of section 7.
+- [`include/ghci_cmd.h`](include/ghci_cmd.h) (C) holds the structured
+  command packets, pipeline state objects, descriptors, and display
+  structures of sections 7, 8, 11, and 13.
+- [`include/atg_fmt_info.vh`](include/atg_fmt_info.vh) (Verilog) holds
+  the format property and per-format capability word table (section 8.5).
 - `mk/gsi1asm.py`, `mk/gsi1dis.py`, and the reference execution and
   bit-exact arithmetic models (`gsi1model` and `gsi1fp`) cover the
   shader ISA.
@@ -313,7 +315,7 @@ In GHCI 1.0, MMIO register `0x084` is strictly reserved and reads 0. Extended re
 - `[28] CAP_FP16`: Half-precision 16-bit floating-point arithmetic supported (mirror of `DEVICE_CAPS[6]`).
 - `[29] CAP_SUBGROUP`: Native subgroup shuffle/ballot instructions supported.
 - `[30] CAP_CLIP_POLY`: Dedicated hardware polygon clipper present. When 1, primitives crossing clip boundaries are subdivided into polygons in hardware. When 0, guard-band bypass clipping is active (primitives crossing behind the camera near plane are culled or handled by software fallback).
-- `[31] CAP_BLT_SCALE`: Hardware 2D blitter scaling and unaligned byte window alignment supported. When 1, `CMD_BLT` supports arbitrary resolution scaling. When 0, hardware blitter supports 1:1 direct rectangular copies and fills only, and scaling blits are delegated to 3D pipeline draw passes.
+- `[31] CAP_BLT_SCALE`: Hardware 2D blitter scaling and unaligned byte window alignment supported. When 1, `CMD_BLIT` supports arbitrary resolution scaling. When 0, hardware blitter supports 1:1 direct rectangular copies and fills only, and scaling blits are delegated to 3D pipeline draw passes.
 
 **EXT_CAP_FMT0 (Capability Block Word 4)**:
 Provides summary hardware texture and blitter capability flags via `CMD_QUERY_CAPS` (Word 4; MMIO `0x080` is reserved and reads 0):
@@ -1446,7 +1448,8 @@ When `flags[16]` (`has_ext_stages`) is 1, the Command Processor fetches a 256-by
 | `0x98` | dw38 | `tess_state` | uint32_t | `[5:0] input_patch_control_points` (1..32), `[11:6] output_patch_control_points` (1..32), `[13:12] domain` (0: Tri, 1: Quad, 2: Isoline), `[15:14] spacing` (0: Equal, 1: Fractional Even, 2: Fractional Odd), `[16] domain_orientation` (0: CCW, 1: CW), `[17] point_mode`, `[24:18] cp_stride_words` (0..127 words per CP), `[31:25] patch_stride_128b` (1..127 x 128B patch LDS size; must satisfy `patch_stride_128b * 128 >= 0x220 + output_points * cp_stride * 4`) |
 | `0x9C` | dw39 | `gs_state` | uint32_t | `[3:0] input_topology` (0: Points, 1: Lines, 2: LineStrip, 3: Triangles, 4: TriangleStrip, 6: LinesAdj, 7: LineStripAdj, 8: TrianglesAdj, 9: TriangleStripAdj; 5 reserved), `[6:4] output_topology` (0: Points, 1: LineStrip, 2: TriangleStrip), `[15:7] max_vertices` (1..256), `[21:16] invocations` (1..32), `[23:22] stream_count` (0..3 -> 1..4 streams, reserved), `[30:24] output_stride_words` (1..127 words per output vertex), `[31]` reserved |
 | `0xA0` | dw40 | `shader_resource_limits_ext` | uint32_t | `[7:0] used_regs_tcs` (1..63), `[15:8] used_regs_tes` (1..63), `[23:16] used_regs_gs` (1..63), `[31:24] reserved` |
-| `0xA4` | dw41-42 | `geom_spill_va` | uint64_t | Geometry Shader spill memory ring buffer GPU VA (64-byte aligned; 0 = LDS internal only) |
+| `0xA4` | dw41 | `geom_spill_va_lo` | uint32_t | Geometry Shader spill memory ring buffer GPU VA `[31:0]` (64-byte aligned; 0 = LDS internal only) |
+| `0xA8` | dw42 | `geom_spill_va_hi` | uint32_t | Geometry Shader spill memory ring buffer GPU VA `[63:32]` |
 | `0xAC` | dw43 | `geom_spill_size_bytes` | uint32_t | Size in bytes of spill ring buffer |
 | `0xB0` | dw44 | `geom_spill_stride_bytes` | uint32_t | Maximum per-invocation spill slice size |
 | `0xB4..0xFF` | dw45-63 | `reserved[19]` | 19 × 4 B | Reserved for future pipeline extensions (ray tracing, amplification, etc.); must be 0 |
@@ -1622,6 +1625,7 @@ typedef struct GhciRenderPassDesc {
   - Depth buffer: Cleared with `CMD_BEGIN_RENDER_PASS.depth_clear_value`.
   - Stencil buffer: Cleared with `CMD_BEGIN_RENDER_PASS.stencil_clear_value`.
 - **Multisample Resolve**: `GhciRenderPassDesc.resolve` specifies the fast automatic hardware resolve destination for color attachment 0 executed at render pass end. For multi-target MRT resolve (attachments 1..7), the driver issues explicit `CMD_RESOLVE_IMAGE` (0x44) commands.
+- **Attachment Write-Bounds Guarantee**: Hardware ROP rendering, MSAA sample memory writes, `CMD_BEGIN_RENDER_PASS` hardware clears, and `GhciRenderPassDesc.resolve` automatic resolves NEVER write outside the render pass dimensions ($0 \le x < \text{width}$, $0 \le y < \text{height}$) and each bound attachment's `row_pitch_bytes` stride. Fast-clear metadata is strictly on-chip and is never written to off-chip memory.
 
 #### Descriptor Table Persistence & Dynamic Binding
 - Texture and sampler descriptor tables bound to sets `0..7` via `CMD_BIND_DESCRIPTOR_TABLE` remain active per bind point (`Graphics` vs. `Compute`) and persist across draws/dispatches until explicitly rebound or invalidated (`CMD_SESSION_CLOSE` / `CTRL.RESET`).
@@ -2943,14 +2947,28 @@ Nothing else changes.
 
 | Item | Mapping |
 | --- | --- |
-| Identification | Base class 03h (display controller), subclass 02h (3D controller), or 80h when it has a display controller without VGA compatibility. The vendor and device IDs are the implementer's. A driver identifies GHCI by `GHCI_MAGIC` and `GHCI_VERSION` at offset 0 of BAR0 (no programming-interface value is assigned) |
+| Identification | Base class 03h (display controller), subclass 02h (3D controller), or 80h when it has a display controller without VGA compatibility. Generic GHCI drivers may optionally discover conforming devices via **PCI Vendor-Specific Capability `0x09`** (`"GHCI"`, layout below; VSEC `0x000B` and DVSEC `0x0023` are not used). Implementations that cannot place Capability `0x09` in lower PCI configuration space may use implementer-assigned or provisional Vendor/Device IDs (drivers may match those IDs individually; a generic driver is not guaranteed to discover devices lacking Capability `0x09`). In all cases, a driver confirms GHCI by `GHCI_MAGIC` and `GHCI_VERSION` at offset 0 of BAR0 (no programming-interface value is assigned) |
 | BAR0 | 32-bit, non-prefetchable memory, 128 KiB: the register window of section 3 |
 | BAR2 (optional) | Memory, 32-bit or 64-bit (the BAR's type bits say which; no GHCI capability): the local window, WINDOW_SIZE bytes rounded up to a power of two. Prefetchable is recommended (it may then be mapped write-combining; section 11.1) but not required |
 | Interrupts | MSI or MSI-X with one vector, or INTx as a fallback. The device sends a message when CTRL.IRQ_GLOBAL == 1 and OR(IRQ_STATUS & IRQ_ENABLE) goes from 0 to 1, and again after a write to IRQ_STATUS or IRQ_ENABLE that leaves it 1. INTx carries the level itself. Display completion and event-ring notifications consolidate into `IRQ_STATUS[3]` (`GHCI_IRQ_DISPLAY`): the one vector covers them |
-| Expansion ROM BAR (optional) | Optional PCIe Expansion ROM BAR containing an EFI GOP (Graphics Output Protocol) driver for pre-OS boot console display. When present, GOP accesses ONLY MMIO (`BOOT_CAPS`, `MEM_WINDOW_CTRL`, `BOOT_DISP` at `0x140..0x15F`) and the BAR2 local window (`BOOT_CAPS[5] == 1`); GOP never initializes a command ring, MMU, or interrupts (§13.3). On PCIe, `PCI_CAP_ID_AF` / vendor capabilities are optional |
+| Expansion ROM BAR (optional) | Optional PCIe Expansion ROM BAR containing an EFI GOP (Graphics Output Protocol) driver for pre-OS boot console display. When present, GOP accesses ONLY MMIO (`BOOT_CAPS`, `MEM_WINDOW_CTRL`, `BOOT_DISP` at `0x140..0x15F`) and the BAR2 local window (`BOOT_CAPS[5] == 1`); GOP never initializes a command ring, MMU, or interrupts (§13.3) |
 | DMA | The GPU makes no memory access until Bus Master Enable is set in the PCIe command register. GPU host addresses (section 11.2) are PCIe bus addresses. No Snoop is not set in version 1; the fence write and the interrupt message do not use Relaxed Ordering (section 11.5) |
 | Reset | CTRL.RESET is GHCI's reset (section 10). A function-level reset, where supported, resets the whole function, the display controller included |
 | Power | Version 1 uses D0 only |
+
+When present in the PCI Configuration Space capability list (offset `0x34` chain), **PCI Capability `0x09` (`"GHCI"`)** uses the following 16-byte little-endian layout:
+
+| Offset (from Cap base) | Size | Field | Value / Description |
+| :---: | :---: | :--- | :--- |
+| `+0x00` | `u8` | `cap_id` | `0x09` (`PCI_CAP_ID_VNDR`) |
+| `+0x01` | `u8` | `next_ptr` | Offset of next PCI Capability (`0x00` if last) |
+| `+0x02` | `u8` | `cap_len` | `0x10` (16 bytes) |
+| `+0x03` | `u8` | `cap_rev` | `0x01` (GHCI PCI Capability format version 1) |
+| `+0x04..+0x07` | `u32` | `signature` | `0x47484349` (`"GHCI"`, matching `GHCI_MAGIC`) |
+| `+0x08..+0x0B` | `u32` | `ghci_version` | `0x00010000` (matching `GHCI_VERSION`) |
+| `+0x0C..+0x0F` | `u32` | `flags` | `0x00000000` (reserved) |
+
+A generic driver scanning the PCI capability list matches a device when `cap_id == 0x09 && cap_len >= 0x0C && signature == 0x47484349 && (ghci_version >> 16) == 1`, then verifies BAR0 `GHCI_MAGIC` and `GHCI_VERSION`.
 
 16. Versions & Capabilities
 ---------------------------

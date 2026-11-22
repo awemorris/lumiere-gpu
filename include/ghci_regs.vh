@@ -1,5 +1,5 @@
 /*
- * Amaterrace GPU
+ * Lumiere GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -199,7 +199,7 @@ localparam [16:0] GHCI_IRQ_ENABLE     = GHCI_REG_IRQ_ENABLE;
 localparam [16:0] GHCI_WDT_CYCLES     = GHCI_REG_WDT_CYCLES;
 localparam [16:0] GHCI_SESSION_ACTIVE = GHCI_REG_SESSION_ACTIVE;
 
-/* DEVICE_CAPS bits (0x008, J08) */
+/* DEVICE_CAPS bits (CMD_QUERY_CAPS Word 2) */
 localparam GHCI_DEV_CAP_UMA            = 0;
 localparam GHCI_DEV_CAP_IOMMU          = 1;
 localparam GHCI_DEV_CAP_HW_WALKER      = 2;
@@ -261,25 +261,12 @@ localparam GHCI_EXT_FEAT_SUBGROUP       = 29;
 localparam GHCI_EXT_FEAT_CLIP_POLY      = 30;
 localparam GHCI_EXT_FEAT_BLT_SCALE      = 31;
 
-localparam [16:0] GHCI_CPFW_CTRL    = 17'h00170;	/* CPFW window (vendor-defined) */
-localparam [16:0] GHCI_CPFW_STATUS  = 17'h00174;
-localparam [16:0] GHCI_CPFW_VERSION = 17'h00178;
-localparam [16:0] GHCI_CPFW_IBASE   = 17'h001A0;
-localparam [16:0] GHCI_CPFW_IWORDS  = 17'h001A4;
-localparam [16:0] GHCI_CPFW_DBASE   = 17'h001A8;
-localparam [16:0] GHCI_CPFW_DWORDS  = 17'h001AC;
-localparam [16:0] GHCI_CPFW_MBOX0   = 17'h001B0;
+/* CPFW Control-Path Window Ranges (vendor-defined; registers in atg1_regs.vh) */
+localparam [16:0] GHCI_CPFW_LO_BASE = 17'h00170;	/* 0x170..0x17F */
+localparam [16:0] GHCI_CPFW_LO_SIZE = 17'h00010;
+localparam [16:0] GHCI_CPFW_HI_BASE = 17'h001A0;	/* 0x1A0..0x1BF */
+localparam [16:0] GHCI_CPFW_HI_SIZE = 17'h00020;
 localparam [16:0] GHCI_STATE_BASE   = 17'h01000;	/* Internal STATE[0..511] */
-
-/* CPFW_CTRL and CPFW_STATUS bits. */
-localparam GHCI_CPFW_CTRL_LOAD = 0;
-localparam GHCI_CPFW_CTRL_RUN = 1;
-localparam GHCI_CPFW_CTRL_HALT = 2;
-localparam GHCI_CPFW_STATUS_READY = 0;
-localparam GHCI_CPFW_STATUS_FAULT = 1;
-localparam GHCI_CPFW_STATUS_ALIVE = 2;
-localparam GHCI_CPFW_STATUS_STOPPED = 3;	/* the core is stopped or held in reset */
-localparam GHCI_CPFW_STATUS_LOADING = 4;
 
 /* CTRL bits (0x014). */
 localparam GHCI_CTRL_RESET      = 0;
@@ -335,14 +322,14 @@ localparam [3:0] GHCI_FAULT_UNIT_ROP = 4'd5;
 localparam [3:0] GHCI_FAULT_UNIT_BLT = 4'd6;
 
 /* Shader Stages for FAULT_INFO[19:16] */
-localparam [3:0] GHCI_STAGE_VS       = 4'd0;
-localparam [3:0] GHCI_STAGE_FS       = 4'd1;
-localparam [3:0] GHCI_STAGE_CS       = 4'd2;
-localparam [3:0] GHCI_STAGE_MS       = 4'd3;
-localparam [3:0] GHCI_STAGE_TS       = 4'd4;
-localparam [3:0] GHCI_STAGE_TCS      = 4'd5;
-localparam [3:0] GHCI_STAGE_TES      = 4'd6;
-localparam [3:0] GHCI_STAGE_GS       = 4'd7;
+localparam [3:0] GHCI_FAULT_STAGE_VS  = 4'd0;
+localparam [3:0] GHCI_FAULT_STAGE_FS  = 4'd1;
+localparam [3:0] GHCI_FAULT_STAGE_CS  = 4'd2;
+localparam [3:0] GHCI_FAULT_STAGE_MS  = 4'd3;
+localparam [3:0] GHCI_FAULT_STAGE_TS  = 4'd4;
+localparam [3:0] GHCI_FAULT_STAGE_TCS = 4'd5;
+localparam [3:0] GHCI_FAULT_STAGE_TES = 4'd6;
+localparam [3:0] GHCI_FAULT_STAGE_GS  = 4'd7;
 
 /* MEM, BOOT_DISP, and PROT bit positions */
 localparam GHCI_MEM_WINDOW_ENABLE      = 0;
@@ -373,7 +360,7 @@ localparam [8:0] GHCI_S_BLT_DEPTH     = 9'h011;	/* 3D volume slice depth count *
 /*
  * The other STATE ranges.  docs/ghci.md section 8.3 defines the program
  * range; the VF, RX, ROP and TU ranges and the vendor words are
- * Amaterrace's layout until the draft defines them (design section 2.3).
+ * Lumiere's layout until the draft defines them (design section 2.3).
  */
 localparam [8:0] GHCI_S_BLT = 9'h000;
 localparam [8:0] GHCI_S_VF = 9'h020;
@@ -507,7 +494,7 @@ localparam [8:0] GHCI_S_LDS_BYTES = 9'h198;
 localparam [8:0] GHCI_S_WG_SIZE = 9'h199;
 localparam [8:0] GHCI_S_VS_OUT_WORDS = 9'h19A;
 
-/* Amaterrace's vendor words (0x1E0-0x1FF), written by the µop sequencer. */
+/* Lumiere's vendor words (0x1E0-0x1FF), written by the µop sequencer. */
 localparam [8:0] GHCI_S_RAW = 9'h1E0;	/* DRAW_RAW's 9 words, 0x1E0-0x1E8 */
 localparam [8:0] GHCI_S_GRID_X = 9'h1E9;	/* DISPATCH's grid */
 localparam [8:0] GHCI_S_GRID_Y = 9'h1EA;
