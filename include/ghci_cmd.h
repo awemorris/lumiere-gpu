@@ -237,6 +237,7 @@ extern "C" {
 #define GHCI_CMD_WRITE_TIMESTAMP        0x35u
 #define GHCI_CMD_BEGIN_QUERY            0x36u
 #define GHCI_CMD_END_QUERY              0x37u
+#define GHCI_CMD_WRITE_MEM              0x3Cu
 
 /* Memory Transfer & Blit Commands (0x40..0x4F, Guarded by CAP_BLT) */
 #define GHCI_CMD_COPY_BUFFER            0x40u
@@ -760,6 +761,21 @@ typedef struct GhciCmdQuery {
 	uint32_t query_index_and_flags; /* [23:0] query_index, [24] PRECISE, [25] AVAILABILITY */
 } GhciCmdQuery;
 
+/* CMD_WRITE_MEM (0x3C): 5 dwords (20 bytes) */
+#define GHCI_WRITE_MEM_STAGE_MASK        0x3u
+#define GHCI_WRITE_MEM_STAGE_TOP         0u
+#define GHCI_WRITE_MEM_STAGE_BOTTOM      1u
+#define GHCI_WRITE_MEM_FLAG_64           (1u << 2)
+#define GHCI_WRITE_MEM_FLAG_FLUSH_CACHES (1u << 3)
+
+typedef struct GhciCmdWriteMem {
+	uint32_t header;                /* opcode: GHCI_CMD_WRITE_MEM, dwords: 5, flags */
+	uint32_t dst_va_lo;             /* 64-bit session GPU VA [31:0] (4B/8B aligned) */
+	uint32_t dst_va_hi;             /* 64-bit session GPU VA [63:32] */
+	uint32_t value_lo;              /* 32-bit value, or low 32 bits if WRITE_64 */
+	uint32_t value_hi;              /* High 32 bits if WRITE_64 (ignored when WRITE_64 == 0) */
+} GhciCmdWriteMem;
+
 /*
  * ============================================================================
  * Virtual Memory, MMU Bringup & Fault Log Commands (0x10..0x18)
@@ -770,7 +786,7 @@ typedef struct GhciCmdQuery {
 #define GHCI_VM_FLAG_EXEC       (1u << 2)
 #define GHCI_VM_FLAG_COHERENT   (1u << 3)
 #define GHCI_VM_FLAG_WC         (1u << 4)
-#define GHCI_VM_FLAG_LOCAL      (1u << 5) /* 1 = Local VRAM, 0 = Host PCIe / IOVA */
+/* flags[5] is reserved (must be 0); target memory is determined by phys (§11.3) */
 
 /* GhciVmPtMemInfo (64 bytes, 64-byte aligned, output of CMD_VM_QUERY_PT_MEM) */
 typedef struct GhciVmPtMemInfo {
@@ -823,7 +839,7 @@ typedef struct GhciVmMapComp {
 typedef struct GhciCmdVmMap {
 	uint32_t header;                /* opcode: GHCI_CMD_VM_MAP, dwords: 16, flags: 0 */
 	uint32_t session_id;            /* Target session identifier (0..15) */
-	uint32_t flags;                 /* [5:0] GHCI_VM_FLAG_*, [31:6] reserved (0) */
+	uint32_t flags;                 /* [4:0] GHCI_VM_FLAG_*, [31:5] reserved (0) */
 	uint32_t reserved0;             /* 0 */
 	uint32_t gpu_va_lo;             /* GPU virtual address (4 KiB aligned) [31:0] */
 	uint32_t gpu_va_hi;             /* GPU virtual address [63:32] */
@@ -882,10 +898,10 @@ typedef struct GhciCmdVmUnmap {
 typedef struct GhciCmdSessionOpen {
 	uint32_t header;                /* opcode: GHCI_CMD_SESSION_OPEN, dwords: 6, flags: 0 */
 	uint32_t session_id;            /* Client session identifier (1..15) */
-	uint32_t flags;                 /* [0] PROTECTED, [31:1] reserved (0) */
-	uint32_t init_pt_pa_lo;         /* Session initial PT PA [31:0] (ignored if CAP_BOOT_PROT == 0) */
+	uint32_t flags;                 /* [0] PROTECTED (bind PROT slot; KICK_ABSENT if CAP_PROT==0), [31:1] reserved (0) */
+	uint32_t init_pt_pa_lo;         /* Session initial PT PA [31:0] (always required when CAP_HW_WALKER == 1) */
 	uint32_t init_pt_pa_hi;         /* Session initial PT PA [63:32] */
-	uint32_t init_pt_bytes;         /* Allocated bytes (>= info.init_pt_bytes when CAP_BOOT_PROT == 1) */
+	uint32_t init_pt_bytes;         /* Allocated bytes (>= info.init_pt_bytes when CAP_HW_WALKER == 1) */
 } GhciCmdSessionOpen;
 
 /* CMD_SESSION_CLOSE (0x13): 2 dwords (8 bytes) */

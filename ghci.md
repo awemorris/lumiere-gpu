@@ -248,7 +248,7 @@ GHCI provides structured hardware capability discovery through early boot flags 
 |:---:|:---:|:---|
 | [0] | CAP_BOOT_CP | 1 = Command Processor present and responsive; 0 = no Command Processor (not a GHCI 1.0 configuration; a driver does not attach) |
 | [1] | CAP_BOOT_HW_WALKER | 1 = Autonomous hardware page table walker (MMU) present; 0 = Flat physical mode |
-| [2] | CAP_BOOT_PROT | 1 = Per-session hardware memory protection and `PROT` window (`0x1D0..0x1DF`) present; 0 = Bare-metal / single-process mode |
+| [2] | CAP_BOOT_PROT | 1 = Physical-range protection table (`PROT`) hardware and `PROT` window (`0x1D0..0x1DF`) present; 0 = `PROT` hardware absent |
 | [3] | CAP_BOOT_MEM | 1 = `MEM` window (`0x100..0x13F`) present; 0 = absent (equivalent to UMA, unlimited `HOST_LIMIT`, and no local window) |
 | [4] | CAP_BOOT_CPFW | 1 = `CPFW` window (`0x170..0x17F`, `0x1A0..0x1BF`) present (vendor-defined; unused by standard drivers); 0 = absent |
 | [5] | CAP_BOOT_BOOT_DISP | 1 = `BOOT_DISP` window (`0x140..0x15F`) implemented (PCIe binding only, discrete VRAM + display + local window); 0 = absent (other bus bindings, UMA, or no display) |
@@ -275,7 +275,7 @@ Detailed execution unit topologies, optional rendering features, and stage exten
 | [7] | CAP_GSI1 | 1 = Native GSI1 standard shader ISA execution |
 | [15:8] | PHYS_LANES | Number of physical execution lanes per Shader Unit |
 | [23:16] | NUM_SU | Number of Shader Units present (0 = blit/display only, >=1 = compute/graphics shaders) |
-| [24] | CAP_PROT | 1 = Per-session hardware memory protection present; 0 = Bare-metal / single-process mode |
+| [24] | CAP_PROT | 1 = Physical-range protection table (`PROT`) hardware present; 0 = `PROT` hardware absent |
 | [25] | CAP_TEX_FFILT | 1 = Floating-point linear texture filtering supported; 0 = UNORM8 bilinear filter only |
 | [26] | CAP_ROP_PACK | 1 = Hardware render-target format packing supported for non-blended integer and 32-bit float attachments; 0 = Unsupported |
 | [27] | CAP_TASK_SHADER | 1 = Task Shader stage supported |
@@ -451,14 +451,14 @@ The driver observes lifecycle states via `STATUS` and `CTRL`:
 - **FAULTED**: `STATUS.FAULTED == 1`. Global execution halted due to unrecoverable fault.
 
 #### Session Fault Isolation vs Whole-Device Fault
-- **Individual Session Fault (`CAP_PROT=1` active)**:
-  When a command, memory translation, or shader fault occurs within an isolated client session ($i \in [1, 15]$):
+- **Individual Session Fault (`CAP_BOOT_HW_WALKER == 1`)**:
+  When a command, memory translation, or shader fault occurs within an isolated client session ($i \in [1, 15]$), regardless of `CAP_PROT`:
   - The CP immediately clears `SESSION_ACTIVE[i]` to 0.
-  - The CP latches error details into `FAULT_INFO` (session ID, unit, kind, syndrome) and faulting address/PC into `FAULT_ADDR`.
-  - The CP raises `IRQ_STATUS.IRQ_FAULT` (bit 1).
+  - If the `0x16` fault log ring is enabled (`ENABLE == 1`), the CP writes a 32-byte `GhciFaultRecord` into the ring (without latching MMIO `FAULT_INFO` or `FAULT_ADDR`); if the fault log ring is disabled (`ENABLE == 0`), the CP latches error details into MMIO `FAULT_INFO` (session ID, unit, kind, syndrome) and faulting address/PC into `FAULT_ADDR` (§3.5, §10).
+  - The CP raises `IRQ_STATUS.IRQ_FAULT` (bit 1; when the fault log ring is enabled, after the 32-byte record DMA write is visible to the host).
   - **`STATUS.FAULTED` (bit 2) is NOT set.** The GPU and CP remain in `RUNNING` state without interruption.
   - **Faulted Session Execution Semantics**:
-    - For all subsequent packets in the command stream associated with the faulted session $i$: all draw commands (`CMD_DRAW*`), compute dispatches (`CMD_DISPATCH`), blitter operations (`CMD_COPY*`, `CMD_BLIT`), and secondary buffers (`CMD_EXECUTE_COMMANDS`) are **instantly discarded as NOPs without stall or hardware invocation**.
+    - For all subsequent packets in the command stream associated with the faulted session $i$: all draw commands (`CMD_DRAW*`), compute dispatches (`CMD_DISPATCH`), blitter operations (`CMD_COPY*`, `CMD_BLIT`), `CMD_WRITE_MEM` (`0x3C`), and secondary buffers (`CMD_EXECUTE_COMMANDS`) are **instantly discarded as NOPs without stall or hardware invocation**.
     - Subsequent `CMD_FENCE` packets associated with session $i$ (or submitted after the fault) **are executed normally**: the CP writes the 64-bit fence sequence value to host memory and asserts `IRQ_FENCE`. This guarantees that user-space and kernel wait queues unblock promptly with completion or timeout detection, preventing host deadlocks.
     - Issuing `CMD_BIND_SESSION` to a closed or faulted session causes subsequent draws/dispatches to be dropped as NOPs.
   - **Single-Client Operation**: If only one client session is currently active and faults, `STATUS.FAULTED` is still NOT asserted. The engine remains operational, and the host driver simply reclaims the faulted session via `CMD_SESSION_CLOSE(i)` without requiring a full device reset. Session 0 is reserved for kernel driver operations and is not counted as an application client session.
@@ -468,8 +468,8 @@ The driver observes lifecycle states via `STATUS` and `CTRL`:
     3. Issue `CMD_SESSION_CLOSE(session_id)` followed by `CMD_FENCE` to reclaim the session's initial and intermediate page table memory once the fence completes (§11.6).
     4. Notify the affected application context of session failure; all other concurrent sessions continue running unaffected.
 - **Whole-Device Fault**:
-  - In bare-metal mode (`CAP_PROT = 0`), any fault halts the entire device and asserts `STATUS.FAULTED`.
-  - In protected mode (`CAP_PROT = 1`), `STATUS.FAULTED` (bit 2) is asserted ONLY upon fatal whole-device failures: bus interconnect deadlock (`AXI_STUCK`), primary command ring framing corruption, DMA bus error while writing `GhciFaultRecord` (`0x16`), illegal operations within Session 0 (kernel session), or unrecoverable hardware pipeline hang. Faults in client sessions ($i \ge 1$) NEVER assert `STATUS.FAULTED`, even if only one client session is open or all client sessions have faulted.
+  - In flat physical mode (`CAP_BOOT_HW_WALKER == 0`), there is no per-session virtual address isolation; any fault halts the entire device and asserts `STATUS.FAULTED`.
+  - When `CAP_BOOT_HW_WALKER == 1`, `STATUS.FAULTED` (bit 2) is asserted ONLY upon fatal whole-device failures: bus interconnect deadlock (`AXI_STUCK`), primary command ring framing corruption, DMA bus error while writing `GhciFaultRecord` (`0x16`), illegal operations within Session 0 (kernel session), or unrecoverable hardware pipeline hang. Faults in client sessions ($i \ge 1$) NEVER assert `STATUS.FAULTED`, even if `CAP_PROT == 0`, only one client session is open, or all client sessions have faulted.
   - When `STATUS.FAULTED` is asserted, the CP halts all pipeline blocks and asserts `STATUS.QUIESCE`. Recovery requires a full device reset via `CTRL.RESET = 1`.
 
 ### 3.4 IRQ_STATUS and IRQ_ENABLE (0x038, 0x03C)
@@ -629,19 +629,21 @@ Every memory address inside a command packet belongs to one of three strictly de
    - Descriptor table addresses (`table_va`)
    - Secondary ring addresses (`secondary_ring_va` in `CMD_EXECUTE_COMMANDS`)
    - Blitter / DMA addresses (`src_va`, `dst_va` in `CMD_COPY_*`, `CMD_BLIT`) (transfers between host RAM and local VRAM are performed by mapping host IOVA and local VRAM physical pages into the session's GPU VA via `CMD_VM_MAP`, and executing `CMD_COPY_BUFFER` using the respective GPU VAs).
-   - Occlusion and timestamp query storage (`query_pool_va` in `CMD_BEGIN/END_QUERY`, and `dst_addr` in `CMD_WRITE_TIMESTAMP` when `flags[0] == 0`).
+   - Occlusion and timestamp query storage (`query_pool_va` in `CMD_BEGIN/END_QUERY`, and `dst_addr` in `CMD_WRITE_TIMESTAMP` when `flags[0] == 0`), and `dst_va` in `CMD_WRITE_MEM` (`0x3C`).
+   - Note: In **flat physical mode (`CAP_BOOT_HW_WALKER == 0`)**, there is no MMU translation; all address fields in this category (both in primary ring packets and in secondary command buffers via `CMD_EXECUTE_COMMANDS`) are **physical addresses** within the unit-reachable flat range $[0, \min(2^{\max(\text{VA\_BITS}, 32)}, \text{MEM\_HOST\_LIMIT}))$ (§11.2).
 2. **Host DMA / Physical Bus Address**:
-   - `fence_addr` in `CMD_FENCE` and `CMD_WAIT_FENCE`: 64-bit physical memory address: Host system memory PCIe DMA address / IOVA, or Local VRAM physical address ($\ge \text{LOCAL\_BASE}$).
+   - `fence_addr` in `CMD_FENCE` and `CMD_WAIT_FENCE`: 64-bit physical memory address: Host system memory PCIe DMA address / IOVA, or Local VRAM physical address within $[\text{MEM\_VRAM\_BASE}, \text{MEM\_VRAM\_BASE} + \text{MEM\_VRAM\_SIZE})$ (§11.3).
    - `dst_addr` in `CMD_WRITE_TIMESTAMP` when `flags[0] == 1` (privileged host memory timestamp write, primary ring only).
 3. **Scanout Framebuffer Address**:
    - `base` in `CMD_FLIP` (dword 2-3 lo/hi): 64-bit physical address (PA) in local VRAM or host physical DMA aperture (`< HOST_LIMIT`), 64-byte aligned. Display scanout bypasses MMU session translation (§13.2).
 
-**Session 0 Execution Context & MMU Startup**:
+**Session 0 Execution Context, MMU Startup & Flat Physical Mode**:
 - Session 0 is reserved for privileged kernel driver operations.
 - The command ring itself is fetched by the CP from host physical DMA memory (`RING_BASE_LO/HI`).
-- **MMU Bringup**: At power-on and after `CTRL.RESET`, even when `CAP_BOOT_HW_WALKER == 1`, the MMU starts **disabled (`MMU = OFF`)** with `SESSION_ACTIVE == 0`. While `MMU == OFF`, only physical-address primary-ring commands (`CMD_NOP`, `CMD_QUERY_CAPS`, `CMD_FAULT_LOG_SETUP`, `CMD_VM_QUERY_PT_MEM`, `CMD_MMU_ENABLE`, `CMD_FENCE`, `CMD_WAIT_FENCE`, `CMD_WRITE_TIMESTAMP` with `flags[0] == 1`, and display commands `0x50..0x57`) are accepted; any GPU-VA command (`0x10..0x14`, `0x20..0x2E`, `0x30..0x32`, `0x35(flags[0]==0)`, `0x36..0x37`, `0x40..0x46`) raises `GHCI_FAULT_KIND_INVALID_OP` (Kind 1, Session 0 whole-device fault).
+- **MMU Bringup (`CAP_BOOT_HW_WALKER == 1` only)**: At power-on and after `CTRL.RESET`, when `CAP_BOOT_HW_WALKER == 1`, the MMU starts **disabled (`MMU = OFF`)** with `SESSION_ACTIVE == 0`. While `MMU == OFF`, only physical-address primary-ring commands (`CMD_NOP`, `CMD_QUERY_CAPS`, `CMD_FAULT_LOG_SETUP`, `CMD_VM_QUERY_PT_MEM`, `CMD_MMU_ENABLE`, `CMD_FENCE`, `CMD_WAIT_FENCE`, `CMD_WRITE_TIMESTAMP` with `flags[0] == 1`, and display commands `0x50..0x57`) are accepted; any GPU-VA command (`0x10..0x14`, `0x20..0x2E`, `0x30..0x32`, `0x35(flags[0]==0)`, `0x36..0x37`, `0x3C`, `0x40..0x46`) raises `GHCI_FAULT_KIND_INVALID_OP` (Kind 1, Session 0 whole-device fault).
 - The driver queries initial page table memory requirements with `CMD_VM_QUERY_PT_MEM` (`0x17`), allocates memory according to §11.2, and passes it to `CMD_MMU_ENABLE` (`0x18`), which initializes Session 0's page table, invalidates all TLBs, enables the MMU (`MMU = ON`), and sets `SESSION_ACTIVE[0] = 1`.
 - If the kernel driver submits render or compute operations under Session 0, any referenced PSOs, descriptors, or buffers must be mapped into Session 0's GPU VA space via `CMD_VM_MAP(session_id = 0, ...)`. Before mapping, accesses to unmapped addresses in Session 0 trigger `kind 9 PAGE_FAULT`.
+- **Flat Physical Mode (`CAP_BOOT_HW_WALKER == 0`)**: There is no MMU and no `MMU == OFF` bringup phase; graphics, compute, transfer, query, `CMD_WRITE_MEM`, `CMD_WRITE_TIMESTAMP`, and `CMD_EXECUTE_COMMANDS` (when `CAP_SECONDARY_RING == 1`) are accepted immediately using flat physical addresses in $[0, \min(2^{\max(\text{VA\_BITS}, 32)}, \text{MEM\_HOST\_LIMIT}))$ (§11.2). VM/session commands `0x10..0x12`, `0x17`, `0x18` raise `GHCI_FAULT_KIND_KICK_ABSENT` (Kind 2); `CMD_BIND_SESSION` accepts `session_id == 0` only (non-zero raises `INVALID_OP`). Secondary command buffers submitted via `CMD_EXECUTE_COMMANDS` obey the exact same nesting, forbidden-command, alignment, and fault-discard rules as in walker mode (§11.6).
 
 ![GHCI Command Execution Sequence](docs/svg/ghci_command_sequence.svg)
 
@@ -760,6 +762,7 @@ The canonical GHCI 1.0 structured command set is defined authoritatively by this
 | `0x35` | `CMD_WRITE_TIMESTAMP` | 4 | Mandatory | Writes 64-bit constant-rate `TIMESTAMP` counter to GPU VA or host memory |
 | `0x36` | `CMD_BEGIN_QUERY` | 4 | Mandatory (Raster) | Begins occlusion query sample counting (64-bit pool VA) |
 | `0x37` | `CMD_END_QUERY` | 4 | Mandatory (Raster) | Ends occlusion query sample counting (64-bit pool VA) |
+| `0x3C` | `CMD_WRITE_MEM` | 5 | Mandatory | Top-of-pipe or synchronous 32/64-bit write to session GPU VA |
 | `0x40` | `CMD_COPY_BUFFER` | 8 | `CAP_BLT` | 2D DMA buffer-to-buffer transfer (flags & burst align) |
 | `0x41` | `CMD_COPY_IMAGE` | 11 | `CAP_BLT` | 2D/3D image-to-image subresource slice transfer |
 | `0x42` | `CMD_BLIT` | 12 | `CAP_BLT` | Image blit with scaling and format conversion |
@@ -998,7 +1001,7 @@ Emits a 64-bit sequence counter to memory upon completion of all earlier work (6
   - `[0]`: `GHCI_FENCE_FLAG_IRQ` (0x1) — Raise `GHCI_IRQ_FENCE` (`IRQ_STATUS[0]`) upon completion
   - `[1]`: `GHCI_FENCE_FLAG_MEM_WRITE` (0x2) — Write 64-bit sequence counter `fence_seq` to memory at `fence_addr`. If bit 1 is 0, memory write is omitted (interrupt-only fence)
   - `[2]`: `GHCI_FENCE_FLAG_HOST_FLUSH` (0x4) — Flush GPU dirty caches before signaling fence
-- *Address Routing*: For host synchronization, `fence_addr` is a 64-bit host physical DMA address / IOVA in host memory routed to the host PCIe AXI bus across full `PA_BITS` ($40..48$ bits) (or constrained below `HOST_LIMIT` on platforms without IOMMU and with a 32-bit DMA controller). The hardware memory controller also routes physical addresses within $[LOCAL\_BASE, LOCAL\_BASE + LOCAL\_SIZE)$ to local VRAM for internal GPU-side synchronization; the host does not poll local VRAM fences through the BAR window.
+- *Address Routing*: For host synchronization, `fence_addr` is a 64-bit host physical DMA address / IOVA in host memory routed to the host PCIe AXI bus across full `PA_BITS` ($40..48$ bits) (or constrained below `MEM_HOST_LIMIT` when non-zero). Addresses within $[\text{MEM\_VRAM\_BASE}, \text{MEM\_VRAM\_BASE} + \text{MEM\_VRAM\_SIZE})$ route to local VRAM for internal GPU-side synchronization; addresses outside that range route to host memory (§11.3). The host does not poll local VRAM fences through the BAR window.
 
 #### `CMD_WAIT_FENCE` (0x34)
 CP pauses ring execution until memory fence value satisfies condition (5 dwords, 20 bytes).
@@ -1008,10 +1011,12 @@ CP pauses ring execution until memory fence value satisfies condition (5 dwords,
 - `dword 2`: `fence_addr[63:32]`
 - `dword 3`: `wait_value[31:0]` (64-bit comparison threshold)
 - `dword 4`: `wait_value[63:32]`
-- *Address Routing*: `fence_addr` physical routing follows the identical rules as `CMD_FENCE`: for host synchronization, `fence_addr` is a host memory DMA address; addresses within $[LOCAL\_BASE, LOCAL\_BASE + LOCAL\_SIZE)$ route to local VRAM for internal GPU-side synchronization.
+- *Address Routing*: `fence_addr` physical routing follows the identical rules as `CMD_FENCE`: addresses within $[\text{MEM\_VRAM\_BASE}, \text{MEM\_VRAM\_BASE} + \text{MEM\_VRAM\_SIZE})$ route to local VRAM for internal GPU-side synchronization, and addresses outside that range route to host memory (§11.3).
 - **Signed 64-Bit Comparison Condition**:
   $$\text{(int64\_t)}(\text{current\_seq} - \text{wait\_seq}) \ge 0$$
   This protects against 64-bit sequence number wrap-around and guarantees proper monotonically increasing synchronization ordering.
+- **Polling Interval & Deadlock Rules**:
+  The CP re-reads the waited memory address (bypassing GPU L1/L2 caches) at a minimum interval of `64` `GCLK` cycles (implementations may back off to longer intervals to reduce bus traffic). The awaited memory value MUST be written before the doorbell (`RING_WPTR`) update or by an earlier completed packet in the same primary ring. Waiting on a value to be written by a subsequent packet in the same ring stalls the ring permanently; because the watchdog pauses (`wdt_hold`) during `CMD_WAIT_FENCE` (§10), the hardware watchdog will not fire, and recovery relies on host kernel driver timeout detection and `CTRL.RESET`.
 
 #### `CMD_WRITE_TIMESTAMP` (0x35)
 Latches the 64-bit constant-rate `TIMESTAMP` counter (whose frequency is reported in `CMD_QUERY_CAPS` Word 30 `TIMESTAMP_HZ`) to memory at a designated pipeline stage (4 dwords, 16 bytes), matching `GhciCmdWriteTimestamp` ([`include/ghci_cmd.h`](include/ghci_cmd.h)):
@@ -1127,7 +1132,7 @@ Transfers an optimal tiled image surface slice to a linear buffer (10 dwords, 40
 Maps backing physical/IOVA pages into a session's GPU virtual address space (16 dwords, 64 bytes, primary ring only) ([`include/ghci_cmd.h`](include/ghci_cmd.h)):
 - `dword 0`: Header (`opcode = 0x10`, `dwords = 16`, `flags = 0`)
 - `dword 1`: `session_id` ($0..15$)
-- `dword 2`: `flags` (`[5:0]`: `GHCI_VM_FLAG_*` (`[0]` Read, `[1]` Write, `[2]` Exec, `[3]` Coherent, `[4]` WC, `[5]` Local VRAM for `phys`); `[31:6]` reserved `0`)
+- `dword 2`: `flags` (`[4:0]`: `GHCI_VM_FLAG_*` (`[0]` Read, `[1]` Write, `[2]` Exec, `[3]` Coherent, `[4]` WC); `[31:5]` reserved `0` — non-zero raises `GHCI_FAULT_KIND_INVALID_OP`; target memory is determined solely by `phys` per §11.3)
 - `dword 3`: `reserved0` (`0`)
 - `dword 4-5`: `gpu_va[63:0]` (4 KiB aligned GPU virtual address)
 - `dword 6-7`: `phys[63:0]` (4 KiB aligned backing PA / IOVA / VRAM address)
@@ -1171,10 +1176,10 @@ Unmaps a virtual address range, drains in-flight accesses, invalidates TLBs, and
 - `CMD_SESSION_OPEN` (6 dwords, 24 bytes, primary ring only):
   - `dword 0`: Header (`opcode = 0x12`, `dwords = 6`, `flags = 0`)
   - `dword 1`: `session_id` ($1..15$; `0` or `>= 16` raises `INVALID_OP`)
-  - `dword 2`: `flags` (`[0]` `PROTECTED`, `[31:1]` reserved `0`)
-  - `dword 3-4`: `init_pt_pa[63:0]` (`init_pt_align`-aligned physical address for the session's initial PT; ignored when `CAP_BOOT_PROT == 0`)
-  - `dword 5`: `init_pt_bytes` (`>= info.init_pt_bytes` when `CAP_BOOT_PROT == 1`; `0` allowed when `CAP_BOOT_PROT == 0`)
-  - Requires `MMU == ON` (raises `INVALID_OP` if `MMU == OFF`).
+  - `dword 2`: `flags` (`[0]` `PROTECTED` — when `1`, binds a `PROT` protection slot to this session (`CAP_BOOT_PROT == 0` raises `GHCI_FAULT_KIND_KICK_ABSENT`); when `0`, opens an MMU-isolated session without `PROT` checking; `[31:1]` reserved `0`)
+  - `dword 3-4`: `init_pt_pa[63:0]` (`init_pt_align`-aligned physical address for the session's initial PT, placed per §11.2; always required when `CAP_BOOT_HW_WALKER == 1` regardless of `CAP_PROT`)
+  - `dword 5`: `init_pt_bytes` (`>= info.init_pt_bytes`, always required when `CAP_BOOT_HW_WALKER == 1`)
+  - Requires `CAP_BOOT_HW_WALKER == 1` (`0` raises `KICK_ABSENT`) and `MMU == ON` (raises `INVALID_OP` if `MMU == OFF`).
 - `CMD_SESSION_CLOSE` (2 dwords, primary ring only):
   - `dword 0`: Header (`opcode = 0x13`, `dwords = 2`)
   - `dword 1`: `session_id` ($1..15$)
@@ -1182,7 +1187,7 @@ Unmaps a virtual address range, drains in-flight accesses, invalidates TLBs, and
 #### `CMD_BIND_SESSION` (0x14)
 Sets active session context for subsequent draw/dispatch commands in ring (2 dwords, primary ring only):
 - `dword 0`: Header (`opcode = 0x14`, `dwords = 2`)
-- `dword 1`: `session_id` ($0..15$)
+- `dword 1`: `session_id` ($0..15$; when `CAP_BOOT_HW_WALKER == 0`, only `0` is valid and non-zero raises `INVALID_OP`)
 
 #### `CMD_FAULT_LOG_SETUP` (0x16)
 Configures or disables the 32-byte client session fault log ring (7 dwords, 28 bytes, primary ring only) ([`include/ghci_cmd.h`](include/ghci_cmd.h)):
@@ -1208,7 +1213,7 @@ Initializes Session 0's initial page table and enables the MMU (6 dwords, 24 byt
 - `dword 2-3`: `init_pt_pa[63:0]` (`init_pt_align`-aligned physical address for Session 0 initial PT, placed according to §11.2)
 - `dword 4`: `init_pt_bytes` (`>= info.init_pt_bytes`)
 - `dword 5`: `reserved` (`0`)
-- CP zero-initializes `[init_pt_pa, init_pt_pa + info.init_pt_bytes)`, installs it for Session 0, invalidates all TLBs, enables the MMU (`MMU = ON`), and sets `SESSION_ACTIVE[0] = 1`.
+- CP initializes `[init_pt_pa, init_pt_pa + info.init_pt_bytes)` (initialized contents are implementation-defined), installs it for Session 0, invalidates all TLBs, enables the MMU (`MMU = ON`), and sets `SESSION_ACTIVE[0] = 1`.
 
 #### `CMD_DRAW_MESH_TASKS` (0x2A)
 Dispatches task/mesh shader workgroups (4 dwords, 16 bytes):
@@ -1241,6 +1246,26 @@ Controls hardware occlusion query sample counting (4 dwords, 16 bytes), matching
 - *Session Atomicity & Context-Switch Semantics*:
   1. **Same-Session Requirement**: The driver MUST ensure that `CMD_BEGIN_QUERY` and its corresponding `CMD_END_QUERY` are submitted within the same session context on the command ring without an intervening session switch (`CMD_BIND_SESSION`).
   2. **Cross-Session Reset Rule**: Any intervening session switch while a query is active resets the active query state to prevent cross-session data leakage; the resulting sample count reported by `CMD_END_QUERY` for an interrupted query is 0 or undefined.
+
+#### `CMD_WRITE_MEM` (0x3C)
+Writes a 32-bit or 64-bit immediate value to a session GPU virtual address (5 dwords, 20 bytes; valid in both the primary ring and secondary command buffers), matching `GhciCmdWriteMem` ([`include/ghci_cmd.h`](include/ghci_cmd.h)):
+- `dword 0`: Header (`opcode = 0x3C`, `dwords = 5`, `flags = hdr[31:16]`):
+  - `flags[1:0]` `stage`:
+    - `0` (`GHCI_WRITE_MEM_STAGE_TOP`): Executes at top of pipe, after the bus write responses for all prior CP-issued memory writes (`CMD_WRITE_TIMESTAMP`, `CMD_END_QUERY`, earlier `CMD_WRITE_MEM`, and `CMD_FENCE`) have completed.
+    - `1` (`GHCI_WRITE_MEM_STAGE_BOTTOM`): Synchronous bottom-of-pipe write. Waits for all prior GPU work (VF, SU, RX, TU, ROP, BLT) to complete (and flushes dirty GPU L1/L2 caches to the point of coherence if `flags[3] == 1`) before issuing the write, and stalls subsequent packets until the write's bus response completes.
+    - `2`, `3`: Reserved; raises `GHCI_FAULT_KIND_INVALID_OP` (Kind 1).
+  - `flags[2]` `WRITE_64` (`GHCI_WRITE_MEM_FLAG_64`): `0` = 32-bit write (`value_lo` written to `dst_va`; `dword 4` `value_hi` is ignored by hardware, software writes `0`); `1` = 64-bit write (`{value_hi, value_lo}` written to `dst_va`).
+  - `flags[3]` `FLUSH_CACHES` (`GHCI_WRITE_MEM_FLAG_FLUSH_CACHES`): `0` = no cache flush; `1` = flushes dirty GPU L1/L2 caches to the point of coherence before issuing the write (identical guarantee to `CMD_FENCE.HOST_FLUSH`, §11.5). Specifying `stage == 0 (TOP)` with `FLUSH_CACHES == 1` is illegal and raises `GHCI_FAULT_KIND_INVALID_OP` (Kind 1).
+  - `flags[15:4]`: Reserved (must be `0`; non-zero raises `GHCI_FAULT_KIND_INVALID_OP`).
+- `dword 1`: `dst_va_lo` (64-bit session GPU VA `[31:0]`, immediate only)
+- `dword 2`: `dst_va_hi` (64-bit session GPU VA `[63:32]`)
+- `dword 3`: `value_lo` (32-bit value, or low 32 bits when `WRITE_64 == 1`)
+- `dword 4`: `value_hi` (high 32 bits when `WRITE_64 == 1`; ignored when `WRITE_64 == 0`, software writes `0`)
+- **Length, Alignment & Fault Rules**:
+  - Packet length `header.dwords != 5` raises `GHCI_FAULT_KIND_BAD_REG` (Kind 3).
+  - `dst_va` MUST be 4-byte aligned when `WRITE_64 == 0` (`dst_va[1:0] == 0`) and 8-byte aligned when `WRITE_64 == 1` (`dst_va[2:0] == 0`); misalignment raises `GHCI_FAULT_KIND_INVALID_OP` (Kind 1).
+  - `dst_va` is translated and write-checked (`GHCI_VM_FLAG_WRITE`) by the active session's MMU (and `PROT_TABLE` if protected; in flat mode `CAP_BOOT_HW_WALKER == 0`, `dst_va` is a flat physical address in the unit-reachable range): unmapped VA raises `GHCI_FAULT_KIND_PAGE_FAULT` (Kind 9, `FAULT_INFO[20] = 1`), and write-permission violations raise `GHCI_FAULT_KIND_PERM_FAULT` (Kind 10, `FAULT_INFO[20] = 1`) or `GHCI_FAULT_KIND_PROT_FAULT` (Kind 6).
+  - In a faulted client session (`CAP_BOOT_HW_WALKER == 1`), subsequent `CMD_WRITE_MEM` packets are discarded as NOPs (§3.3, §10). If a fault occurs inside a secondary command buffer (`CMD_EXECUTE_COMMANDS`), the remaining packets of that secondary buffer are discarded and execution resumes at the next packet in the primary ring.
 
 #### Display Commands (`0x50..0x57`, Primary Ring Only)
 
@@ -1332,8 +1357,8 @@ Executes a DDC/EDID or external transmitter I2C transfer asynchronously in the D
 - `dword 6-7`: `comp_pa[63:0]` (8-byte aligned host PA / IOVA)
 - `dword 8-9`: `comp_val[63:0]` (`comp_val[63:56]` must be `0` if `COMP_WRITE == 1`)
 
-#### Ray Tracing Commands (`0x38`..`0x3B`, Reserved Extension)
-Opcodes `0x38` (`CMD_TRACE_RAYS`), `0x39` (`CMD_BUILD_BLAS`), `0x3A` (`CMD_BUILD_TLAS`), and `0x3B` (`CMD_COPY_AS`) are reserved for optional Ray Tracing hardware extensions (`CAP_RAY_TRACING`). They are optional in GHCI 1.0.
+#### Reserved Future Opcodes (`0x38`..`0x3B`)
+Opcodes `0x38`..`0x3B` are reserved for future extensions. In GHCI 1.0, executing any opcode in `0x38`..`0x3B` raises `GHCI_FAULT_KIND_INVALID_OP` (Kind 1).
 
 ### 7.5 Unallocated & Reserved Command Ranges
 
@@ -1743,7 +1768,7 @@ Drivers querying GHCI 1.0 architectural limits use the following hardware parame
   memory only after every earlier command — blits, draws and dispatches included —
   has finished, every pending write has been flushed, and every write response has
   returned. The FENCE interrupt is raised only after the fence write's own response has been acknowledged.
-- Fence memory resides in host system memory (`fence_addr`, 64-bit host DMA address / IOVA) or local DRAM ($\ge \text{LOCAL\_BASE}$).
+- Fence memory resides in host system memory (`fence_addr`, 64-bit host DMA address / IOVA) or local DRAM (within $[\text{MEM\_VRAM\_BASE}, \text{MEM\_VRAM\_BASE} + \text{MEM\_VRAM\_SIZE})$, §11.3).
 - `CMD_FENCE` flags: `[0]` `GHCI_FENCE_FLAG_IRQ` (raise `IRQ_STATUS[0]`), `[1]` `GHCI_FENCE_FLAG_MEM_WRITE` (write 64-bit sequence to memory; if 0, memory write is omitted), `[2]` `GHCI_FENCE_FLAG_HOST_FLUSH` (flush GPU dirty caches to memory).
 - **Ordering:** the fence write reaches the host only after every earlier GPU write is visible there (section 11.5).
 
@@ -1757,19 +1782,19 @@ Drivers querying GHCI 1.0 architectural limits use the following hardware parame
 ---------------------------------------
 
 - **Fault Log Ring (`0x16 CMD_FAULT_LOG_SETUP`) & MMIO `FAULT_INFO` Split**:
-  - Client session faults (`session_id >= 1`, `CAP_PROT == 1`) can be logged non-destructively to a host circular buffer of 32-byte `GhciFaultRecord` entries (`{ uint64_t seq; uint64_t fault_addr; uint64_t timestamp; uint32_t session_id; uint32_t fault_info_word; }`) configured via `CMD_FAULT_LOG_SETUP` (`0x16`).
+  - Client session faults (`session_id >= 1`, `CAP_BOOT_HW_WALKER == 1`) can be logged non-destructively to a host circular buffer of 32-byte `GhciFaultRecord` entries (`{ uint64_t seq; uint64_t fault_addr; uint64_t timestamp; uint32_t session_id; uint32_t fault_info_word; }`) configured via `CMD_FAULT_LOG_SETUP` (`0x16`).
   - When the fault log ring is enabled (`ENABLE == 1`), client session faults write a 32-byte `GhciFaultRecord` at `slot = (seq - setup_next_seq) % capacity_entries` (overwriting oldest entries on wrap; the host detects drops via gaps in `seq`), and raise `IRQ_STATUS.IRQ_FAULT` **after** the 32-byte record DMA write is visible to the host (without latching MMIO `FAULT_INFO`/`FAULT_ADDR` or setting `STATUS.FAULTED`).
   - Device-wide faults and Session 0 faults (and all faults when `ENABLE == 0`) latch into MMIO `FAULT_INFO` and `FAULT_ADDR`.
   - If a bus error occurs while writing `GhciFaultRecord`, CP latches a device-wide `GHCI_FAULT_KIND_AXI_ERROR` (`UNIT = CP`) into MMIO `FAULT_INFO`/`FAULT_ADDR` (the failing record PA), sets `STATUS.FAULTED = 1`, and raises `IRQ_STATUS.IRQ_FAULT`.
   - `CTRL.RESET = 1` disables the fault log ring (`ENABLE = 0`) and resets the next assigned `seq` to `1`.
 - **Fault Handling & Isolation**:
-  - **Individual Session Fault (`CAP_PROT=1` active)**:
-    When a fault occurs within an isolated client session ($i \in [1, 15]$) (e.g. unmapped virtual address, shader illegal instruction, or memory permission fault):
+  - **Individual Session Fault (`CAP_BOOT_HW_WALKER == 1`)**:
+    When a fault occurs within an isolated client session ($i \in [1, 15]$) (e.g. unmapped virtual address, shader illegal instruction, or memory permission fault), regardless of `CAP_PROT`:
     - `SESSION_ACTIVE[i]` is cleared to 0.
     - Error details are written to the `0x16` fault log ring (if `ENABLE == 1`) or latched into `FAULT_INFO` and `FAULT_ADDR` (if `ENABLE == 0`).
     - `IRQ_STATUS.IRQ_FAULT` is raised.
     - **`STATUS.FAULTED` (bit 2) is NOT set**. The CP and GPU continue `RUNNING` without interruption even if only 1 client is open.
-    - Subsequent draw calls (`CMD_DRAW*`), compute dispatches (`CMD_DISPATCH`), blits (`CMD_COPY*`, `CMD_BLIT`), and secondary buffers (`CMD_EXECUTE_COMMANDS`) associated with session $i$ are **dropped as NOPs without stall**.
+    - Subsequent draw calls (`CMD_DRAW*`), compute dispatches (`CMD_DISPATCH`), blits (`CMD_COPY*`, `CMD_BLIT`), `CMD_WRITE_MEM` (`0x3C`), and secondary buffers (`CMD_EXECUTE_COMMANDS`) associated with session $i$ are **dropped as NOPs without stall**.
     - **Fence Completion & Monotonic Ordering**:
       - Fences use 64-bit monotonically increasing sequence numbers compared with signed 64-bit arithmetic (`(int64_t)(current_seq - wait_seq) >= 0`).
       - When a client session faults, subsequent `CMD_FENCE` packets for that session on the ring are NOT dropped; they execute normally and write their exact 64-bit sequence numbers `target_seq` to memory, guaranteeing that waiting host threads unblock promptly without deadlocks.
@@ -1777,8 +1802,8 @@ Drivers querying GHCI 1.0 architectural limits use the following hardware parame
       - Writing `0xFFFFFFFF` to a 64-bit fence counter is strictly prohibited, as it breaks monotonic comparison ordering and corrupts waiter synchronization.
     - A single client session faulting does NOT trigger a whole-device reset. The host driver clears `IRQ_STATUS.IRQ_FAULT` (and `FAULT_INFO` if latched), reclaims session page tables via `CMD_SESSION_CLOSE(i)` + `CMD_FENCE`, and notifies the affected context. Session 0 is reserved for kernel execution and is not counted as an application client session.
   - **Whole-Device Fault**:
-    - In bare-metal mode (`CAP_PROT = 0`), any fault asserts `STATUS.FAULTED`, halts the engine, and quiesces the pipeline.
-    - In protected mode (`CAP_PROT = 1`), `STATUS.FAULTED` is asserted only on fatal system-wide errors: AXI bus deadlock (`AXI_STUCK`), command ring framing corruption, `0x16` fault-log DMA error, illegal access under Session 0, or unrecoverable hardware pipeline hang. Faults in client sessions ($i \ge 1$) NEVER assert `STATUS.FAULTED`.
+    - In flat physical mode (`CAP_BOOT_HW_WALKER == 0`), there is no per-session virtual memory isolation, so any fault asserts `STATUS.FAULTED`, halts the engine, and quiesces the pipeline.
+    - When `CAP_BOOT_HW_WALKER == 1`, `STATUS.FAULTED` is asserted only on fatal system-wide errors: AXI bus deadlock (`AXI_STUCK`), command ring framing corruption, `0x16` fault-log DMA error, illegal access under Session 0, or unrecoverable hardware pipeline hang. Faults in client sessions ($i \ge 1$) NEVER assert `STATUS.FAULTED`, regardless of `CAP_PROT`.
     - When `STATUS.FAULTED` is set, CP quiesces. Recovery requires `CTRL.RESET = 1`.
 - **Watchdog Execution Monitor (CTRL.WDT_EN)**:
   - The watchdog timer monitors command execution duration to prevent system hangs.
@@ -1847,21 +1872,21 @@ on it.
 GHCI 1.0 establishes an **autonomous virtual memory architecture** optimized for both Unified Memory Architectures (UMA) and discrete VRAM systems. Rather than exposing raw page table entry formats or manual TLB invalidation registers to the host, GHCI delegates all page table initialization, updates, and TLB invalidation to the on-chip Command Processor (CP) and hardware MMU while letting the driver supply page table memory on demand.
 
 #### MMU Bringup, Memory Placement & Lifecycle
-- **Post-Reset Initial State (`MMU = OFF`)**:
-  - After power-on or `CTRL.RESET = 1 -> 0`, even when `CAP_BOOT_HW_WALKER == 1`, the MMU starts **disabled (`MMU = OFF`)** with `SESSION_ACTIVE == 0`.
-  - While `MMU == OFF`, only physical-address primary-ring commands (`CMD_NOP`, `CMD_QUERY_CAPS`, `CMD_FAULT_LOG_SETUP`, `CMD_VM_QUERY_PT_MEM`, `CMD_MMU_ENABLE`, `CMD_FENCE`, `CMD_WAIT_FENCE`, `CMD_WRITE_TIMESTAMP` with `flags[0] == 1`, and display commands `0x50..0x57`) are permitted; GPU-VA commands raise `GHCI_FAULT_KIND_INVALID_OP`.
+- **Post-Reset Initial State (`MMU = OFF` when `CAP_BOOT_HW_WALKER == 1`)**:
+  - When `CAP_BOOT_HW_WALKER == 1`, after power-on or `CTRL.RESET = 1 -> 0`, the MMU starts **disabled (`MMU = OFF`)** with `SESSION_ACTIVE == 0`.
+  - While `CAP_BOOT_HW_WALKER == 1` and `MMU == OFF`, only physical-address primary-ring commands (`CMD_NOP`, `CMD_QUERY_CAPS`, `CMD_FAULT_LOG_SETUP`, `CMD_VM_QUERY_PT_MEM`, `CMD_MMU_ENABLE`, `CMD_FENCE`, `CMD_WAIT_FENCE`, `CMD_WRITE_TIMESTAMP` with `flags[0] == 1`, and display commands `0x50..0x57`) are permitted; GPU-VA commands (`0x10..0x14`, `0x20..0x2E`, `0x30..0x32`, `0x35(flags[0]==0)`, `0x36..0x37`, `0x3C`, `0x40..0x46`) raise `GHCI_FAULT_KIND_INVALID_OP`.
 - **Page Table Memory Placement (Configuration-Determined)**:
   - All page table memory (Session 0 initial PT, per-session initial PT, and intermediate PT memory passed to `CMD_VM_MAP`) MUST reside in:
     - **Discrete VRAM configuration** (`MEM_VRAM_SIZE > 0`): `[MEM_VRAM_BASE, MEM_VRAM_BASE + MEM_VRAM_SIZE)`, **not overlapping** `[MEM_FW_VRAM_BASE, MEM_FW_VRAM_BASE + MEM_FW_VRAM_SIZE)`.
     - **Unified Memory configuration** (`MEM_VRAM_SIZE == 0` or `CAP_BOOT_MEM == 0`): host physical memory (below `MEM_HOST_LIMIT` if non-zero).
   - Because GHCI physical addresses share one space (§11.3), CP determines the target memory from the address itself. Passing an address outside the valid range for the configuration, overlapping `MEM_FW_VRAM`, or violating required alignment raises `GHCI_FAULT_KIND_INVALID_OP` at packet decode.
-- **Bringup Sequence**:
+- **Bringup Sequence (`CAP_BOOT_HW_WALKER == 1`)**:
   1. Issue `CMD_VM_QUERY_PT_MEM` (`0x17`) to obtain `GhciVmPtMemInfo` (`init_pt_bytes`, `init_pt_align`, `table_page_bytes`, `table_page_align`).
-  2. Allocate initial page table memory for Session 0 (uninitialized contents are fine) and issue `CMD_MMU_ENABLE` (`0x18`). CP zero-initializes the table, invalidates all TLBs, enables the MMU (`MMU = ON`), and sets `SESSION_ACTIVE[0] = 1`.
-  3. Open client sessions via `CMD_SESSION_OPEN` (`0x12`), supplying per-session initial PT memory (`>= init_pt_bytes`, `init_pt_align`-aligned) when `CAP_BOOT_PROT == 1`.
+  2. Allocate initial page table memory for Session 0 (uninitialized contents are fine) and issue `CMD_MMU_ENABLE` (`0x18`). CP initializes the table (contents implementation-defined), invalidates all TLBs, enables the MMU (`MMU = ON`), and sets `SESSION_ACTIVE[0] = 1`.
+  3. Open client sessions via `CMD_SESSION_OPEN` (`0x12`), always supplying per-session initial PT memory (`>= init_pt_bytes`, `init_pt_align`-aligned) regardless of `CAP_PROT`.
   4. Map pages via `CMD_VM_MAP` (`0x10`), optionally supplying intermediate PT memory (`pt_mem_pa`, `pt_mem_bytes`, a multiple of `table_page_bytes`). Unused remainder `[pt_mem_pa + used_bytes, pt_mem_pa + pt_mem_bytes)` is returned immediately to the driver. If supplied memory is insufficient, CP leaves mappings untouched, writes `status = NEED_PT_MEM` with `required_bytes`/`required_align` to `GhciVmMapComp`, and does not stall the ring; the driver re-issues `CMD_VM_MAP` with sufficient memory.
-- **Flat Physical Mode (`CAP_HW_WALKER == 0`)**:
-  In flat physical mode (`CAP_BOOT_HW_WALKER == 0`), GPU units (VF, SU, TU, ROP, BLT) generate physical addresses of width $\max(\text{VA\_BITS}, 32)$, confined to $[0, \min(2^{\max(\text{VA\_BITS}, 32)}, \text{HOST\_LIMIT}))$ when `HOST_LIMIT != 0` (while CP ring, fence, caps, fault-log, and `PROT_TABLE` DMA use full `PA_BITS` / `HOST_LIMIT`).
+- **Flat Physical Mode (`CAP_BOOT_HW_WALKER == 0`)**:
+  In flat physical mode (`CAP_BOOT_HW_WALKER == 0`), there is no MMU and no `MMU == OFF` bringup phase. GPU units (VF, SU, TU, ROP, BLT) and CP unit-addressing packets (including `CMD_WRITE_MEM`, `CMD_WRITE_TIMESTAMP` with `flags[0] == 0`, and `CMD_EXECUTE_COMMANDS` plus all commands inside secondary buffers) use flat physical addresses of width $\max(\text{VA\_BITS}, 32)$, confined to $[0, \min(2^{\max(\text{VA\_BITS}, 32)}, \text{HOST\_LIMIT}))$ when `HOST_LIMIT != 0` (while CP ring, fence, caps, fault-log, and `PROT_TABLE` DMA use full `PA_BITS` / `HOST_LIMIT`). `CMD_EXECUTE_COMMANDS` is accepted in the primary ring in flat mode when `CAP_SECONDARY_RING == 1`, obeying the exact same nesting, forbidden-command, length/alignment, and fault-discard rules as walker mode (§11.6).
 - **`CTRL.RESET` Page Table Reclamation**:
   On `CTRL.RESET`, CP forgets all page tables (Session 0 and all client sessions) and `SESSION_ACTIVE` becomes `0`. All page table memory previously supplied by the driver returns to the driver once `CTRL.RESET` finishes, and CP neither reads nor writes it afterward. The driver re-issues `CMD_VM_QUERY_PT_MEM` -> `CMD_MMU_ENABLE` -> `CMD_SESSION_OPEN` -> `CMD_VM_MAP`, and may reuse the same physical memory (CP re-initializes it).
 
@@ -1883,7 +1908,7 @@ GHCI 1.0 establishes an **autonomous virtual memory architecture** optimized for
 - `GHCI_VM_FLAG_EXEC` (`0x4`): Instruction fetch permitted (shader code).
 - `GHCI_VM_FLAG_COHERENT` (`0x8`): Hardware-enforced cache coherency with CPU host.
 - `GHCI_VM_FLAG_WC` (`0x10`): Write-combining memory attribute.
-- `GHCI_VM_FLAG_LOCAL` (`0x20`): 1 = Backing `phys` is an absolute GPU physical address in local VRAM (`[MEM_VRAM_BASE, MEM_VRAM_BASE + MEM_VRAM_SIZE)`); 0 = Host PCIe bus address or IOVA.
+- `flags[31:5]`: Reserved (must be `0`; non-zero raises `GHCI_FAULT_KIND_INVALID_OP`). Target memory (local VRAM vs. host memory) is determined solely by the physical address `phys` (§11.3).
 
 #### In-Flight Memory Drain & Race-Free TLB Invalidation
 When `CMD_VM_UNMAP` is executed:
@@ -2011,12 +2036,18 @@ Cache maintenance (invalidation and flushing of instruction, texture, data, desc
 
 ### 11.6 Session Protection & Virtual Memory Isolation
 
-Under GHCI 1.0, memory protection is enforced hardware-wide through **per-session virtual memory address isolation** (§11.2) and optional `PROT` (`0x1D0..0x1DF`, 4 KiB granule protection table enabled via `PROT_TABLE_LO[0] ENABLE`).
+Under GHCI 1.0, memory isolation is provided by **per-session virtual memory address spaces** (§11.2, when `CAP_BOOT_HW_WALKER == 1`) and, independently, by the optional **`PROT` physical-range protection table** (`0x1D0..0x1DF`, when `CAP_BOOT_PROT == 1`).
 
 **Operation Under Capability Variations**:
-- **Flat Physical Mode (`CAP_HW_WALKER == 0`)**: The GPU lacks an MMU. All addresses are flat physical. Session 0 is the only supported execution context. Calling `CMD_SESSION_OPEN`, `CMD_VM_MAP`, `CMD_VM_UNMAP`, `CMD_VM_QUERY_PT_MEM`, or `CMD_MMU_ENABLE` raises `GHCI_FAULT_KIND_KICK_ABSENT` (Kind 2).
-- **Shared Virtual Memory (`CAP_HW_WALKER == 1, CAP_PROT == 0`)**: Virtual memory translation is supported, but all sessions share a single global page table hierarchy. Multi-client protection isolation is not enforced. In `CMD_SESSION_OPEN`, `init_pt_pa` is ignored; `CMD_VM_MAP` installs into the shared global table.
-- **Protected Multi-Session (`CAP_HW_WALKER == 1, CAP_PROT == 1`)**: Full multi-session hardware protection. Each session $0..15$ has its own private page table hierarchy initialized from the driver-supplied `init_pt_pa` and isolated address space.
+- **Flat Physical Mode (`CAP_BOOT_HW_WALKER == 0`)**:
+  - The GPU lacks an MMU. All addresses are flat physical, and `Session 0` is the only execution context.
+  - GPU hardware performs no memory isolation; validating client command streams and placing validated secondary command buffers in kernel-only writable memory is the host driver's responsibility.
+  - Calling `CMD_VM_MAP`, `CMD_VM_UNMAP`, `CMD_SESSION_OPEN`, `CMD_VM_QUERY_PT_MEM`, or `CMD_MMU_ENABLE` raises `GHCI_FAULT_KIND_KICK_ABSENT` (Kind 2). `CMD_BIND_SESSION` accepts `session_id == 0` only (non-zero raises `INVALID_OP`).
+  - Primary-ring `CMD_EXECUTE_COMMANDS` is supported when `CAP_SECONDARY_RING == 1` (with physical addresses in the flat unit-reachable range and identical nesting, privilege, length, and alignment rules as walker mode).
+  - All faults in flat mode (including faults inside secondary buffers, where CP discards the remainder of the secondary buffer) are whole-device faults asserting `STATUS.FAULTED`.
+- **Per-Session Virtual Memory (`CAP_BOOT_HW_WALKER == 1`)**:
+  - **Every session `0..15` ALWAYS has its own private page table hierarchy**, regardless of `CAP_PROT`: Session 0 is initialized via `CMD_MMU_ENABLE`, and each client session `1..15` is initialized from the driver-supplied `init_pt_pa`/`init_pt_bytes` via `CMD_SESSION_OPEN` (and freed on `CMD_SESSION_CLOSE` or `CTRL.RESET`).
+  - Every client session fault (`session_id` `1..15`) is isolated to that session (`STATUS.FAULTED` is NOT set), regardless of `CAP_PROT`.
 
 **`VM_MAP` / `VM_UNMAP` / `SESSION_OPEN` Edge Cases & Fault Semantics**:
 - **Completion-Record-Only Execution Errors (`CMD_VM_MAP` / `CMD_VM_UNMAP`)**:
@@ -2032,25 +2063,44 @@ Under GHCI 1.0, memory protection is enforced hardware-wide through **per-sessio
 - Work submitted for session $i$ can address only the virtual memory pages explicitly mapped into session $i$'s address space via `CMD_VM_MAP`.
 - Hardware MMU checks ensure that any unmapped access traps as `kind 9 PAGE_FAULT`, and VM page protection flag (`GHCI_VM_FLAG_READ`/`WRITE`/`EXEC`) violation traps as `kind 10 GHCI_FAULT_KIND_PERM_FAULT` (read vs write indicated by `FAULT_INFO[20]`), isolating the offending context and preserving whole-device operation.
 
-**Session Protection Support (`CAP_PROT`):**
-- In bare-metal / single-process mode (`CAP_PROT == 0`):
-  - `BOOT_CAPS[2]` (`CAP_BOOT_PROT`) and `DEVICE_CAPS[24]` (`CAP_PROT`) read `0`.
-  - `CMD_SESSION_OPEN` with `flags[0] = PROTECTED` fails with `GHCI_FAULT_KIND_KICK_ABSENT` (Kind 2).
+#### Optional Physical-Range Protection Table (`PROT`, `0x1D0..0x1DF`)
 
-**Session Lifecycle:**
+When `BOOT_CAPS[2]` (`CAP_BOOT_PROT`) and `DEVICE_CAPS[24]` (`CAP_PROT`) are `1`, the GPU implements an orthogonal physical-aperture protection table checked at the memory controller (`PROT` is separate from per-session MMU page tables):
+
+- **Control-Path Registers (`0x1D0..0x1DF`, present when `CAP_BOOT_PROT == 1`)**:
+  - `0x1D0` `PROT_CAPS` (RO, mirrors `CMD_QUERY_CAPS` Word 13):
+    - `[7:0]` `PROT_SLOTS`: Hardware protection slot count (`0` when `CAP_PROT == 0`).
+    - `[15:8]` `GRANULE_LOG2`: Protection granule size as $\log_2(\text{bytes})$ (typically `12` for `4 KiB` granules).
+    - `[31:16]` `GRANTS`: Number of hardware grant CAM entries for cross-slot access grants (`0` if unused).
+  - `0x1D4` `PROT_TABLE_BYTES` (RO): Required size in bytes of the protection table (1 byte per granule of the GPU-accessible physical aperture, rounded up to 4 KiB).
+  - `0x1D8` `PROT_TABLE_LO` (RW): `[0]` `ENABLE` (`1` = protection table active; `0` = disabled and table address ignored), `[11:1]` reserved `0`, `[31:12]` 4 KiB-aligned GPU physical address `[31:12]`.
+  - `0x1DC` `PROT_TABLE_HI` (RW): Protection table GPU physical address `[63:32]`.
+  - **Programming Constraint**: `PROT_TABLE_LO` and `PROT_TABLE_HI` are writable **only in `IDLE` while zero client sessions (`1..15`) are open**; writes while running or with any active client session raise `GHCI_FAULT_KIND_LOCKED_REG` (Kind 7). While `ENABLE == 1`, any non-CP unit write targeting `[PROT_TABLE, PROT_TABLE + PROT_TABLE_BYTES)` is refused with `GHCI_FAULT_KIND_PROT_FAULT` (Kind 6).
+- **Protection Table Entry Format (1 Byte per 4 KiB Granule)**:
+  Each byte in the table corresponds to one `2^GRANULE_LOG2` (4 KiB) granule in the aperture:
+  - `[5:0]` (`owner_slot`): Owning protection slot (`0` = unowned by any client slot / kernel-only unless `PUBLIC`; `1..63` = client protection slot).
+  - `[6]` (`RO`): `1` = owning slot has read-only access (writes by the owning slot are refused with `GHCI_FAULT_KIND_PROT_FAULT`); `0` = owning slot has read/write access.
+  - `[7]` (`PUBLIC`): `1` = public read allowed by any session/slot (writes still require `owner_slot == slot && RO == 0`); `0` = non-public.
+- **Slot-to-Session Binding & `CMD_SESSION_OPEN.flags[0]` (`PROTECTED`)**:
+  - **Slot `0`**: Unchecked kernel context (Session `0`, and unprotected client sessions opened with `flags[0] == 0`). Accesses under slot `0` bypass `PROT_TABLE` checking.
+  - **Protected Client Slots (`1..min(PROT_CAPS[7:0], 15)`)**: When `CMD_SESSION_OPEN` is issued with `flags[0] == 1` (`PROTECTED`):
+    - If `CAP_BOOT_PROT == 0` (`CAP_PROT == 0`), `CMD_SESSION_OPEN` raises `GHCI_FAULT_KIND_KICK_ABSENT` (Kind 2).
+    - If `CAP_BOOT_PROT == 1`, CP allocates an available protection slot in `1..min(PROT_CAPS[7:0], 15)` to that client session. The maximum number of simultaneously open `PROTECTED` client sessions is `min(PROT_CAPS[7:0], 15)`; exceeding this limit raises `GHCI_FAULT_KIND_INVALID_OP` (Kind 1). All memory accesses (including `CMD_WRITE_MEM`) executed under that session are checked against `PROT_TABLE` (when `PROT_TABLE_LO.ENABLE == 1`) in addition to MMU translation.
+  - When `CMD_SESSION_OPEN` is issued with `flags[0] == 0`, an MMU-isolated client session is opened without `PROT` slot binding or `PROT_TABLE` checking (valid whether `CAP_PROT` is `0` or `1`).
+
+**Session Lifecycle (`CAP_BOOT_HW_WALKER == 1`)**:
 1. **`CMD_MMU_ENABLE` (0x18)**: Enables the MMU and sets `SESSION_ACTIVE[0] = 1` using Session 0's `init_pt_pa`.
-2. **`CMD_SESSION_OPEN` (0x12)**: Opens client session $1..15$, initializes `init_pt_pa` (when `CAP_BOOT_PROT == 1`), and sets `SESSION_ACTIVE[session_id] = 1`.
-3. **`CMD_VM_MAP` (0x10)**: Maps physical/IOVA pages into the session's virtual address space, consuming intermediate PT pages from `pt_mem_pa` if needed.
+2. **`CMD_SESSION_OPEN` (0x12)**: Opens client session $1..15$, always initializes the session's own page table from `init_pt_pa` / `init_pt_bytes`, binds a `PROT` slot if `flags[0] == 1` (`PROTECTED`), and sets `SESSION_ACTIVE[session_id] = 1`.
+3. **`CMD_VM_MAP` (0x10)**: Maps physical/IOVA pages into the session's private virtual address space, consuming intermediate PT pages from `pt_mem_pa` if needed.
 4. **Sharing Memory Between Sessions**:
    - To share a buffer between two sessions, the driver issues `CMD_VM_MAP` with the **same physical/IOVA backing address (`phys`)** into both sessions.
-   - Read/write permissions are controlled per-session via `GHCI_VM_FLAG_READ` and `GHCI_VM_FLAG_WRITE`.
+   - Read/write permissions are controlled per-session via `GHCI_VM_FLAG_READ` and `GHCI_VM_FLAG_WRITE` (and, for `PROTECTED` sessions when `PROT_TABLE_LO.ENABLE == 1`, via `PUBLIC` / `GRANTS` in `PROT`).
 5. **`CMD_SESSION_CLOSE(session_id)` (0x13)**:
-   - Drains in-flight work for `session_id`, invalidates all TLB entries for the session, and clears `SESSION_ACTIVE[session_id] = 0`.
+   - Drains in-flight work for `session_id`, frees any bound `PROT` slot, invalidates all TLB entries for the session, and clears `SESSION_ACTIVE[session_id] = 0`.
    - After a subsequent `CMD_FENCE` completes, the driver reclaims all initial and remaining intermediate page table memory held for that session.
-   - **`CAP_PROT = 0` Operation**: When `CAP_PROT = 0`, all mappings inhabit a single shared page table hierarchy. `CMD_SESSION_CLOSE` does NOT clear shared mappings; the driver unmaps resources via `CMD_VM_UNMAP` before closing the session.
    - **Benign No-op on Inactive Sessions**: Submitting `CMD_SESSION_CLOSE` on an already-closed or un-opened session is a safe no-op that succeeds without fault.
 6. **`CMD_BIND_SESSION(session_id)` (0x14)**:
-   - Binds active session context for all subsequent draw and dispatch commands in the ring.
+   - Binds active session context for all subsequent draw, compute, transfer, and `CMD_WRITE_MEM` commands in the ring.
 
 12. The standard shader ISA (GSI1)
 ----------------------------------
