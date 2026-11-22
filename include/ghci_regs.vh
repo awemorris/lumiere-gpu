@@ -107,11 +107,11 @@ localparam [8:0] GHCI_CAP_WORD_SUBSYSTEM       = 9'd10;
 localparam [8:0] GHCI_CAP_WORD_DEVICE_VERSION  = 9'd11;
 localparam [8:0] GHCI_CAP_WORD_MEM_CACHE_CFG   = 9'd12;
 localparam [8:0] GHCI_CAP_WORD_PROT_CAPS       = 9'd13;
-localparam [8:0] GHCI_CAP_WORD_PERF_SRC        = 9'd14;
+/* Word 14 is reserved (0) in GHCI 1.0 */
 localparam [8:0] GHCI_CAP_WORD_FMT_LIMITS      = 9'd15;
 localparam [8:0] GHCI_CAP_WORD_FMT_FIRST_REG   = 9'd16;
 localparam [8:0] GHCI_CAP_WORD_FMT_COUNT       = 9'd17;
-localparam [8:0] GHCI_CAP_WORD_EXTCAP_PRESENT  = 9'd18;
+/* Word 18 is reserved (0) in GHCI 1.0 */
 localparam [8:0] GHCI_CAP_WORD_SHADER_STAGES     = 9'd19;
 localparam [8:0] GHCI_CAP_WORD_STAGE_LIMITS      = 9'd20;
 localparam [8:0] GHCI_CAP_WORD_DISP_PCLK_MIN_KHZ = 9'd21;
@@ -251,8 +251,8 @@ localparam GHCI_EXT_FEAT_COARSE_SCAN    = 9;
 localparam GHCI_EXT_FEAT_FAST_CLEAR     = 10;
 localparam GHCI_EXT_FEAT_LOGIC_OP       = 11;
 localparam GHCI_EXT_FEAT_EARLY_Z        = 12;
-localparam GHCI_EXT_FEAT_HW_CURSOR      = 13;
-localparam GHCI_EXT_FEAT_COLOR_LUT      = 14;
+/* [13] Reserved (hardware cursor reported in Word 23[18] HAS_CURSOR) */
+/* [14] Reserved in GHCI 1.0 */
 localparam GHCI_EXT_FEAT_MRT_BLEND      = 15;
 localparam GHCI_EXT_FEAT_MAX_MRT_SHIFT  = 16;
 localparam GHCI_EXT_FEAT_LDS_KB_SHIFT   = 20;
@@ -516,10 +516,6 @@ localparam [8:0] GHCI_S_LC_REGION = 9'h1EC;	/* LOAD_CONST */
 localparam [8:0] GHCI_S_LC_ADDR = 9'h1ED;
 localparam [8:0] GHCI_S_LC_WORDS = 9'h1EE;
 localparam [8:0] GHCI_S_DBG_MARK = 9'h1FF;
-
-/* PERF_SRCn values: what PERFn counts. */
-localparam [7:0] GHCI_PERF_SRC_MEM = 8'd8;	/* memory accesses outstanding */
-localparam [7:0] GHCI_PERF_SRC_NONE = 8'hFF;
 
 /* BLT_OP[1:0] and the option bits. */
 localparam GHCI_BLT_OP_BLEND = 4;

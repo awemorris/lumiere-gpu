@@ -56,11 +56,11 @@ extern "C" {
 #define GHCI_CAPS_DEVICE_VERSION        11u
 #define GHCI_CAPS_MEM_CACHE_CFG         12u
 #define GHCI_CAPS_PROT_CAPS             13u
-#define GHCI_CAPS_PERF_SRC              14u
+/* Word 14 is reserved (0) in GHCI 1.0 */
 #define GHCI_CAPS_FMT_LIMITS            15u
 #define GHCI_CAPS_FMT_FIRST_REG         16u
 #define GHCI_CAPS_FMT_COUNT_REG         17u
-#define GHCI_CAPS_EXTCAP_PRESENT        18u
+/* Word 18 is reserved (0) in GHCI 1.0 */
 #define GHCI_CAPS_SHADER_STAGES         19u
 #define GHCI_CAPS_STAGE_LIMITS          20u
 #define GHCI_CAPS_DISP_PCLK_MIN_KHZ     21u
@@ -191,11 +191,11 @@ extern "C" {
 #define GHCI_CAPS_WORD_DEVICE_VERSION   11u
 #define GHCI_CAPS_WORD_MEM_CACHE_CFG    12u
 #define GHCI_CAPS_WORD_PROT_CAPS        13u
-#define GHCI_CAPS_WORD_PERF_SRC         14u
+/* Word 14 is reserved (0) in GHCI 1.0 */
 #define GHCI_CAPS_WORD_FMT_LIMITS       15u
 #define GHCI_CAPS_WORD_FMT_FIRST_REG    16u
 #define GHCI_CAPS_WORD_FMT_COUNT_REG    17u
-#define GHCI_CAPS_WORD_EXTCAP_PRESENT   18u
+/* Word 18 is reserved (0) in GHCI 1.0 */
 #define GHCI_CAPS_WORD_SHADER_STAGES    19u
 #define GHCI_CAPS_WORD_STAGE_LIMITS     20u
 #define GHCI_CAPS_WORD_DISP_PCLK_MIN_KHZ 21u

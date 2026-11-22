@@ -82,11 +82,11 @@ extern "C" {
 #define GHCI_CAP_WORD_DEVICE_VERSION  11u
 #define GHCI_CAP_WORD_MEM_CACHE_CFG   12u
 #define GHCI_CAP_WORD_PROT_CAPS       13u
-#define GHCI_CAP_WORD_PERF_SRC        14u
+/* Word 14 is reserved (0) in GHCI 1.0 */
 #define GHCI_CAP_WORD_FMT_LIMITS      15u
 #define GHCI_CAP_WORD_FMT_FIRST_REG   16u
 #define GHCI_CAP_WORD_FMT_COUNT       17u
-#define GHCI_CAP_WORD_EXTCAP_PRESENT  18u
+/* Word 18 is reserved (0) in GHCI 1.0 */
 #define GHCI_CAP_WORD_SHADER_STAGES   19u /* Pipeline shader stage capabilities (Geometry, Tess, Mesh, Task) */
 #define GHCI_CAP_WORD_STAGE_LIMITS    20u /* Stage limits */
 #define GHCI_CAP_WORD_DISP_PCLK_MIN_KHZ 21u /* Minimum pixel clock (kHz), 0 if ARBITRARY_PCLK == 0 */
@@ -387,8 +387,8 @@ extern "C" {
 #define GHCI_EXT_FEAT_FAST_CLEAR       (1u << 10)
 #define GHCI_EXT_FEAT_LOGIC_OP         (1u << 11)
 #define GHCI_EXT_FEAT_EARLY_Z          (1u << 12)
-#define GHCI_EXT_FEAT_HW_CURSOR        (1u << 13)
-#define GHCI_EXT_FEAT_COLOR_LUT        (1u << 14)
+/* [13] Reserved (hardware cursor reported in Word 23[18] HAS_CURSOR) */
+/* [14] Reserved in GHCI 1.0 */
 #define GHCI_EXT_FEAT_MRT_BLEND        (1u << 15)
 #define GHCI_EXT_FEAT_MAX_MRT(c)       (((c) >> 16) & 0xFu)
 #define GHCI_EXT_FEAT_LDS_KB(c)        (((c) >> 20) & 0xFFu)
@@ -415,10 +415,6 @@ extern "C" {
 #define GHCI_PROT_GRANTS(c) (((c) >> 16) & 0xFFFFu)
 #define GHCI_PROT_TABLE_ENABLE (1u << 0) /* PROT_TABLE_LO[0] */
 #define GHCI_PROT_TABLE_ADDR_MASK 0xFFFFF000u
-
-/* PERF_SRC values (CMD_QUERY_CAPS Word 14) */
-#define GHCI_PERF_SRC_MEM 8u
-#define GHCI_PERF_SRC_NONE 0xFFu
 
 /* Display Capability Block Word 23..25, 28..29 Decoders */
 #define GHCI_DISP_INFO_TOL_PPM(w)      ((w) & 0xFFFFu)

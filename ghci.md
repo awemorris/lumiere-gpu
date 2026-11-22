@@ -304,8 +304,8 @@ In GHCI 1.0, MMIO register `0x084` is strictly reserved and reads 0. Extended re
 - `[10] CAP_FAST_CLEAR`: Hardware fast clear metadata compression present.
 - `[11] CAP_LOGIC_OP`: LogicOp blending active.
 - `[12] CAP_EARLY_Z`: Hardware early depth testing and coarse Hi-Z rejection active.
-- `[13] CAP_HW_CURSOR`: Hardware cursor scanout plane supported by display subsystem.
-- `[14] CAP_COLOR_LUT`: Programmable display gamma / color lookup table present.
+- `[13]`: Reserved (reads 0; hardware cursor presence is reported in `CMD_QUERY_CAPS` Word 23`[18]` `HAS_CURSOR`).
+- `[14]`: Reserved (reads 0 in GHCI 1.0).
 - `[15] CAP_MRT_BLEND`: Independent per-target color blending supported.
 - `[19:16] MAX_MRT`: Maximum simultaneously bound color render targets (1..8).
   `EXT_CAP_FEATURE[19:16]` is the primary authoritative source for the implemented color attachment count (e.g. 8 on the full configuration and 1 on a minimal configuration, matching `EXT_CAP_FMT0[15:12]` and `FMT_LIMITS[3:0]`).
@@ -391,11 +391,11 @@ In GHCI 1.0, pipeline stage capabilities and physical limits are queried authori
 | `11` | `GHCI_CAP_WORD_DEVICE_VERSION` | Device revision / implementation version integer |
 | `12` | `GHCI_CAP_WORD_MEM_CACHE_CFG` | `[15:0]` L2 KiB; `[23:16]` L2 ways; `[27:24]` Tex L1 KiB; `[31:28]` VF cache lines (§11.5.1) |
 | `13` | `GHCI_CAP_WORD_PROT_CAPS` | `[7:0]` protected sessions; `[15:8]` granule log2 (e.g. 12 = 4 KiB); `[31:16]` max grants; `0` if `CAP_PROT == 0` |
-| `14` | `GHCI_CAP_WORD_PERF_SRC` | Performance counter sources: bytes `[7:0]`, `[15:8]`, `[23:16]`, `[31:24]` correspond to `PERF_SRC0..3` |
+| `14` | — | Reserved (reads `0` in GHCI 1.0) |
 | `15` | `GHCI_CAP_WORD_FMT_LIMITS` | `[3:0]` Maximum color attachments; `[31:4]` reserved (0) |
 | `16` | `GHCI_CAP_WORD_FMT_FIRST_REG` | Starting dword index of per-format feature table (`32`, matching `GHCI_CAP_WORD_FMT_BASE`) |
 | `17` | `GHCI_CAP_WORD_FMT_COUNT` | `FMT_COUNT`: `max_reported_format_id + 1` (normatively `1` + the highest `GhciFormat` ID reported in the per-format table; `0xFF` `GHCI_FMT_INVALID` is never reported) |
-| `18` | `GHCI_CAP_WORD_EXTCAP_PRESENT` | Bitmask of present capabilities indexed by capability ID `id` (§4) |
+| `18` | — | Reserved (reads `0` in GHCI 1.0; early window presence is reported in `BOOT_CAPS` and unit presence in `DEVICE_CAPS`) |
 | `19` | `GHCI_CAP_WORD_SHADER_STAGES` | Extended shader stage bitmap (§3.2.4); `0` if unsupported |
 | `20` | `GHCI_CAP_WORD_STAGE_LIMITS` | Packed geometry & tessellation hardware limits (§3.2.4); `0` if unsupported |
 | `21` | `GHCI_CAP_WORD_DISP_PCLK_MIN_KHZ` | Minimum supported pixel clock in kHz (`0` if `ARBITRARY_PCLK == 0`) |
@@ -413,11 +413,26 @@ In GHCI 1.0, pipeline stage capabilities and physical limits are queried authori
 
 *(Examples: an implementation reporting only the standard range `0x00..0x9F` reports `FMT_COUNT = 160` (`CAP_DWORDS = 192`, `768` bytes); an implementation also reporting vendor-defined formats `0xE0..0xFE` reports `FMT_COUNT = 255` (`CAP_DWORDS = 287`, `1148` bytes; host allocates at least `roundup(4 * CAP_DWORDS, 64) = 1152` bytes).)*
 
-Each per-format entry (`Word 32 + id`, 1 dword per `GhciFormat`) uses the following packed bitfield layout:
-- `[8:0]` **OPTIMAL** tiling feature bits (`[0]` `SAMPLED`, `[1]` `FILTER_LINEAR`, `[2]` `COLOR_ATTACHMENT`, `[3]` `BLEND`, `[4]` `DEPTH_STENCIL`, `[5]` `STORAGE_IMAGE_ATOMIC`, `[6]` `BLIT_SRC`, `[7]` `BLIT_DST`, `[8]` `STORAGE_IMAGE`).
-- `[17:9]` **LINEAR** tiling feature bits (same bit assignments `[0..8]` shifted left by 9, including `[14]` `STORAGE_IMAGE_ATOMIC`; `LINEAR.STORAGE_IMAGE` is defined exclusively for formats whose element size is `4`, `8`, or `16` bytes, excluding 12-byte `R32G32B32_*`).
-- `[21:18]` **BUFFER** feature bits (`[18]` `UNIFORM_TEXEL_BUFFER` (`0` in GHCI 1.0), `[19]` `STORAGE_TEXEL_BUFFER` (element size `4`, `8`, or `16` bytes only), `[20]` `STORAGE_TEXEL_BUFFER_ATOMIC`, `[21]` `VERTEX_BUFFER`). `STORAGE_IMAGE_ATOMIC` / `STORAGE_TEXEL_BUFFER_ATOMIC` are `1` when hardware 32-bit atomic operations (`atom` / `atom.a64`) operate coherently on the 4-byte integer element (`R32_UINT`, `R32_SINT`).
-- `[22]` **`FMT_SCANOUT`**: `1` if the format is supported for display scanout (`CMD_FLIP.scanout_format`), `0` otherwise.
+Each per-format entry (`Word 32 + id`, 1 dword per `GhciFormat`) uses the following packed bitfield layout, where each bit is defined by the hardware unit capability it guarantees:
+- `[8:0]` **OPTIMAL** tiling feature bits (`[0]` `SAMPLED`, `[1]` `FILTER_LINEAR`, `[2]` `COLOR_ATTACHMENT`, `[3]` `BLEND`, `[4]` `DEPTH_STENCIL`, `[5]` `STORAGE_IMAGE_ATOMIC`, `[6]` `BLIT_SRC`, `[7]` `BLIT_DST`, `[8]` `STORAGE_IMAGE`):
+  - `SAMPLED` (`[0]`): Texture Unit (`TU`) can sample/read this format via `texl`/`texb`/`texf`/`texg`.
+  - `FILTER_LINEAR` (`[1]`): `TU` supports hardware linear filtering for this format (governed by `CAP_TU_BILINEAR` for normalized formats and `CAP_TEX_FFILT` for floating-point formats).
+  - `COLOR_ATTACHMENT` (`[2]`): `ROP` supports rendering to and clearing this format as a color attachment.
+  - `BLEND` (`[3]`): `ROP` supports color blending on this format.
+  - `DEPTH_STENCIL` (`[4]`): `ROP` supports this format as a depth/stencil attachment.
+  - `STORAGE_IMAGE_ATOMIC` (`[5]`): `SU` supports coherent 32-bit atomic operations (`atom`/`atom.a64`) on texels of this format (`0` for `OPTIMAL` in GHCI 1.0).
+  - `BLIT_SRC` (`[6]`): `BLT` (and `TU` copy/blit source) can read this format as a source surface.
+  - `BLIT_DST` (`[7]`): `BLT` can write this format as a destination surface.
+  - `STORAGE_IMAGE` (`[8]`): `SU` can read/write individual texels directly (`0` for `OPTIMAL` in GHCI 1.0).
+- `[17:9]` **LINEAR** tiling feature bits (same bit assignments `[0..8]` shifted left by `9`, including `[14]` `STORAGE_IMAGE_ATOMIC` and `[17]` `STORAGE_IMAGE`):
+  - `LINEAR.STORAGE_IMAGE` (`[17]`) is defined exclusively for formats whose element size is `4`, `8`, or `16` bytes (excluding 12-byte `R32G32B32_*`), so `SU` loads/stores never race on adjacent texels within a 32-bit word. `LINEAR.STORAGE_IMAGE_ATOMIC` (`[14]`) is `1` when hardware 32-bit `atom`/`atom.a64` operates coherently on the 4-byte integer element (`R32_UINT`, `R32_SINT`).
+  - **`LINEAR >= OPTIMAL` Rule**: For any format `id` where `FMT[id][17]` (`LINEAR.STORAGE_IMAGE`) is `1`, every other feature bit in `LINEAR` (`[16:9]`) MUST be greater than or equal to the corresponding bit in `OPTIMAL` (`[7:0]`), i.e. `(FMT[id] & 0xFF) & ~((FMT[id] >> 9) & 0xFF) == 0`.
+- `[21:18]` **BUFFER** feature bits:
+  - `UNIFORM_TEXEL_BUFFER` (`[18]`): `TU` supports typed buffer reads (`0` in GHCI 1.0).
+  - `STORAGE_TEXEL_BUFFER` (`[19]`): `SU` supports typed buffer loads/stores (`lw`/`sw`/`ld.64`/`sd.64`, element size `4`, `8`, or `16` bytes only, excluding 12-byte `R32G32B32_*`).
+  - `STORAGE_TEXEL_BUFFER_ATOMIC` (`[20]`): `SU` supports coherent 32-bit `atom`/`atom.a64` on typed buffer elements (`R32_UINT`, `R32_SINT`).
+  - `VERTEX_BUFFER` (`[21]`): `VF` can fetch vertex attributes in this format.
+- `[22]` **`FMT_SCANOUT`**: Display controller supports scanning out this format via `CMD_FLIP.scanout_format` (`1` = supported, `0` = unsupported).
 - `[31:23]` Reserved (reads `0`).
 
 ### 3.3 CTRL and STATUS (0x014, 0x010)
@@ -553,7 +568,6 @@ windows at fixed offsets within `0x100`–`0x1FF`, gated by `BOOT_CAPS` (`0x008`
   - `0x1D4` (`PROT_TABLE_BYTES`, RO): Required byte size of the protection table (`0` when `CAP_BOOT_PROT == 0`).
   - `0x1D8` (`PROT_TABLE_LO`, RW): `[0] ENABLE` (`1` = protection table active, `0` = disabled and address ignored), `[11:1]` reserved `0`, `[31:12]` 4 KiB-aligned GPU physical address `[31:12]`. Writable only in `IDLE` with zero open client sessions.
   - `0x1DC` (`PROT_TABLE_HI`, RW): Protection table GPU physical address `[63:32]`. Writable only in `IDLE` with zero open client sessions.
-- **Word 18 `EXTCAP_PRESENT` (`CMD_QUERY_CAPS`)**: Reports functional capability presence bits (`[1]` DISP, `[2]` DBG, `[3]` PERF, `[5]` MMU, `[6]` CPFW, `[8]` MEM, `[9]` PROT, `[10]` FMT; all other bits reserved `0`). These capability IDs do not correspond to an MMIO linked list.
 
 **Format Capability Discovery (`CMD_QUERY_CAPS`).** Format properties are queried authoritatively via structured command `CMD_QUERY_CAPS` (§7.3) into a host-allocated memory buffer:
 - **Capability Block Word 4**: `EXT_CAP_FMT0` bitmap shortcut.
@@ -1644,19 +1658,19 @@ GHCI 1.0 defines an 8-bit `GhciFormat` namespace partitioned cleanly by high nib
 | `GHCI_FMT_B4G4R4A4_UNORM_P16` | `0x01` | 2 B (`A[0:4] R[4:4] G[8:4] B[12:4]`) | Point + Linear | Yes (No Blend) | No | — |
 | `GHCI_FMT_R5G6B5_UNORM_P16` | `0x02` | 2 B (`B[0:5] G[5:6] R[11:5]`) | Point + Linear | Yes (Blend) | No | SCANOUT |
 | `GHCI_FMT_A1R5G5B5_UNORM_P16` | `0x03` | 2 B (`B[0:5] G[5:5] R[10:5] A[15:1]`) | Point + Linear | Yes (Blend) | No | — |
-| `GHCI_FMT_A2B10G10R10_UNORM_P32` | `0x04` | 4 B (`R[0:10] G[10:10] B[20:10] A[30:2]`) | Point + Linear | Yes (Blend) | No | VERTEX, SCANOUT |
-| `GHCI_FMT_A2B10G10R10_UINT_P32` | `0x05` | 4 B (`R[0:10] G[10:10] B[20:10] A[30:2]`) | Point | Yes (No Blend) | No | — |
-| `GHCI_FMT_B10G11R11_UFLOAT_P32` | `0x06` | 4 B (`R[0:11] G[11:11] B[22:10]`) | Point + Linear | Yes (No Blend) | No | — |
+| `GHCI_FMT_A2B10G10R10_UNORM_P32` | `0x04` | 4 B (`R[0:10] G[10:10] B[20:10] A[30:2]`) | Point + Linear | Yes (Blend) | No | VERTEX, STORAGE, SCANOUT |
+| `GHCI_FMT_A2B10G10R10_UINT_P32` | `0x05` | 4 B (`R[0:10] G[10:10] B[20:10] A[30:2]`) | Point | Yes (No Blend) | No | STORAGE |
+| `GHCI_FMT_B10G11R11_UFLOAT_P32` | `0x06` | 4 B (`R[0:11] G[11:11] B[22:10]`) | Point + Linear | Yes (No Blend) | No | STORAGE |
 | `GHCI_FMT_E5B9G9R9_UFLOAT_P32` | `0x07` | 4 B (`R[0:9] G[9:9] B[18:9] Exp[27:5]`) | Point + Linear | No | No | — |
 | `GHCI_FMT_R8_UNORM` .. `R8_SINT` | `0x10..0x13` | 1 B | Point + Linear (`UNORM/SNORM`) / Point (`UINT/SINT`) | `UNORM`/`UINT`/`SINT` | No | VERTEX |
 | `GHCI_FMT_R8G8_UNORM` .. `R8G8_SINT` | `0x18..0x1B` | 2 B | Point + Linear (`UNORM/SNORM`) / Point (`UINT/SINT`) | `UNORM`/`UINT`/`SINT` | No | VERTEX |
-| `GHCI_FMT_R8G8B8A8_UNORM` .. `SRGB` | `0x20..0x24` | 4 B (`R,G,B,A`) | Point + Linear (`UNORM/SNORM/SRGB`) / Point (`INT`) | `UNORM/SRGB` (Blend), `INT` (No Blend) | No | VERTEX (`UNORM..SINT`), STORAGE (`UNORM/UINT/SINT`), SCANOUT (`UNORM/SRGB`) |
-| `GHCI_FMT_B8G8R8A8_UNORM`, `SRGB` | `0x28, 0x2C` | 4 B (`B,G,R,A`) | Point + Linear | Yes (Blend) | No | VERTEX (`UNORM`), SCANOUT (`UNORM/SRGB`) |
-| `GHCI_FMT_R16_UNORM` .. `R16_SFLOAT` | `0x30..0x34` | 2 B | Point + Linear (`UNORM/SNORM/SFLOAT`) / Point (`INT`) | `UNORM/SFLOAT` (Blend), `INT` (No Blend) | No | VERTEX, STORAGE (`SFLOAT`) |
-| `GHCI_FMT_R16G16_UNORM` .. `SFLOAT` | `0x38..0x3C` | 4 B | Point + Linear (`UNORM/SNORM/SFLOAT`) / Point (`INT`) | `UNORM/SFLOAT` (Blend), `INT` (No Blend) | No | VERTEX, STORAGE (`SFLOAT`) |
-| `GHCI_FMT_R16G16B16A16_UNORM` .. `SFLOAT` | `0x40..0x44` | 8 B | Point + Linear (`UNORM/SNORM/SFLOAT`) / Point (`INT`) | `UNORM/SFLOAT` (Blend), `INT` (No Blend) | No | VERTEX, STORAGE (`UINT/SINT/SFLOAT`) |
+| `GHCI_FMT_R8G8B8A8_UNORM` .. `SRGB` | `0x20..0x24` | 4 B (`R,G,B,A`) | Point + Linear (`UNORM/SNORM/SRGB`) / Point (`INT`) | `UNORM/SRGB` (Blend), `INT` (No Blend) | No | VERTEX (`UNORM..SINT`), STORAGE (`UNORM..SINT`), SCANOUT (`UNORM/SRGB`) |
+| `GHCI_FMT_B8G8R8A8_UNORM`, `SRGB` | `0x28, 0x2C` | 4 B (`B,G,R,A`) | Point + Linear | Yes (Blend) | No | VERTEX (`UNORM`), STORAGE (`UNORM`), SCANOUT (`UNORM/SRGB`) |
+| `GHCI_FMT_R16_UNORM` .. `R16_SFLOAT` | `0x30..0x34` | 2 B | Point + Linear (`SFLOAT`) / Point (`INT`) | `SFLOAT` (Blend), `INT` (No Blend) | No | VERTEX |
+| `GHCI_FMT_R16G16_UNORM` .. `SFLOAT` | `0x38..0x3C` | 4 B | Point + Linear (`SFLOAT`) / Point (`INT`) | `SFLOAT` (Blend), `INT` (No Blend) | No | VERTEX, STORAGE (`SFLOAT`) |
+| `GHCI_FMT_R16G16B16A16_UNORM` .. `SFLOAT` | `0x40..0x44` | 8 B | Point + Linear (`SFLOAT`) / Point (`INT`) | `SFLOAT` (Blend), `INT` (No Blend) | No | VERTEX, STORAGE (`UINT/SINT/SFLOAT`) |
 | `GHCI_FMT_R32_UINT`, `SINT`, `SFLOAT` | `0x52..0x54` | 4 B | Point (`UINT/SINT`), Point + Linear (`SFLOAT`) | Yes (`SFLOAT` Blend; `INT` No Blend) | No | VERTEX, STORAGE, STORAGE_ATOMIC (`0x52, 0x53`) |
-| `GHCI_FMT_R32G32_UINT`, `SINT`, `SFLOAT` | `0x5A..0x5C` | 8 B | Point (`UINT/SINT`), Point + Linear (`SFLOAT`) | Yes (No Blend) | No | VERTEX, STORAGE (`UINT/SINT`) |
+| `GHCI_FMT_R32G32_UINT`, `SINT`, `SFLOAT` | `0x5A..0x5C` | 8 B | Point (`UINT/SINT`), Point + Linear (`SFLOAT`) | Yes (No Blend) | No | VERTEX, STORAGE |
 | `GHCI_FMT_R32G32B32_UINT`, `SINT`, `SFLOAT` | `0x62..0x64` | 12 B | No | No | No | `VERTEX_BUFFER` **only** (excluded from `LINEAR.STORAGE_IMAGE` & `STORAGE_TEXEL_BUFFER`) |
 | `GHCI_FMT_R32G32B32A32_UINT`, `SINT`, `SFLOAT` | `0x6A..0x6C` | 16 B | Point (`UINT/SINT`), Point + Linear (`SFLOAT`) | Yes (`SFLOAT` Blend; `INT` No Blend) | No | VERTEX, STORAGE |
 | `GHCI_FMT_D16_UNORM` | `0x70` | 2 B (`D[0:16]`) | Point + Linear | No | Yes | — |
@@ -1696,8 +1710,8 @@ GHCI 1.0 defines an 8-bit `GhciFormat` namespace partitioned cleanly by high nib
 > **Optional Format Features & Dynamic Reporting**:
 > There are no mandatory formats in GHCI 1.0. Drivers MUST determine exact per-format capabilities (`FMT_OPTIMAL`, `FMT_LINEAR`, `FMT_BUFFER`, and `FMT_SCANOUT`) strictly from `CMD_QUERY_CAPS` Words `32 .. 32 + FMT_COUNT - 1`.
 
-- **Storage Image & Texel Buffer Element-Size Rule**:
-  `LINEAR.STORAGE_IMAGE` (`Word 32+id[17]`) and `BUFFER.STORAGE_TEXEL_BUFFER` (`[19]`) are defined **exclusively for formats whose element size is 4, 8, or 16 bytes**. Consequently, 12-byte formats (`GHCI_FMT_R32G32B32_{UINT,SINT,SFLOAT}`, `0x62..0x64`) are excluded from `LINEAR.STORAGE_IMAGE` and `STORAGE_TEXEL_BUFFER` (`VERTEX_BUFFER` only). `STORAGE_IMAGE_ATOMIC` (`[5]`/`[14]`) and `STORAGE_TEXEL_BUFFER_ATOMIC` (`[20]`) indicate coherent 32-bit atomic instruction support (`atom`/`atom.a64`) on `R32_UINT` (`0x52`) and `R32_SINT` (`0x53`).
+- **Storage Image & Texel Buffer Element-Size Rule & `LINEAR >= OPTIMAL` Rule**:
+  `LINEAR.STORAGE_IMAGE` (`Word 32+id[17]`) and `BUFFER.STORAGE_TEXEL_BUFFER` (`[19]`) are defined **exclusively for formats whose element size is 4, 8, or 16 bytes**. Consequently, 12-byte formats (`GHCI_FMT_R32G32B32_{UINT,SINT,SFLOAT}`, `0x62..0x64`) are excluded from `LINEAR.STORAGE_IMAGE` and `STORAGE_TEXEL_BUFFER` (`VERTEX_BUFFER` only). `STORAGE_IMAGE_ATOMIC` (`[5]`/`[14]`) and `STORAGE_TEXEL_BUFFER_ATOMIC` (`[20]`) indicate coherent 32-bit atomic instruction support (`atom`/`atom.a64`) on `R32_UINT` (`0x52`) and `R32_SINT` (`0x53`). Whenever `LINEAR.STORAGE_IMAGE` (`[17]`) is `1` for format `id`, every other `LINEAR` bit (`[16:9]`) MUST be `>=` the corresponding `OPTIMAL` bit (`[7:0]`).
 - **sRGB Transfer Function (IEC 61966-2-1)**:
   For `*_SRGB*` formats, R/G/B channels use the piecewise IEC 61966-2-1 transfer function while A (if present) remains linear:
   - **Decode (sRGB -> Linear)**: $c / 12.92$ for $c \le 0.04045$; $((c + 0.055) / 1.055)^{2.4}$ for $c > 0.04045$. Hardware 8-bit sRGB decode matches the IEC 61966-2-1 value rounded to the Texture Unit's internal floating-point representation within **`0.5 ULP`**.

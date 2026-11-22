@@ -15,12 +15,11 @@
  *       compressed block, [15] 0; component c (R, G, B, A) at 16 + 13c:
  *       [6:0] its lowest bit in the texel (a little-endian integer),
  *       [12:7] its width.  0 for a format the GPU does not have.
- *   atg_fmt_feat(fmt, etc)  {buffer[12:0], optimal[12:0]}: the
- *       format feature flags of the fixed-function units (sampled with
- *       blit source, linear filter, colour attachment with blit
- *       destination, blend, depth/stencil attachment; vertex buffer);
- *       linear tiling has the optimal ones.  etc: the ETC2/EAC decoder
- *       is present (the compressed formats are reported).
+ *   atg_fmt_feat(fmt, etc, bc)  [22:0]: the GHCI 1.0 Word 32 + id
+ *       per-format capability bits (ghci.md §3.2.5, GHCI_FMT_FEAT_*):
+ *       [8:0] OPTIMAL, [17:9] LINEAR, [21:18] BUFFER, [22] SCANOUT.
+ *       etc: ETC2/EAC decoder present; bc: BC1..BC7 decoder present
+ *       (when 0, those compressed formats return 0).
  */
 
 localparam [2:0] ATG_FMT_UNORM = 3'd0;
@@ -262,6 +261,70 @@ function [67:0] atg_fmt_info;
 		atg_fmt_info = atg_fmt_i(5'd4, 3'd1, ATG_FMT_UNORM, 3'b011,
 			atg_fmt_c(7'd0, 6'd24), atg_fmt_c(7'd0, 6'd0),
 			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h80:	/* GHCI_FMT_BC1_RGB_UNORM_BLK */
+		atg_fmt_info = atg_fmt_i(5'd8, 3'd3, ATG_FMT_UNORM, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h81:	/* GHCI_FMT_BC1_RGB_SRGB_BLK */
+		atg_fmt_info = atg_fmt_i(5'd8, 3'd3, ATG_FMT_SRGB, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h82:	/* GHCI_FMT_BC1_RGBA_UNORM_BLK */
+		atg_fmt_info = atg_fmt_i(5'd8, 3'd4, ATG_FMT_UNORM, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h83:	/* GHCI_FMT_BC1_RGBA_SRGB_BLK */
+		atg_fmt_info = atg_fmt_i(5'd8, 3'd4, ATG_FMT_SRGB, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h84:	/* GHCI_FMT_BC2_UNORM_BLK */
+		atg_fmt_info = atg_fmt_i(5'd16, 3'd4, ATG_FMT_UNORM, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h85:	/* GHCI_FMT_BC2_SRGB_BLK */
+		atg_fmt_info = atg_fmt_i(5'd16, 3'd4, ATG_FMT_SRGB, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h86:	/* GHCI_FMT_BC3_UNORM_BLK */
+		atg_fmt_info = atg_fmt_i(5'd16, 3'd4, ATG_FMT_UNORM, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h87:	/* GHCI_FMT_BC3_SRGB_BLK */
+		atg_fmt_info = atg_fmt_i(5'd16, 3'd4, ATG_FMT_SRGB, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h88:	/* GHCI_FMT_BC4_UNORM_BLK */
+		atg_fmt_info = atg_fmt_i(5'd8, 3'd1, ATG_FMT_UNORM, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h89:	/* GHCI_FMT_BC4_SNORM_BLK */
+		atg_fmt_info = atg_fmt_i(5'd8, 3'd1, ATG_FMT_SNORM, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h8A:	/* GHCI_FMT_BC5_UNORM_BLK */
+		atg_fmt_info = atg_fmt_i(5'd16, 3'd2, ATG_FMT_UNORM, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h8B:	/* GHCI_FMT_BC5_SNORM_BLK */
+		atg_fmt_info = atg_fmt_i(5'd16, 3'd2, ATG_FMT_SNORM, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h8C:	/* GHCI_FMT_BC6H_UFLOAT_BLK */
+		atg_fmt_info = atg_fmt_i(5'd16, 3'd3, ATG_FMT_UFLOAT, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h8D:	/* GHCI_FMT_BC6H_SFLOAT_BLK */
+		atg_fmt_info = atg_fmt_i(5'd16, 3'd3, ATG_FMT_SFLOAT, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h8E:	/* GHCI_FMT_BC7_UNORM_BLK */
+		atg_fmt_info = atg_fmt_i(5'd16, 3'd4, ATG_FMT_UNORM, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
+	8'h8F:	/* GHCI_FMT_BC7_SRGB_BLK */
+		atg_fmt_info = atg_fmt_i(5'd16, 3'd4, ATG_FMT_SRGB, 3'b100,
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
+			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0));
 	8'h90:	/* GHCI_FMT_ETC2_R8G8B8_UNORM_BLK */
 		atg_fmt_info = atg_fmt_i(5'd8, 3'd3, ATG_FMT_UNORM, 3'b100,
 			atg_fmt_c(7'd0, 6'd0), atg_fmt_c(7'd0, 6'd0),
@@ -307,82 +370,123 @@ function [67:0] atg_fmt_info;
 	endcase
 endfunction
 
-function [25:0] atg_fmt_feat;
+function [22:0] atg_fmt_feat;
 	input [7:0] fi_fmt;
 	input fi_etc;
-	reg [6:0] fi_l;	/* {block, S, F, C, B, D, V} */
+	input fi_bc;
+	/* {cmp[1:0] (0=none,1=ETC,2=BC), S, F, C, B, D, V, ST, STA, SC} */
+	reg [10:0] fi_l;
 	begin
 		case (fi_fmt)
-		8'h01: fi_l = 7'b0110000;	/* GHCI_FMT_B4G4R4A4_UNORM_P16 */
-		8'h02: fi_l = 7'b0111100;	/* GHCI_FMT_R5G6B5_UNORM_P16 */
-		8'h03: fi_l = 7'b0111100;	/* GHCI_FMT_A1R5G5B5_UNORM_P16 */
-		8'h04: fi_l = 7'b0111101;	/* GHCI_FMT_A2B10G10R10_UNORM_P32 */
-		8'h05: fi_l = 7'b0101000;	/* GHCI_FMT_A2B10G10R10_UINT_P32 */
-		8'h06: fi_l = 7'b0110000;	/* GHCI_FMT_B10G11R11_UFLOAT_P32 */
-		8'h07: fi_l = 7'b0110000;	/* GHCI_FMT_E5B9G9R9_UFLOAT_P32 */
-		8'h10: fi_l = 7'b0111101;	/* GHCI_FMT_R8_UNORM */
-		8'h11: fi_l = 7'b0110001;	/* GHCI_FMT_R8_SNORM */
-		8'h12: fi_l = 7'b0101001;	/* GHCI_FMT_R8_UINT */
-		8'h13: fi_l = 7'b0101001;	/* GHCI_FMT_R8_SINT */
-		8'h18: fi_l = 7'b0111101;	/* GHCI_FMT_R8G8_UNORM */
-		8'h19: fi_l = 7'b0110001;	/* GHCI_FMT_R8G8_SNORM */
-		8'h1A: fi_l = 7'b0101001;	/* GHCI_FMT_R8G8_UINT */
-		8'h1B: fi_l = 7'b0101001;	/* GHCI_FMT_R8G8_SINT */
-		8'h20: fi_l = 7'b0111101;	/* GHCI_FMT_R8G8B8A8_UNORM */
-		8'h21: fi_l = 7'b0110001;	/* GHCI_FMT_R8G8B8A8_SNORM */
-		8'h22: fi_l = 7'b0101001;	/* GHCI_FMT_R8G8B8A8_UINT */
-		8'h23: fi_l = 7'b0101001;	/* GHCI_FMT_R8G8B8A8_SINT */
-		8'h24: fi_l = 7'b0111100;	/* GHCI_FMT_R8G8B8A8_SRGB */
-		8'h28: fi_l = 7'b0111101;	/* GHCI_FMT_B8G8R8A8_UNORM */
-		8'h2C: fi_l = 7'b0111100;	/* GHCI_FMT_B8G8R8A8_SRGB */
-		8'h30: fi_l = 7'b0000001;	/* GHCI_FMT_R16_UNORM */
-		8'h31: fi_l = 7'b0000001;	/* GHCI_FMT_R16_SNORM */
-		8'h32: fi_l = 7'b0101001;	/* GHCI_FMT_R16_UINT */
-		8'h33: fi_l = 7'b0101001;	/* GHCI_FMT_R16_SINT */
-		8'h34: fi_l = 7'b0111101;	/* GHCI_FMT_R16_SFLOAT */
-		8'h38: fi_l = 7'b0000001;	/* GHCI_FMT_R16G16_UNORM */
-		8'h39: fi_l = 7'b0000001;	/* GHCI_FMT_R16G16_SNORM */
-		8'h3A: fi_l = 7'b0101001;	/* GHCI_FMT_R16G16_UINT */
-		8'h3B: fi_l = 7'b0101001;	/* GHCI_FMT_R16G16_SINT */
-		8'h3C: fi_l = 7'b0111101;	/* GHCI_FMT_R16G16_SFLOAT */
-		8'h40: fi_l = 7'b0000001;	/* GHCI_FMT_R16G16B16A16_UNORM */
-		8'h41: fi_l = 7'b0000001;	/* GHCI_FMT_R16G16B16A16_SNORM */
-		8'h42: fi_l = 7'b0101001;	/* GHCI_FMT_R16G16B16A16_UINT */
-		8'h43: fi_l = 7'b0101001;	/* GHCI_FMT_R16G16B16A16_SINT */
-		8'h44: fi_l = 7'b0111101;	/* GHCI_FMT_R16G16B16A16_SFLOAT */
-		8'h52: fi_l = 7'b0101001;	/* GHCI_FMT_R32_UINT */
-		8'h53: fi_l = 7'b0101001;	/* GHCI_FMT_R32_SINT */
-		8'h54: fi_l = 7'b0101001;	/* GHCI_FMT_R32_SFLOAT */
-		8'h5A: fi_l = 7'b0101001;	/* GHCI_FMT_R32G32_UINT */
-		8'h5B: fi_l = 7'b0101001;	/* GHCI_FMT_R32G32_SINT */
-		8'h5C: fi_l = 7'b0101001;	/* GHCI_FMT_R32G32_SFLOAT */
-		8'h62: fi_l = 7'b0000001;	/* GHCI_FMT_R32G32B32_UINT */
-		8'h63: fi_l = 7'b0000001;	/* GHCI_FMT_R32G32B32_SINT */
-		8'h64: fi_l = 7'b0000001;	/* GHCI_FMT_R32G32B32_SFLOAT */
-		8'h6A: fi_l = 7'b0101001;	/* GHCI_FMT_R32G32B32A32_UINT */
-		8'h6B: fi_l = 7'b0101001;	/* GHCI_FMT_R32G32B32A32_SINT */
-		8'h6C: fi_l = 7'b0101001;	/* GHCI_FMT_R32G32B32A32_SFLOAT */
-		8'h70: fi_l = 7'b0110010;	/* GHCI_FMT_D16_UNORM */
-		8'h71: fi_l = 7'b0110010;	/* GHCI_FMT_X8D24_UNORM_P32 */
-		8'h72: fi_l = 7'b0110010;	/* GHCI_FMT_D32_SFLOAT */
-		8'h74: fi_l = 7'b0110010;	/* GHCI_FMT_D24_UNORM_S8_UINT */
-		8'h90: fi_l = 7'b1110000;	/* GHCI_FMT_ETC2_R8G8B8_UNORM_BLK */
-		8'h91: fi_l = 7'b1110000;	/* GHCI_FMT_ETC2_R8G8B8_SRGB_BLK */
-		8'h92: fi_l = 7'b1110000;	/* GHCI_FMT_ETC2_R8G8B8A1_UNORM_BLK */
-		8'h93: fi_l = 7'b1110000;	/* GHCI_FMT_ETC2_R8G8B8A1_SRGB_BLK */
-		8'h94: fi_l = 7'b1110000;	/* GHCI_FMT_ETC2_R8G8B8A8_UNORM_BLK */
-		8'h95: fi_l = 7'b1110000;	/* GHCI_FMT_ETC2_R8G8B8A8_SRGB_BLK */
-		8'h96: fi_l = 7'b1110000;	/* GHCI_FMT_EAC_R11_UNORM_BLK */
-		8'h97: fi_l = 7'b1110000;	/* GHCI_FMT_EAC_R11_SNORM_BLK */
-		8'h98: fi_l = 7'b1110000;	/* GHCI_FMT_EAC_R11G11_UNORM_BLK */
-		8'h99: fi_l = 7'b1110000;	/* GHCI_FMT_EAC_R11G11_SNORM_BLK */
-		default: fi_l = 7'd0;
+		8'h01: fi_l = 11'b00_11100_0000;	/* GHCI_FMT_B4G4R4A4_UNORM_P16 */
+		8'h02: fi_l = 11'b00_11110_0001;	/* GHCI_FMT_R5G6B5_UNORM_P16 */
+		8'h03: fi_l = 11'b00_11110_0000;	/* GHCI_FMT_A1R5G5B5_UNORM_P16 */
+		8'h04: fi_l = 11'b00_11110_1101;	/* GHCI_FMT_A2B10G10R10_UNORM_P32 */
+		8'h05: fi_l = 11'b00_10100_0100;	/* GHCI_FMT_A2B10G10R10_UINT_P32 */
+		8'h06: fi_l = 11'b00_11100_0100;	/* GHCI_FMT_B10G11R11_UFLOAT_P32 */
+		8'h07: fi_l = 11'b00_11000_0000;	/* GHCI_FMT_E5B9G9R9_UFLOAT_P32 */
+		8'h10: fi_l = 11'b00_11110_1000;	/* GHCI_FMT_R8_UNORM */
+		8'h11: fi_l = 11'b00_11000_1000;	/* GHCI_FMT_R8_SNORM */
+		8'h12: fi_l = 11'b00_10100_1000;	/* GHCI_FMT_R8_UINT */
+		8'h13: fi_l = 11'b00_10100_1000;	/* GHCI_FMT_R8_SINT */
+		8'h18: fi_l = 11'b00_11110_1000;	/* GHCI_FMT_R8G8_UNORM */
+		8'h19: fi_l = 11'b00_11000_1000;	/* GHCI_FMT_R8G8_SNORM */
+		8'h1A: fi_l = 11'b00_10100_1000;	/* GHCI_FMT_R8G8_UINT */
+		8'h1B: fi_l = 11'b00_10100_1000;	/* GHCI_FMT_R8G8_SINT */
+		8'h20: fi_l = 11'b00_11110_1101;	/* GHCI_FMT_R8G8B8A8_UNORM */
+		8'h21: fi_l = 11'b00_11000_1100;	/* GHCI_FMT_R8G8B8A8_SNORM */
+		8'h22: fi_l = 11'b00_10100_1100;	/* GHCI_FMT_R8G8B8A8_UINT */
+		8'h23: fi_l = 11'b00_10100_1100;	/* GHCI_FMT_R8G8B8A8_SINT */
+		8'h24: fi_l = 11'b00_11110_0001;	/* GHCI_FMT_R8G8B8A8_SRGB */
+		8'h28: fi_l = 11'b00_11110_1101;	/* GHCI_FMT_B8G8R8A8_UNORM */
+		8'h2C: fi_l = 11'b00_11110_0001;	/* GHCI_FMT_B8G8R8A8_SRGB */
+		8'h30: fi_l = 11'b00_00000_1000;	/* GHCI_FMT_R16_UNORM */
+		8'h31: fi_l = 11'b00_00000_1000;	/* GHCI_FMT_R16_SNORM */
+		8'h32: fi_l = 11'b00_10100_1000;	/* GHCI_FMT_R16_UINT */
+		8'h33: fi_l = 11'b00_10100_1000;	/* GHCI_FMT_R16_SINT */
+		8'h34: fi_l = 11'b00_11110_1000;	/* GHCI_FMT_R16_SFLOAT */
+		8'h38: fi_l = 11'b00_00000_1000;	/* GHCI_FMT_R16G16_UNORM */
+		8'h39: fi_l = 11'b00_00000_1000;	/* GHCI_FMT_R16G16_SNORM */
+		8'h3A: fi_l = 11'b00_10100_1000;	/* GHCI_FMT_R16G16_UINT */
+		8'h3B: fi_l = 11'b00_10100_1000;	/* GHCI_FMT_R16G16_SINT */
+		8'h3C: fi_l = 11'b00_11110_1100;	/* GHCI_FMT_R16G16_SFLOAT */
+		8'h40: fi_l = 11'b00_00000_1000;	/* GHCI_FMT_R16G16B16A16_UNORM */
+		8'h41: fi_l = 11'b00_00000_1000;	/* GHCI_FMT_R16G16B16A16_SNORM */
+		8'h42: fi_l = 11'b00_10100_1100;	/* GHCI_FMT_R16G16B16A16_UINT */
+		8'h43: fi_l = 11'b00_10100_1100;	/* GHCI_FMT_R16G16B16A16_SINT */
+		8'h44: fi_l = 11'b00_11110_1100;	/* GHCI_FMT_R16G16B16A16_SFLOAT */
+		8'h52: fi_l = 11'b00_10100_1110;	/* GHCI_FMT_R32_UINT */
+		8'h53: fi_l = 11'b00_10100_1110;	/* GHCI_FMT_R32_SINT */
+		8'h54: fi_l = 11'b00_11110_1100;	/* GHCI_FMT_R32_SFLOAT */
+		8'h5A: fi_l = 11'b00_10100_1100;	/* GHCI_FMT_R32G32_UINT */
+		8'h5B: fi_l = 11'b00_10100_1100;	/* GHCI_FMT_R32G32_SINT */
+		8'h5C: fi_l = 11'b00_11100_1100;	/* GHCI_FMT_R32G32_SFLOAT */
+		8'h62: fi_l = 11'b00_00000_1000;	/* GHCI_FMT_R32G32B32_UINT */
+		8'h63: fi_l = 11'b00_00000_1000;	/* GHCI_FMT_R32G32B32_SINT */
+		8'h64: fi_l = 11'b00_00000_1000;	/* GHCI_FMT_R32G32B32_SFLOAT */
+		8'h6A: fi_l = 11'b00_10100_1100;	/* GHCI_FMT_R32G32B32A32_UINT */
+		8'h6B: fi_l = 11'b00_10100_1100;	/* GHCI_FMT_R32G32B32A32_SINT */
+		8'h6C: fi_l = 11'b00_11110_1100;	/* GHCI_FMT_R32G32B32A32_SFLOAT */
+		8'h70: fi_l = 11'b00_11001_0000;	/* GHCI_FMT_D16_UNORM */
+		8'h71: fi_l = 11'b00_11001_0000;	/* GHCI_FMT_X8D24_UNORM_P32 */
+		8'h72: fi_l = 11'b00_11001_0000;	/* GHCI_FMT_D32_SFLOAT */
+		8'h74: fi_l = 11'b00_11001_0000;	/* GHCI_FMT_D24_UNORM_S8_UINT */
+		8'h80: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC1_RGB_UNORM_BLK */
+		8'h81: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC1_RGB_SRGB_BLK */
+		8'h82: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC1_RGBA_UNORM_BLK */
+		8'h83: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC1_RGBA_SRGB_BLK */
+		8'h84: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC2_UNORM_BLK */
+		8'h85: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC2_SRGB_BLK */
+		8'h86: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC3_UNORM_BLK */
+		8'h87: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC3_SRGB_BLK */
+		8'h88: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC4_UNORM_BLK */
+		8'h89: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC4_SNORM_BLK */
+		8'h8A: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC5_UNORM_BLK */
+		8'h8B: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC5_SNORM_BLK */
+		8'h8C: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC6H_UFLOAT_BLK */
+		8'h8D: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC6H_SFLOAT_BLK */
+		8'h8E: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC7_UNORM_BLK */
+		8'h8F: fi_l = 11'b10_11000_0000;	/* GHCI_FMT_BC7_SRGB_BLK */
+		8'h90: fi_l = 11'b01_11000_0000;	/* GHCI_FMT_ETC2_R8G8B8_UNORM_BLK */
+		8'h91: fi_l = 11'b01_11000_0000;	/* GHCI_FMT_ETC2_R8G8B8_SRGB_BLK */
+		8'h92: fi_l = 11'b01_11000_0000;	/* GHCI_FMT_ETC2_R8G8B8A1_UNORM_BLK */
+		8'h93: fi_l = 11'b01_11000_0000;	/* GHCI_FMT_ETC2_R8G8B8A1_SRGB_BLK */
+		8'h94: fi_l = 11'b01_11000_0000;	/* GHCI_FMT_ETC2_R8G8B8A8_UNORM_BLK */
+		8'h95: fi_l = 11'b01_11000_0000;	/* GHCI_FMT_ETC2_R8G8B8A8_SRGB_BLK */
+		8'h96: fi_l = 11'b01_11000_0000;	/* GHCI_FMT_EAC_R11_UNORM_BLK */
+		8'h97: fi_l = 11'b01_11000_0000;	/* GHCI_FMT_EAC_R11_SNORM_BLK */
+		8'h98: fi_l = 11'b01_11000_0000;	/* GHCI_FMT_EAC_R11G11_UNORM_BLK */
+		8'h99: fi_l = 11'b01_11000_0000;	/* GHCI_FMT_EAC_R11G11_SNORM_BLK */
+		default: fi_l = 11'd0;
 		endcase
-		if (fi_l[6] && !fi_etc)
-			fi_l = 7'd0;
-		/* SAMPLED 0x1, VERTEX_BUFFER 0x40, COLOR_ATTACHMENT 0x80, BLEND 0x100,
-		 * DEPTH_STENCIL 0x200, BLIT_SRC 0x400, BLIT_DST 0x800, FILTER_LINEAR 0x1000 */
-		atg_fmt_feat = {6'd0, fi_l[0], 6'd0, fi_l[4], fi_l[3], fi_l[5], fi_l[1], fi_l[2], fi_l[3],
-			6'd0, fi_l[5]};
+		if ((fi_l[10:9] == 2'b01 && !fi_etc) || (fi_l[10:9] == 2'b10 && !fi_bc))
+			fi_l = 11'd0;
+		/* GHCI 1.0 Word 32 + id [22:0]:
+		 * [8:0] OPTIMAL, [17:9] LINEAR, [21:18] BUFFER, [22] SCANOUT */
+		atg_fmt_feat = {
+			fi_l[0],			/* [22] SCANOUT */
+			fi_l[3],			/* [21] BUFFER_VERTEX */
+			fi_l[1],			/* [20] BUFFER_STORAGE_ATOMIC */
+			fi_l[2],			/* [19] BUFFER_STORAGE_TEXEL */
+			1'b0,				/* [18] BUFFER_UNIFORM_TEXEL */
+			fi_l[2],			/* [17] LINEAR_STORAGE_IMAGE */
+			fi_l[6],			/* [16] LINEAR_BLIT_DST */
+			fi_l[8],			/* [15] LINEAR_BLIT_SRC */
+			fi_l[1],			/* [14] LINEAR_STORAGE_ATOMIC */
+			fi_l[4],			/* [13] LINEAR_DEPTH_STENCIL */
+			fi_l[5],			/* [12] LINEAR_BLEND */
+			fi_l[6],			/* [11] LINEAR_COLOR_ATTACHMENT */
+			fi_l[7],			/* [10] LINEAR_FILTER_LINEAR */
+			fi_l[8],			/* [9]  LINEAR_SAMPLED */
+			1'b0,				/* [8]  OPTIMAL_STORAGE_IMAGE */
+			fi_l[6],			/* [7]  OPTIMAL_BLIT_DST */
+			fi_l[8],			/* [6]  OPTIMAL_BLIT_SRC */
+			1'b0,				/* [5]  OPTIMAL_STORAGE_ATOMIC */
+			fi_l[4],			/* [4]  OPTIMAL_DEPTH_STENCIL */
+			fi_l[5],			/* [3]  OPTIMAL_BLEND */
+			fi_l[6],			/* [2]  OPTIMAL_COLOR_ATTACHMENT */
+			fi_l[7],			/* [1]  OPTIMAL_FILTER_LINEAR */
+			fi_l[8]				/* [0]  OPTIMAL_SAMPLED */
+		};
 	end
 endfunction
