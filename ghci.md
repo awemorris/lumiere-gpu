@@ -777,7 +777,7 @@ The canonical GHCI 1.0 structured command set is defined authoritatively by this
 | `0x54` | `CMD_DISP_SET_CURSOR` | 4 | `CAP_DISP` | Sets hardware cursor position and visibility via DSQ cursor state queue (primary ring only) |
 | `0x55` | `CMD_DISP_QUERY_MODES` | 9 | `CAP_DISP` | Queries fixed display modes (`GhciDisplayModesHeader` + `GhciDisplayModeDesc[]`, primary ring only) |
 | `0x56` | `CMD_DISP_EVENT_SETUP` | 7 | `CAP_DISP` | Configures or disables the display event ring via DSQ control queue (primary ring only) |
-| `0x57` | `CMD_DISP_I2C_XFER` | 10 | `CAP_DISP` | Performs DDC/EDID or external transmitter I2C transfer via DSQ I2C queue (primary ring only) |
+| `0x57` | `CMD_DISP_I2C_XFER` | 10 | `CAP_DISP` | Performs DDC (EDID or sink I2C register) transfer via DSQ control queue (primary ring only) |
 
 ### 7.3 Detailed Command Binary Specifications
 
@@ -1295,7 +1295,7 @@ Queues a Plane 0 (primary scanout) or Plane 1 (hardware cursor) framebuffer flip
   - `[2]`: `GHCI_FLIP_FLAG_PLANE_CURSOR` (0x4) — `0` = Plane 0 (Primary), `1` = Plane 1 (Cursor; requires `HAS_CURSOR == 1` in Word 23`[18]`, else `INVALID_OP`)
   - `[3]`: `GHCI_FLIP_FLAG_RECORD_ENABLE` (0x8) — Write 16-byte `GhciFlipRecord` to `record_pa`
   - `[4]`: `GHCI_FLIP_FLAG_WAIT_GPU_IDLE` (0x10) — Display waits until all prior GPU rendering/blitter writes (`submit_epoch` at `CMD_FLIP` decode <= `done_epoch`) have settled to memory before executing the flip (§13.2)
-  - `[5]`: `GHCI_FLIP_FLAG_RECORD_IRQ` (0x20) — Assert `IRQ_STATUS[3]` (`GHCI_IRQ_DISPLAY`) after the flip takes effect (and after `GhciFlipRecord` write completes if `RECORD_ENABLE == 1`)
+  - `[5]`: `GHCI_FLIP_FLAG_RECORD_IRQ` (0x20) — Assert `IRQ_STATUS[3]` (`GHCI_IRQ_DISPLAY`) after the flip takes effect or is cancelled (and after `GhciFlipRecord` write completes; requires `RECORD_ENABLE == 1`, setting `RECORD_IRQ == 1` with `RECORD_ENABLE == 0` raises `GHCI_FAULT_KIND_INVALID_OP` at decode)
 - `dword 7`: `value` (`[30:0]` `flip_cookie`; `[31]` reserved `0` on input)
 - `dword 8-9`: `record_pa[63:0]` (8-byte aligned host PA / IOVA for `GhciFlipRecord`; ignored if `RECORD_ENABLE == 0`; PA `0` is valid when `RECORD_ENABLE == 1`)
 - **Flip Record (`GhciFlipRecord`, 16 bytes)**: `{ uint32_t value ([30:0] flip_cookie, [31] 1=CANCELLED); uint32_t frame_count; uint32_t timestamp_lo; uint32_t timestamp_hi; }`.
@@ -1348,7 +1348,7 @@ Configures or disables the display event log ring (7 dwords, 28 bytes, DSQ contr
 - **Completion & Indexing**: When `COMP_WRITE == 1`, hardware writes the 64-bit `setup_next_seq` (`1 <= setup_next_seq < 2^56`) directly to `*comp_pa` with `[63]` cancel (`0` on normal setup, `1` if cancelled during reset) and `[62:56] = 0`. Event `seq` starts at `1` after reset (`CTRL.RESET` clears `ENABLE = 0` and resets next `seq` to `1`). Ring slot index is `slot = (seq - setup_next_seq) % capacity_entries`.
 
 ##### `CMD_DISP_I2C_XFER` (0x57)
-Executes a DDC/EDID or external transmitter I2C transfer asynchronously in the DSQ I2C queue (10 dwords, 40 bytes):
+Executes a DDC (EDID or sink I2C register) transfer in the DSQ control queue (10 dwords, 40 bytes):
 - `dword 0`: Header (`opcode = 0x57`, `dwords = 10`, `flags`: `[0]` `WRITE`, `[1]` `HAS_OFFSET`, `[2]` `HAS_SEG`, `[8]` `COMP_WRITE`, `[9]` `COMP_IRQ`, others `0`)
 - `dword 1`: `display_id` (requires `HAS_I2C == 1` in Word 23`[20]`, else `INVALID_OP`)
 - `dword 2`: `addr_cfg` (`[6:0]` `slave_addr_7b`, `[7]` `0`, `[15:8]` `reg_offset`, `[23:16]` `segment` for E-DDC `0x30`, `[31:24]` `0`)
@@ -1356,6 +1356,20 @@ Executes a DDC/EDID or external transmitter I2C transfer asynchronously in the D
 - `dword 4-5`: `buf_pa[63:0]` (4-byte aligned host PA / IOVA of 4-byte `GhciDisplayI2cBufHeader` + `xfer_bytes` payload)
 - `dword 6-7`: `comp_pa[63:0]` (8-byte aligned host PA / IOVA)
 - `dword 8-9`: `comp_val[63:0]` (`comp_val[63:56]` must be `0` if `COMP_WRITE == 1`)
+- **Bus Wire Sequences (`S` = START, `Sr` = Repeated START, `P` = STOP, `addr(W/R)` = 7-bit address + R/W bit)**:
+
+  | `WRITE` | `HAS_OFFSET` | `HAS_SEG` | Wire Sequence |
+  | :---: | :---: | :---: | :--- |
+  | `0` | `0` | `0` | `S`, `addr(R)`, `data[0..N-1]`, `P` |
+  | `0` | `1` | `0` | `S`, `addr(W)`, `reg_offset`, `Sr`, `addr(R)`, `data[0..N-1]`, `P` |
+  | `0` | `0` | `1` | `S`, `0x30(W)`, `segment`, `Sr`, `addr(R)`, `data[0..N-1]`, `P` |
+  | `0` | `1` | `1` | `S`, `0x30(W)`, `segment`, `Sr`, `addr(W)`, `reg_offset`, `Sr`, `addr(R)`, `data[0..N-1]`, `P` |
+  | `1` | `0` | `0` | `S`, `addr(W)`, `data[0..N-1]`, `P` |
+  | `1` | `1` | `0` | `S`, `addr(W)`, `reg_offset`, `data[0..N-1]`, `P` |
+  | `1` | `0` | `1` | `S`, `0x30(W)`, `segment`, `Sr`, `addr(W)`, `data[0..N-1]`, `P` |
+  | `1` | `1` | `1` | `S`, `0x30(W)`, `segment`, `Sr`, `addr(W)`, `reg_offset`, `data[0..N-1]`, `P` |
+
+- **`bytes_done`**: Number of payload data bytes (`data[]`, excluding slave address, segment, and offset bytes) successfully transferred/ACKed (`0..xfer_bytes`; equals `xfer_bytes` on `OK`, `0` if NACKed on address/segment/offset or `CANCELLED` before start, or partial byte count on mid-payload NACK/TIMEOUT/BUS_ERROR).
 
 #### Reserved Future Opcodes (`0x38`..`0x3B`)
 Opcodes `0x38`..`0x3B` are reserved for future extensions. In GHCI 1.0, executing any opcode in `0x38`..`0x3B` raises `GHCI_FAULT_KIND_INVALID_OP` (Kind 1).
@@ -1831,7 +1845,7 @@ Drivers querying GHCI 1.0 architectural limits use the following hardware parame
   reset happens in the middle of a bus transaction. The memory
   controller's bus side and active display scanout / in-flight I2C transfers are not stopped by
   `CTRL.RESET`; scan-out reads continue through a quiesce
-  and a reset, while unstarted DSQ entries and pending flips are cancelled as specified in section 13.2.
+  and a reset, while already-accepted pending flips inside the Display Controller continue to take effect at VSYNC (with record writes deferred until after reset), and unstarted DSQ entries (including queued flips in the DSQ) are cancelled as specified in section 13.2.
   **Driver Recovery Requirement**: In addition to polling for `CTRL.RESET == 0` (self-cleared), the host recovery sequence MUST explicitly wait for `STATUS.MEM_READY == 1` (DRAM PHY and memory calibration stable, §3.3) before restoring state, writing `CTRL.RUN = 1`, or submitting liveness probes. Bypassing `STATUS.MEM_READY` check risks initiating memory accesses while arbitration / calibration is settling, causing `AXI_STUCK` / `AXI_ERROR` and resulting in unrecoverable `RECOVERY_LOST`.
 
 11. Memory model
@@ -2759,7 +2773,7 @@ Display capabilities are reported via `CMD_QUERY_CAPS` Words `21..25` and `28..2
   - `[17]`: `TMDS_SCRAMBLE` (`1` = HDMI 2.0 TMDS scrambling supported when `pixel_clock_khz > 340000` kHz, i.e., `> 340 MHz`).
   - `[18]`: `HAS_CURSOR` (`1` = Plane 1 64x64 hardware cursor supported).
   - `[19]`: `HAS_SENSE` (`1` = Sink connection / hotplug sense supported).
-  - `[20]`: `HAS_I2C` (`1` = DDC/EDID / transmitter I2C controller supported).
+  - `[20]`: `HAS_I2C` (`1` = DDC / EDID / sink I2C controller supported).
   - `[23:21]`: `DISPLAY_COUNT` (`1..7` when `CAP_DISP == 1`; `0` when `CAP_DISP == 0`).
   - `[31:24]`: `FIXED_MODE_COUNT` (number of fixed modes when `ARBITRARY_PCLK == 0`, `>= 1`).
 - **Word 24 (`GHCI_CAP_WORD_DISP_LIMITS_H`)**, **Word 25 (`GHCI_CAP_WORD_DISP_LIMITS_V`)**: `[15:0]` maximum active pixels/lines (`max_hactive`, `max_vactive`), `[31:16]` maximum total pixels/lines (`max_htotal`, `max_vtotal`).
@@ -2770,16 +2784,18 @@ Display capabilities are reported via `CMD_QUERY_CAPS` Words `21..25` and `28..2
 #### Three Per-Display Service Queues & Ordering
 When CP retires a display packet (`0x50..0x57`) at the head of the primary ring, the packet is validated at **decode time** and enqueued into one of three asynchronous per-display queues (each with minimum depth `GHCI_DSQ_MIN_DEPTH = 8`):
 
-1. **Control & Mode Queue**: `CMD_DISP_SET` (`0x50`), `CMD_DISP_SET_MODE` (`0x52`), `CMD_DISP_QUERY_STATE` (`0x53`), `CMD_DISP_QUERY_MODES` (`0x55`), `CMD_DISP_EVENT_SETUP` (`0x56`), and Plane 0 `CMD_FLIP` (`0x51`, `PLANE_CURSOR == 0`) with respect to strict FIFO ordering against control transitions.
-2. **Flip / Cursor Queue**: Plane 0 `CMD_FLIP` and Plane 1 `CMD_FLIP` (`PLANE_CURSOR == 1`) have independent pending slots (at most one active pending Plane 0 flip and one active pending Plane 1 flip in hardware; additional queued flips wait behind the active slot). `CMD_DISP_SET_CURSOR` (`0x54`) updates cursor position/visibility on the cursor state queue for the next frame start.
-3. **I2C Queue**: `CMD_DISP_I2C_XFER` (`0x57`) executes sequentially against other `0x57` requests without blocking scanout or flip queues.
+| Queue | Commands | Ordering & Execution Start Rule (per `display_id`) |
+| :--- | :--- | :--- |
+| **(1) Control Queue** | `CMD_DISP_SET` (`0x50`), `CMD_DISP_SET_MODE` (`0x52`), `CMD_DISP_QUERY_STATE` (`0x53`), `CMD_DISP_QUERY_MODES` (`0x55`), `CMD_DISP_EVENT_SETUP` (`0x56`), `CMD_DISP_I2C_XFER` (`0x57`) | Begins only after **all prior display commands across all three queues (`0x50..0x57`)** for the same `display_id` have completed (including flips taken or cancelled and their `GhciFlipRecord` writes completed). All subsequent Control, Primary, and Cursor commands for that `display_id` wait until this Control command finishes. |
+| **(2) Primary Plane Queue** | `CMD_FLIP` (`0x51`, `PLANE_CURSOR == 0`) | Begins only after all prior Control commands and all prior Primary plane `CMD_FLIP`s for the same `display_id` have completed (and, when `WAIT_GPU_IDLE == 1`, after prior GPU writes are visible in memory). **Does not wait for the Cursor queue.** |
+| **(3) Cursor Plane Queue** | `CMD_FLIP` (`0x51`, `PLANE_CURSOR == 1`), `CMD_DISP_SET_CURSOR` (`0x54`) | Begins only after all prior Control commands and all prior Cursor queue commands for the same `display_id` have completed. **Does not wait for Primary plane `CMD_FLIP`s.** |
 
-Because CP only places work into the DSQ and advances immediately (stalling only if the target queue is full), ring execution does not block on VSYNC, GPU idle waits, or slow DDC/EDID I2C buses.
+Commands targeting different `display_id` values are completely independent. Implementations may internally use a separate I2C worker/FIFO as long as host-visible execution ordering obeys the three-queue rules above. Because CP only places work into the DSQ and advances immediately (stalling only if the target queue is full), ring execution does not block on VSYNC, GPU idle waits, or slow DDC/EDID I2C buses.
 
 - **`WAIT_GPU_IDLE` Synchronization (`CMD_FLIP` `flags[4]`)**:
-  Every GPU write-producing command (draws, dispatches, blits, queries) increments a monotonic CP submission epoch (`submit_epoch`), while pipeline drain / memory completion increments `done_epoch`. When `CMD_FLIP` has `WAIT_GPU_IDLE == 1`, CP snapshots `target_epoch = submit_epoch` at `CMD_FLIP` decode time. The DSQ holds execution of that flip until `done_epoch >= target_epoch` and all prior GPU writes are globally visible in memory, without stalling unrelated subsequent ring packets or display queues.
+  Every GPU write-producing command (draws, dispatches, blits, queries, `CMD_WRITE_MEM`) increments a monotonic CP submission epoch (`submit_epoch`), while pipeline drain / memory completion increments `done_epoch`. `done_epoch` advances strictly in submission order: `done_epoch` reaches `n` only after all memory writes of all write-producing submissions up to epoch `n` are globally visible in memory (an out-of-order completion of a later epoch `m > n` does not advance `done_epoch` past `n - 1`). When `CMD_FLIP` has `WAIT_GPU_IDLE == 1`, CP snapshots `target_epoch = submit_epoch` at `CMD_FLIP` decode time. The DSQ holds execution of that flip until `done_epoch >= target_epoch`, without stalling unrelated subsequent ring packets or display queues.
 - **Physical Address Space & Alignment**:
-  Display scanout (`CMD_FLIP.base`) bypasses MMU translation to guarantee deterministic real-time scanout without TLB miss penalties. `base` must be 64-byte aligned (`[5:0] == 0`). For Plane 0 (Primary), `stride_bytes` must be `> 0` and 64-byte aligned (`[5:0] == 0`), and `scanout_format` must have `FMT_SCANOUT == 1` (§8.5); minimum stride for active width is **not** checked by hardware (short stride behavior is undefined rather than faulting). For Plane 1 (Cursor), `stride_bytes` and `scanout_format` must both be `0` (fixed 64x64 BGRA8 premultiplied alpha, 256 bytes per row, composited over Plane 0 and clipped at screen edges; hidden when `TEST_PATTERN == 1`).
+  Display scanout (`CMD_FLIP.base`) bypasses MMU translation to guarantee deterministic real-time scanout without TLB miss penalties. `base` must be 64-byte aligned (`[5:0] == 0`). For Plane 0 (Primary), `stride_bytes` must be `> 0` and 64-byte aligned (`[5:0] == 0`), and `scanout_format` must have `FMT_SCANOUT == 1` (§8.5); minimum stride for active width is **not** checked by hardware (short stride behavior is undefined rather than faulting). A Primary plane `CMD_FLIP` that changes `scanout_format` or `stride_bytes` takes effect atomically during blanking (at VSYNC for `VSYNC_WAIT`, or immediately per `IMMEDIATE`); the driver is **not** required to disable scanout (`ENABLE = 0`) to change scanout format. For Plane 1 (Cursor), `stride_bytes` and `scanout_format` must both be `0` (fixed 64x64 BGRA8 premultiplied alpha, 256 bytes per row, composited over Plane 0 and clipped at screen edges; hidden when `TEST_PATTERN == 1`).
 - **Display Units Outside Quiesce & Fault Semantics**:
   Display scanout reads are not counted by `STATUS.MC_IDLE` and are not stalled by quiesce. A display scanout read error outputs black for the affected scanline, records a `GHCI_DISP_ERR_SCANOUT_READ` (`1`) event if the event ring is enabled, and never triggers a device or session fault.
 
@@ -2787,31 +2803,52 @@ Because CP only places work into the DSQ and advances immediately (stalling only
 - **Decode-Time Errors** (detected immediately by CP when decoding `0x50..0x57`, raising `GHCI_FAULT_KIND_*` before DSQ enqueue):
   - `CAP_DISP == 0` -> `GHCI_FAULT_KIND_KICK_ABSENT` (Kind 2).
   - Packet in secondary ring (`CMD_EXECUTE_COMMANDS`) -> `GHCI_FAULT_KIND_PROT_FAULT` (Kind 6).
-  - Invalid packet length, reserved flags, `display_id >= DISPLAY_COUNT`, `HAS_CURSOR == 0` on cursor ops, `HAS_I2C == 0` on `0x57`, unaligned PA / `base` / `stride_bytes`, `scanout_format` missing `FMT_SCANOUT`, `CMD_DISP_QUERY_STATE.dst_bytes < 128` or not a multiple of 64, `CMD_DISP_I2C_XFER.xfer_bytes` outside `1..256`, or non-zero `comp_val[63:56]` on `0x50/0x52/0x53/0x55/0x57` when `COMP_WRITE == 1` -> `GHCI_FAULT_KIND_INVALID_OP` (Kind 1).
+  - Invalid packet length, reserved flags, `display_id >= DISPLAY_COUNT`, `HAS_CURSOR == 0` on cursor ops, `HAS_I2C == 0` on `0x57`, unaligned PA / `base` / `stride_bytes`, `scanout_format` missing `FMT_SCANOUT`, `CMD_FLIP` with `RECORD_IRQ == 1 && RECORD_ENABLE == 0`, `CMD_DISP_QUERY_STATE.dst_bytes < 128` or not a multiple of 64, `CMD_DISP_I2C_XFER.xfer_bytes` outside `1..256`, or non-zero `comp_val[63:56]` on `0x50/0x52/0x53/0x55/0x57` when `COMP_WRITE == 1` -> `GHCI_FAULT_KIND_INVALID_OP` (Kind 1).
 - **DSQ Runtime Errors** (occur asynchronously after enqueue; reported in 64-bit completion writeback `[63] cancel | [62:56] comp_status | [55:0] comp_val[55:0]` and command-specific output buffers, never as CP faults):
+  - `CMD_DISP_SET(ENABLE = 1)` attempted when no valid mode is active: leaves `ENABLE = 0` and writes completion `comp_status = 1 (INVALID_STATE)`.
   - `CMD_DISP_SET_MODE` (`CHECK_ONLY == 0`) attempted while `ENABLE == 1`: writes `GhciDisplayModeDesc.status = 2 (ENABLED)` and completion `comp_status = 1 (INVALID_STATE)`.
   - Invalid or unsupported mode descriptor: writes `GhciDisplayModeDesc.status = 1 (UNSUPPORTED)` or `3 (INVALID_DESC)`.
   - I2C NACK, bus error, or `> 25 ms` timeout (`GHCI_DISP_MAX_I2C_TIMEOUT_MS = 25`): writes `GhciDisplayI2cBufHeader.status` (`1` NACK, `2` BUS_ERROR, `3` TIMEOUT) and `bytes_done`.
   - Completion writeback / record write / event ring DMA error: raises display event `GHCI_DISP_EVENT_DISP_ERROR` (`2` FLIP_RECORD_WRITE, `3` COMP_WRITE).
 
-#### Lifecycle Interaction Matrix (`HALT`, `FAULTED`, `CTRL.RESET`)
+#### Mode Validation Rules, Guarantees & `CHECK_ONLY` Consistency
+`CMD_DISP_SET_MODE` validates `GhciDisplayModeDesc` against the capabilities reported in `CMD_QUERY_CAPS` Words `21..25` and `28..29` (§3.2.5, §13.1). GHCI 1.0 supports progressive scanout only:
 
-| Lifecycle Event | Control / Mode / Query / Event Ring | Plane 0 & Plane 1 Pending Flips | In-Flight I2C (`0x57`) |
-| --- | --- | --- | --- |
-| `CTRL.HALT` (`HALTED`) | Already-enqueued DSQ entries continue draining normally (ring stops fetching new packets) | Already-enqueued/pending flips continue to complete and write records normally | Runs to completion normally |
-| `STATUS.FAULTED` | Already-enqueued DSQ entries continue draining normally; CP halts further ring fetch | Pending flips continue normally; record writes proceed | Runs to completion normally |
-| `CTRL.RESET` | Live scanout (`ENABLE`, active timing, active Plane 0/1 images, cursor pos/visibility) continues untouched. Unstarted Control/Mode/Query/Event DSQ entries are cancelled (`[63] cancel = 1`, `GhciDisplayModeDesc.status = 4 (CANCELLED)`). Event ring is disabled (`ENABLE = 0`) and next event `seq` resets to `1`. | Pending un-taken flips are cancelled (`GhciFlipRecord.value[31] = 1` written if `RECORD_ENABLE == 1`, `last_flip_cookie_*` updated with bit `[31]=1`) | **Active I2C transfer completes normally through `STOP`** (never aborted mid-byte); unstarted queued `0x57` entries are cancelled (`[63]=1`, `GhciDisplayI2cBufHeader.status = 4 (CANCELLED)`) |
+| Check | Condition | Failure `status` |
+| :--- | :--- | :---: |
+| Descriptor size & reserved fields | `struct_bytes == 64`, `flags[31:2] == 0` (progressive only), `reserved[0..5] == 0` | `3` (`INVALID_DESC`) |
+| Non-zero active & monotonic timing | `pixel_clock_khz > 0`, `1 <= hactive <= hsync_start < hsync_end <= htotal`, `1 <= vactive <= vsync_start < vsync_end <= vtotal` | `3` (`INVALID_DESC`) |
+| Horizontal limits & minimum blanking | `hactive <= max_hactive`, `hsync_start - hactive >= min_hfp`, `hsync_end - hsync_start >= min_hsync`, `htotal - hsync_end >= min_hbp`, `htotal <= max_htotal` | `1` (`UNSUPPORTED`) |
+| Vertical limits & minimum blanking | `vactive <= max_vactive`, `vsync_start - vactive >= min_vfp`, `vsync_end - vsync_start >= min_vsync`, `vtotal - vsync_end >= min_vbp`, `vtotal <= max_vtotal` | `1` (`UNSUPPORTED`) |
+| Pixel clock / fixed mode table | If `ARBITRARY_PCLK == 1`: `pclk_min_khz <= pixel_clock_khz <= pclk_max_khz`. If `ARBITRARY_PCLK == 0`: `(pixel_clock_khz, hactive..vtotal, flags)` matches an entry returned by `CMD_DISP_QUERY_MODES` | `1` (`UNSUPPORTED`) |
+
+- **Normative Acceptance Guarantee**: Any `GhciDisplayModeDesc` satisfying all rows of the table above **MUST** be accepted with `status = 0 (OK)` when `CMD_DISP_SET_MODE` runs while `ENABLE == 0` (and `actual_pclk_khz` MUST lie within `pclk_tolerance_ppm` of `pixel_clock_khz`).
+- **`CHECK_ONLY` Consistency**: Calling `CMD_DISP_SET_MODE` with `CHECK_ONLY == 1` evaluates the exact same descriptor and clock constraints and produces the **identical** `status` and `actual_pclk_khz` as calling `CHECK_ONLY == 0` while `ENABLE == 0` (except `CHECK_ONLY == 1` never returns `status = 2 (ENABLED)` and never modifies live display state).
+
+#### Lifecycle Interaction Matrix (`HALT`, `FAULTED`, `CTRL.RESET`)
+During **`HALTED`** (`CTRL.HALT = 1`) and **`STATUS.FAULTED`**, the display subsystem **performs no memory writes** (scanout reads continue):
+
+| Lifecycle Event | Accepted Pending Flips Inside DC (`FB_NEXT` / Cursor) | Unstarted Commands Queued in DSQ (`0x50..0x57`) | In-Flight `I2C_XFER` (`0x57`) / `SET_MODE` (`0x52`) |
+| :--- | :--- | :--- | :--- |
+| **`CTRL.HALT` (`HALTED`)** | Already-accepted pending flips inside DC continue to be taken at VSYNC; their 16-byte `GhciFlipRecord` writes (and `RECORD_IRQ`) are **held until CP leaves `HALTED`** (`HALT = 0`). | **Held in DSQ without dispatching** (no memory writes while halted); resume when `HALT = 0`. | In-flight I2C completes to `STOP` (bus released); **result buffer (`buf_pa`) and completion writes (`comp_pa` / `COMP_IRQ`) are held until `HALT = 0`**. |
+| **`STATUS.FAULTED`** | Scanout and already-accepted pending flips inside DC continue; `GhciFlipRecord` writes are deferred until recovery (`CTRL.RESET` or post-reset). | **Frozen in DSQ**, then cancelled with cancel writebacks on the subsequent `CTRL.RESET = 1`. | In-flight I2C completes to `STOP` (bus released) with **no memory write**; deferred to `CTRL.RESET = 1` cancellation. |
+| **`CTRL.RESET = 1`** | **Continue and are taken at VSYNC**; their 16-byte `GhciFlipRecord` writes complete after reset finishes. Live scanout (`ENABLE`, active timing, active Plane 0/1 images, cursor pos/visibility) continues untouched. | **All cancelled and discarded** before `CTRL.RESET` self-clears:<br>・`CMD_FLIP` (`RECORD_ENABLE==1`): `GhciFlipRecord.value \|= 0x80000000` (`last_flip_cookie_*` updated with `[31]=1`, `RECORD_IRQ` raised if set).<br>・`CMD_DISP_SET_MODE`: `mode_pa + 0x1C` written `status = 4 (CANCELLED)`.<br>・`CMD_DISP_I2C_XFER`: `buf_pa + 0x00` written `status = 4 (CANCELLED), bytes_done = 0`.<br>・`0x50, 0x52, 0x53, 0x55, 0x57` (`COMP_WRITE==1`): `comp_pa` written `comp_val \| (1ULL << 63)`.<br>・`0x56` (`COMP_WRITE==1`): `comp_pa` written `0x8000000000000000ULL`.<br>Event ring is disabled (`ENABLE = 0`) and next event `seq` resets to `1`. | Active I2C completes normally through `STOP` (never aborted mid-byte) and writes completion/cancel status. Any in-flight `SET_MODE` aborted by `CTRL.RESET` leaves **no active valid mode** and writes `status = 4 (CANCELLED)` + completion cancel bit. |
 
 #### Enable / Disable / Reset State Transitions & Plane Preservation
+- **Unset Mode State**: When no valid mode is configured (after power-on / hardware reset, after `CMD_DISP_SET(RESET = 1)`, or after an in-flight `CMD_DISP_SET_MODE` is cancelled by `CTRL.RESET`), `GhciDisplayState.active_mode` (`0x40..0x7F`) reports `struct_bytes = 64`, `mode_id = 0xFFFFFFFF`, and all other fields `0`.
 - **Flip Behavior When `ENABLE == 0`**:
   - A **Plane 0** `CMD_FLIP` submitted while `ENABLE == 0` is taken **immediately** (updates `active_fb_base`, `active_fb_stride_bytes`, `scanout_format`, sets `HAS_IMAGE = 1`, writes `GhciFlipRecord` if enabled, raises `IRQ_DISPLAY` if `RECORD_IRQ == 1`), so a driver can program the initial framebuffer before turning scanout on.
   - A **Plane 1 (Cursor)** `CMD_FLIP` submitted while `ENABLE == 0` is cancelled immediately (`value[31] = 1`, `HAS_CURSOR_IMAGE` unchanged).
 - **`ENABLE` Transition `1 -> 0`** (`CMD_DISP_SET` with `ENABLE == 0`):
   - Stops scanout at frame end, cancels any pending Plane 0/1 flips, and **preserves** both `HAS_IMAGE` (active Plane 0 address/stride/format) and `HAS_CURSOR_IMAGE` (plus cursor position/visibility).
 - **`ENABLE` Transition `0 -> 1`** (`CMD_DISP_SET` with `ENABLE == 1`):
-  - Starts scanout on the next frame boundary, clearing sticky `UNDERFLOW`. Hardware requires a valid active mode and `HAS_IMAGE == 1` (`ACTIVE` scanout resumes with the preserved image if not re-flipped).
+  - If no valid mode is currently configured, `ENABLE` remains `0` and completion writeback reports `comp_status = 1 (INVALID_STATE)` (no GPU fault).
+  - If a valid mode is configured, starts scanout on the next frame boundary and clears sticky `UNDERFLOW`. If `HAS_IMAGE == 1`, scanout displays the preserved Plane 0 image; if no Plane 0 image has ever been taken (`HAS_IMAGE == 0`), scanout proceeds and outputs black (`TEST_PATTERN == 1` outputs the test pattern).
 - **Soft Display Reset (`CMD_DISP_SET` with `RESET == 1`)**:
-  - Disables scanout (`ENABLE = 0`), cancels all pending flips, resets `frame_count = 0`, and clears both `HAS_IMAGE = 0` and `HAS_CURSOR_IMAGE = 0` (`active_fb_base = 0`, `active_fb_stride_bytes = 0`).
+  - Disables scanout (`ENABLE = 0`), cancels all pending flips, resets `frame_count = 0`, hides the cursor (`CURSOR_VISIBLE = 0`), clears both `HAS_IMAGE = 0` and `HAS_CURSOR_IMAGE = 0` (`active_fb_base = 0`, `active_fb_stride_bytes = 0`), and resets `active_mode` to the unset state (`struct_bytes = 64`, `mode_id = 0xFFFFFFFF`, all other fields `0`).
+
+#### Host Panic Scanout Constraints
+Display scanout continues displaying the last-taken image across `CTRL.HALT` (`HALTED`), `STATUS.FAULTED`, and `CTRL.RESET` (including GPU resets). During a host panic, the host CPU can draw directly to the currently displayed scanout image **only if** that image resides in host memory, **or** resides inside the host-visible local memory window (`MEM_WINDOW_SIZE > 0`) while the window is open (`MEM_WINDOW_CTRL.ENABLE == 1`). The display controller supports scanning out images directly from host memory. The host determines the physical address, stride, and format of the currently displayed image from `CMD_DISP_QUERY_STATE` (`active_fb_base`, `active_fb_stride_bytes`, `scanout_format`) or from the last completed `CMD_FLIP` remembered by the driver.
 
 #### Data Structures (`include/ghci_cmd.h`)
 - **`GhciDisplayModeDesc` (64 bytes, 64B aligned)**:
@@ -2838,7 +2875,7 @@ Pre-OS firmware display handover via `BOOT_DISP` (`0x140..0x15F`) is defined **e
 - **Boot Firmware / EDID & GOP Protocol**:
   - Upon **POR, PCIe conventional reset (including hot reset and link down), or PCIe Function-Level Reset (FLR)**, device firmware reads EDID via I2C, selects the preferred mode (falling back to standard DMT **`640x480@60`**, `pixel_clock_khz = 25175` if no monitor/EDID responds), configures scanout in firmware VRAM (`MEM_FW_VRAM`), and sets `BOOT_DISP_STATUS[1]` (`DONE = 1`) within a bounded startup window (<= 1 second), setting `ACTIVE = 1` when scanout is active.
   - `CTRL.RESET` does **not** re-run firmware boot display initialization: `BOOT_DISP_STATUS.ACTIVE` and `BOOT_DISP_STATUS.DONE` (and any active pre-takeover `BOOT_DISP_*` geometry) remain untouched across `CTRL.RESET`.
-  - **EFI GOP Driver Constraint**: The PCIe Expansion ROM GOP driver uses **ONLY MMIO and the BAR2 local window**: it reads `BOOT_CAPS[5]`, polls `BOOT_DISP_STATUS.DONE == 1`, checks `ACTIVE == 1`, verifies `MEM_WINDOW_CTRL.ENABLE == 1`, reads `BOOT_DISP_FORMAT/WIDTH/HEIGHT/STRIDE/FB_OFFSET`, and renders console pixels into BAR2 (`FB_OFFSET`). GOP does NOT touch `RING_*`, `CMD_QUERY_CAPS`, `CMD_FLIP`, or interrupts.
+  - **EFI GOP Driver Constraint**: The PCIe Expansion ROM GOP driver uses **ONLY MMIO and the BAR2 local window**: it reads `BOOT_CAPS[5]`, polls `BOOT_DISP_STATUS.DONE == 1` (if `DONE` does not become `1` within the 1-second startup timeout, GOP proceeds as having no boot display), checks `ACTIVE == 1`, verifies `MEM_WINDOW_CTRL.ENABLE == 1`, reads `BOOT_DISP_FORMAT/WIDTH/HEIGHT/STRIDE/FB_OFFSET`, and renders console pixels into BAR2 (`FB_OFFSET`). GOP does NOT touch `RING_*`, `CMD_QUERY_CAPS`, `CMD_FLIP`, or interrupts.
 - **OS Driver Takeover & Memory Reclamation**:
   - A native OS driver attaching while `BOOT_CAPS[5] == 1` and `BOOT_DISP_STATUS.ACTIVE == 1` MUST read all `BOOT_DISP_*` registers **before** issuing a takeover command.
   - **Takeover Triggers**: Hardware transitions `BOOT_DISP_STATUS.ACTIVE` from `1` to `0` and clears `BOOT_DISP_FORMAT`, `BOOT_DISP_WIDTH`, `BOOT_DISP_HEIGHT`, `BOOT_DISP_STRIDE`, and `BOOT_DISP_FB_OFFSET_LO/HI` to `0` (while keeping `BOOT_DISP_STATUS.DONE == 1`) as soon as display takeover occurs on Display 0 via any of:
