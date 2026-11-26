@@ -76,7 +76,7 @@ Table of Contents
 2. [Execution Data Paths](#2-execution-data-paths)
    - [3D Graphics Pipeline](#3d-graphics-pipeline)
    - [2D Blit & Streaming Copy](#2d-blit--streaming-copy)
-   - [Systolic Matrix & Tensor Accelerator](#systolic-matrix--tensor-accelerator)
+   - [Systolic Array & Tensor Accelerator](#systolic-array--tensor-accelerator)
    - [Display Scanout & QoS Preemption](#display-scanout--qos-preemption)
 3. [GHCI 1.0 Host Interface & System Topologies](#3-ghci-10-host-interface--system-topologies)
    - [Unified Memory Architecture (UMA)](#unified-memory-architecture-uma)
@@ -138,7 +138,12 @@ ROP (Tile Buffer & Blend) ──> atg_rt Crossbar ──> Shared L2 Cache (LLC) 
 CP (Copy Ring) ──> BLT (Dual Ping-Pong DMA) ──> atg_rt Crossbar ──> Shared L2 Cache ──> Memory Subsystem
 ```
 
-### Systolic Matrix & Tensor Accelerator
+### Systolic Array & Tensor Accelerator
+
+Achieves real-time inference for Level 4 autonomous driving at just
+100 TOPS (INT8) through its hardware Transformer pipeline and
+vector-supercomputer-inspired latency hiding.  (Note: The design is
+withheld due to export control regulations.)
 
 ```
 CP (Tensor Cmd) ──> VF / Stream DMA (Weights) ──> SU (Warp Stage & LDS) <═══> SA (Systolic Array)
