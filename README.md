@@ -4,7 +4,7 @@ Lumiere GPU
 [![CI](https://github.com/awemorris/lumiere-gpu/actions/workflows/ci.yml/badge.svg)](https://github.com/awemorris/lumiere-gpu/actions/workflows/ci.yml)
 [![License: Zlib](https://img.shields.io/badge/License-Zlib-blue.svg)](https://opensource.org/licenses/Zlib)
 [![GHCI Standard: 1.0](https://img.shields.io/badge/GHCI-1.0-indigo.svg)](docs/ghci.md)
-[![Target: Xilinx KC705/ZCU106](https://img.shields.io/badge/Target-Xilinx-emerald.svg)](boards/)
+[![Target: Xilinx XCKU5P](https://img.shields.io/badge/Target-Xilinx%20XCKU5P-emerald.svg)](boards/)
 
 Gonna illuminate the world!
 
@@ -17,6 +17,10 @@ feature sets of Vulkan, DirectX 12, and Metal.
 
 Lumiere proposes [GHCI 1.0](docs/ghci.md), a standardized set of `GPU
 Host Controller Interface` and `Shader ISA`.
+
+**Silicon & Microarchitectural Targets:**
+- **5nm ASIC Disciplines:** Designed with a strict **13 FO4** logic-depth budget, **fanout <= 16**, and **SRAM latency = 2** pipelined memory boundaries—targeting **at least 1.7 GHz** with standard automated synthesis (and **higher maximum frequencies** with further physical optimization).
+- **FPGA Timing Closure:** Full-chip **400 MHz** timing closure verified on **Xilinx Kintex UltraScale+ XCKU5P** (`-2`).
 
 The target performance varies from low-end SoC (19.2 GFLOPS) to
 high-end PCIe board (13.9 TFLOPS).
@@ -91,7 +95,7 @@ Table of Contents
    - [Memory Hierarchy & Display Subsystem](#memory-hierarchy--display-subsystem)
 5. [Building, Simulation & Toolchain](#5-building-simulation--toolchain)
    - [Verification & Linting Tools](#verification--linting-tools)
-   - [FPGA Synthesis & Timing Results (Minimal Preset)](#fpga-synthesis--timing-results-minimal-preset)
+   - [FPGA Synthesis & Timing Results (XCKU5P 400 MHz)](#fpga-synthesis--timing-results-xcku5p-400-mhz)
    - [High-Performance Full-Feature Synthesis (OOC Breakdown)](#high-performance-full-feature-synthesis-ooc-breakdown)
 6. [Repository Structure](#6-repository-structure)
 7. [Misc & Trivia](#7-misc--trivia)
@@ -334,45 +338,54 @@ make oxc           # Run openXC7 (Yosys + nextpnr) open-source FPGA flow
 - **Arithmetic Linter:** Verification ensures all signal arithmetic operators (`+`, `-`, `*`, etc.) remain strictly confined to `rtl/library/arith/`, guaranteeing DSP primitive mapping and 0 bare operators.
 - **Diagram Verification:** `python3 docs/svg/generate_svgs.py` generates and validates all architecture SVG diagrams with 100% compliant XML parsing.
 
-### FPGA Synthesis & Timing Results (Minimal Preset)
+### FPGA Synthesis & Timing Results (XCKU5P 400 MHz)
 
-The complete board top-level system (`atg_kc705_top`)—integrating the
-full GPU core (`atg_top`), PCIe Gen2 x4 endpoint, MIG DDR3 controller,
-Display Controller (`atg_dc`), and CDC infrastructure—synthesizes
-cleanly for the **Xilinx Kintex-7 KC705** (`xc7k325tffg900-2`) using
-the `minimal` preset (`config/minimal.mk`).
+The complete board top-level system ([`atg_xcku5p_top`](boards/xcku5p/atg_xcku5p_top.v))—integrating the
+full GPU core ([`atg_top`](rtl/gpu/top/atg_top.v)), PCIe 3.0 x4 XDMA bridge (`atg_xcku5p_pcie`),
+MIG DDR4 controller (`atg_xcku5p_mig`), Display Controller (`atg_dc`), JTAG bridge, and CDC/AXI
+infrastructure—achieves **full-chip 400 MHz timing closure** for the **Xilinx Kintex UltraScale+ KU5P**
+(`xcku5p-ffvb676-2-i`, Vivado 2026.1, build `v12`, all 362,352 / 362,352 nets routed with 0 failing endpoints;
+verified with evaluation package-pin constraints prior to carrier-specific pinout assignment).
 
-#### Timing Closure Summary (200 MHz Target)
+#### Timing Closure Summary (400 MHz GPU Target, Full Chip)
 
-| Clock Domain | Period / Frequency | Setup Slack (WNS) | TNS | Failing Endpoints | Status |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **`g_out` (GPU Core `gclk`)** | **5.000 ns / 200.00 MHz** | **+0.019 ns** | **0.000 ns** | **0 / 402,347** | **PASS** |
-| `sysclk` (Board Input) | 5.000 ns / 200.00 MHz | +3.181 ns | 0.000 ns | 0 / 128 | PASS |
-| `pcie_refclk` (PCIe Reference) | 10.000 ns / 100.00 MHz | +8.863 ns | 0.000 ns | 0 / 28 | PASS |
-| **Full Design Timing** | — | **+0.019 ns** | **0.000 ns** | **0 / 496,443** | **PASS** |
+On tag `fpga-400mhz` and for `XCKU5P` (Kintex UltraScale+) device:
 
-#### Device Resource Utilization (KC705: `xc7k325tffg900-2`)
+| Clock Domain | Period / Frequency | Setup Slack (WNS) | $F_{\max}$ | TNS | Failing Setup Endpoints | Status |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`g_out` (GPU Core `gclk`)** | **2.500 ns / 400.00 MHz** | **+0.044 ns** | **407.2 MHz** | **0.000 ns** | **0 / 359,423** | **PASS** |
+| `mmcm_clkout0` (DDR4 MIG UI) | 3.000 ns / 333.33 MHz | +0.028 ns | 336.5 MHz | 0.000 ns | 0 / 32,611 | PASS |
+| `user_clk` (PCIe AXI) | 4.000 ns / 250.00 MHz | +0.244 ns | 266.2 MHz | 0.000 ns | 0 / 45,609 | PASS |
+| `pipe_clk` (PCIe PIPE) | 4.000 ns / 250.00 MHz | +0.223 ns | 264.8 MHz | 0.000 ns | 0 / 2,399 | PASS |
+| `sysclk` (Board Input) | 5.000 ns / 200.00 MHz | +3.614 ns | — | 0.000 ns | 0 / 25 | PASS |
+| **Full Design (Setup / Hold / PW)** | — | **+0.028 ns** (WHS **+0.007 ns**, WPWS **0.000 ns**) | — | **0.000 ns** | **0 / 531,877** (Hold **0 / 531,367**, PW **0 / 246,635**) | **PASS** |
 
-| Resource | Post-Synthesis Used | Post-Opt Used | Available | Utilization (Post-Opt) |
-| :--- | :---: | :---: | :---: | :---: |
-| **Slice LUTs** | 201,100 (98.68%) | **185,093** | 203,800 | **90.82%** |
-| **Slice Registers (FF)** | 210,137 (51.55%) | **195,891** | 407,600 | **48.06%** |
-| **Block RAM Tile** | 169.5 | 169.5 | 445 | **38.09%** |
-| **DSP48E1** | 229 | 229 | 840 | **27.26%** |
+#### Device Resource Utilization (`xcku5p-ffvb676-2-i`)
 
-#### Module Hierarchy Breakdown (`gpu` / `atg_top`)
+| Resource | Used | Available | Utilization |
+| :--- | :---: | :---: | :---: |
+| **CLB LUTs** | **192,583** (`185,845` Logic, `6,738` Memory) | 216,960 | **88.76%** |
+| **CLB Registers (FF)** | **233,107** (`233,055` FF, `51` Latch, `1` AND/OR) | 433,920 | **53.72%** |
+| **CLB** | **26,958** (`14,506` CLBL, `12,452` CLBM) | 27,120 | **99.40%** |
+| **Block RAM Tile** | **155.5** (`137` RAMB36, `37` RAMB18) | 480 | **32.40%** |
+| **DSP48E2** | **163** | 1,824 | **8.94%** |
 
-| Module Instance | RTL Block | Slice LUTs | Slice FFs | BRAM (36/18) | DSP48E1 |
-| :--- | :--- | :---: | :---: | :---: | :---: |
-| `gpu` | [`atg_top`](rtl/gpu/top/atg_top.v) (Total Core) | 160,539 | 170,453 | 129 / 43 | 229 |
-| ├── `g_su[0].su` | [`atg_su`](rtl/gpu/su/atg_su.v) (Shader Unit, 4 PEs) | 39,081 | 36,592 | 27 / 5 | 18 |
-| ├── `g_tu.tu` | [`atg_tu`](rtl/gpu/tu/atg_tu.v) (Texture Unit, 2KB L1) | 38,977 | 46,195 | 32 / 36 | 133 |
-| ├── `g_rop.rop` | [`atg_rop`](rtl/gpu/rop/atg_rop.v) (Render Output Backend) | 24,171 | 24,357 | 0 / 0 | 36 |
-| ├── `mc` | [`atg_mc`](rtl/gpu/mc/atg_mc.v) (Memory Controller, 4KB L2) | 8,248 | 7,502 | 14 / 2 | 0 |
-| ├── `g_dc.dc` | [`atg_dc`](rtl/gpu/dc/atg_dc.v) (Display Controller) | 7,527 | 6,440 | 6 / 0 | 22 |
-| └── `g_vf.vf` | [`atg_vf`](rtl/gpu/vf/atg_vf.v) (Vertex Fetcher) | 6,738 | 12,510 | 0 / 0 | 2 |
+#### Module Hierarchy & Per-Block $F_{\max}$ Breakdown (`gpu` / `atg_top` & Board IPs)
 
-*(Note: In the minimal preset `CONFIG_HAS_BLT = 0`, the 2D Blitter is omitted from the FPGA board top to fit within the KC705 LUT budget. In standalone out-of-context synthesis, [`atg_blt`](rtl/gpu/blt/atg_blt.v) independently achieves $F_{\max} = 203.3\text{ MHz}$ / WNS +0.082 ns).*
+| Module Instance | RTL Block | CLB LUTs | FFs | BRAM (36/18) | DSP48E2 | Setup Slack (WNS) | $F_{\max}$ |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `gpu` | [`atg_top`](rtl/gpu/top/atg_top.v) (Total Core) | **162,829** | **196,735** | **79 / 36** | **160** | **+0.044 ns** | **407.2 MHz** |
+| ├── `g_su_legacy_xbar.g_su[0].su` | [`atg_su`](rtl/gpu/su/atg_su.v) (Shader Unit, FPU `+0.059 ns`) | 37,584 | 44,376 | 27 / 5 | 18 | +0.054 ns | 408.8 MHz |
+| ├── `g_rx.rx` | [`atg_rx`](rtl/gpu/rx/atg_rx.v) (Rasterizer: `setup +0.045`, `scan +0.105`, `frag +0.044`) | 39,339 | 36,930 | 0 / 0 | 32 | +0.044 ns | 407.2 MHz |
+| ├── `g_tu.tu` | [`atg_tu`](rtl/gpu/tu/atg_tu.v) (Texture Unit, 4-bank L1) | 30,696 | 43,223 | 32 / 31 | 53 | +0.072 ns | 411.9 MHz |
+| ├── `g_rop.rop` | [`atg_rop`](rtl/gpu/rop/atg_rop.v) (Render Output Backend, `wb +0.066 ns`) | 22,749 | 29,177 | 0 / 0 | 36 | +0.057 ns | 409.3 MHz |
+| ├── `mc` | [`atg_mc`](rtl/gpu/mc/atg_mc.v) (Memory Controller + L2) | 13,516 | 15,861 | 16 / 0 | 0 | +0.045 ns | 407.3 MHz |
+| ├── `g_vf.vf` | [`atg_vf`](rtl/gpu/vf/atg_vf.v) (Vertex Fetcher) | 7,528 | 14,691 | 0 / 0 | 2 | +0.045 ns | 407.3 MHz |
+| ├── `cp` | [`atg_cp`](rtl/gpu/cp/atg_cp.v) (Command Processor) | 5,753 | 7,420 | 2 / 0 | 0 | +0.085 ns | 414.1 MHz |
+| ├── `g_dc.dc` | [`atg_dc`](rtl/gpu/dc/atg_dc.v) (Display Controller) | 4,862 | 3,990 | 2 / 0 | 19 | +0.047 ns | 407.7 MHz |
+| └── `g_atom.atom` | [`atg_mc_atom`](rtl/gpu/mc/atg_mc_atom.v) (Atomic Engine) | 363 | 220 | 0 / 0 | 0 | +0.150 ns | 425.5 MHz |
+| `mig` | [`atg_xcku5p_mig`](boards/xcku5p/lib/atg_xcku5p_mig.v) (DDR4 + `PIPE_W=1` @ 333.3 MHz) | 15,066 | 17,061 | 25 / 1 | 3 | +0.028 ns | 336.5 MHz |
+| `pcie` | [`atg_xcku5p_pcie`](boards/xcku5p/lib/atg_xcku5p_pcie.v) (PCIe 3.0 x4 @ 250 MHz) | 10,962 | 14,339 | 33 / 0 | 0 | +0.223 ns | 264.8 MHz |
 
 ### High-Performance Full-Feature Synthesis (OOC Breakdown)
 
@@ -425,8 +438,8 @@ lumiere-gpu/
 │       ├── rop/                  # Render Output Backend (Tile Buffer, Hazard Lock, Blend)
 │       ├── mc/                   # Memory Controller (Flat Crossbar, Coalescer, Shared L2 LLC)
 │       ├── dc/                   # Display Controller (Independent pclk, AFIFO, Digital Video)
-│       └── top/                  # SoC Top-Level Integrations (atg_top, atg_kc705_top)
-├── boards/                       # Board Top-Level Wrappers & Constraints (Xilinx KC705)
+│       └── top/                  # SoC Top-Level Integration (atg_top)
+├── boards/                       # Board Top-Level Wrappers & Constraints (Xilinx XCKU5P, ZCU106, KC705)
 ├── docs/                         # Specifications & Architectural Documentation
 │   ├── ghci.md                   # GHCI 1.0 Specification & GSI1 Shader ISA Standard
 │   ├── style.md                  # Verilog-2005 Coding Standard & Guardrails
