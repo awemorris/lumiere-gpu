@@ -83,9 +83,150 @@ module atg_rop_fmul #(
 	wire [23:0] ma = {1'b1, i_a[22:0]};
 	wire [23:0] mb = {1'b1, i_b[22:0]};
 	wire [47:0] p2;
+`ifdef SYNTH_ASIC
+	/* Radix-4 Booth 24x24 multiplier: direct zero-XOR Booth decode + dual-rail CSA in Stage 1 & Stage 1b */
+	wire [12:0] b_neg;
+	wire [47:0] booth_pp [0:12];
+	wire [26:0] b_pad = {2'b00, mb, 1'b0};
+	genvar gj;
+	generate
+	for (gj = 0; gj < 12; gj = gj + 1) begin : g_booth_row
+		wire b_m1 = b_pad[2 * gj];
+		wire b_0  = b_pad[2 * gj + 1];
+		wire b_p1 = b_pad[2 * gj + 2];
+		wire pos1 = ~(~(!b_p1 && !b_0 &&  b_m1) & ~(!b_p1 &&  b_0 && !b_m1));
+		wire neg1 = ~(~( b_p1 && !b_0 &&  b_m1) & ~( b_p1 &&  b_0 && !b_m1));
+		wire pos2 = !b_p1 &&  b_0 &&  b_m1;
+		wire neg2 =  b_p1 && !b_0 && !b_m1;
+		assign b_neg[gj] = b_p1 && !(b_0 && b_m1);
+		wire [24:0] u_j;
+		genvar gb_k;
+		for (gb_k = 0; gb_k < 25; gb_k = gb_k + 1) begin : g_bu
+			wire m_cur  = (gb_k < 24) ? ma[gb_k]     : 1'b0;
+			wire m_prev = (gb_k > 0)  ? ma[gb_k - 1] : 1'b0;
+			assign u_j[gb_k] = (pos1 & m_cur) | (neg1 & ~m_cur) | (pos2 & m_prev) | (neg2 & ~m_prev);
+		end
+		wire s_j = b_p1 && (ma[23] || !b_0 || !b_m1);
+		wire [47:0] row_base;
+		if (gj == 0) begin : g_b0
+			assign row_base = {20'd0, ~s_j, s_j, s_j, u_j};
+		end else if (gj < 11) begin : g_bm
+			wire [20 - 2*gj : 0] pad_hi = {(21 - 2*gj){1'b0}};
+			assign row_base = {pad_hi, 1'b1, ~s_j, u_j, {(2*gj){1'b0}}};
+		end else begin : g_b11
+			assign row_base = {~s_j, u_j, 22'd0};
+		end
+		if (gj == 0) begin : g_n0
+			assign booth_pp[0] = row_base;
+		end else begin : g_nj
+			wire [47:0] neg_ins = {{(48 - (2*gj - 1)){1'b0}}, b_neg[gj - 1], {(2*gj - 2){1'b0}}};
+			assign booth_pp[gj] = row_base | neg_ins;
+		end
+	end
+	endgenerate
+	assign b_neg[12] = 1'b0;
+	assign booth_pp[12] = {ma, 1'b0, b_neg[11], 22'd0};
+
+	wire [47:0] s1_m [0:8];
+	wire [47:0] s1_m_n [0:8];
+	generate
+	for (gj = 0; gj < 4; gj = gj + 1) begin : g_s1_32a
+		wire [47:0] x0 = (gj == 0) ? booth_pp[0] : booth_pp[3*gj];
+		wire [47:0] x1 = (gj == 0) ? booth_pp[12] : booth_pp[3*gj + 1];
+		wire [47:0] x2 = (gj == 0) ? booth_pp[1] : booth_pp[3*gj + 2];
+		wire [47:0] nx0 = ~x0, nx1 = ~x1, nx2 = ~x2;
+		wire [47:0] x01  = ~(~(x0 & nx1) & ~(nx0 & x1));
+		wire [47:0] nx01 = ~(~(x0 &  x1) & ~(nx0 & nx1));
+		assign s1_m[2*gj]     = ~(~(x01 & nx2) & ~(nx01 & x2));
+		assign s1_m_n[2*gj]   = ~(~(x01 &  x2) & ~(nx01 & nx2));
+		wire [46:0] c_raw = (x0[46:0] & x1[46:0]) | (x2[46:0] & (x0[46:0] | x1[46:0]));
+		assign s1_m[2*gj + 1]   = {c_raw, 1'b0};
+		assign s1_m_n[2*gj + 1] = ~{c_raw, 1'b0};
+	end
+	endgenerate
+	assign s1_m[8]   = booth_pp[2];
+	assign s1_m_n[8] = ~booth_pp[2];
+
+	wire [47:0] s1_l1 [0:5];
+	wire [47:0] y_a [0:2];
+	wire [47:0] y_b [0:2];
+	wire [47:0] y_c [0:2];
+	wire [47:0] ny_a [0:2];
+	wire [47:0] ny_b [0:2];
+	wire [47:0] ny_c [0:2];
+	assign y_a[0] = s1_m[1]; assign ny_a[0] = s1_m_n[1];
+	assign y_b[0] = s1_m[8]; assign ny_b[0] = s1_m_n[8];
+	assign y_c[0] = s1_m[0]; assign ny_c[0] = s1_m_n[0];
+
+	assign y_a[1] = s1_m[3]; assign ny_a[1] = s1_m_n[3];
+	assign y_b[1] = s1_m[5]; assign ny_b[1] = s1_m_n[5];
+	assign y_c[1] = s1_m[2]; assign ny_c[1] = s1_m_n[2];
+
+	assign y_a[2] = s1_m[7]; assign ny_a[2] = s1_m_n[7];
+	assign y_b[2] = s1_m[4]; assign ny_b[2] = s1_m_n[4];
+	assign y_c[2] = s1_m[6]; assign ny_c[2] = s1_m_n[6];
+	generate
+	for (gj = 0; gj < 3; gj = gj + 1) begin : g_s1_32b
+		wire [47:0] y01  = ~(~(y_a[gj] & ny_b[gj]) & ~(ny_a[gj] & y_b[gj]));
+		wire [47:0] ny01 = ~(~(y_a[gj] &  y_b[gj]) & ~(ny_a[gj] & ny_b[gj]));
+		assign s1_l1[2*gj]     = ~(~(y01 & ny_c[gj]) & ~(ny01 & y_c[gj]));
+		assign s1_l1[2*gj + 1] = {((y_a[gj][46:0] & y_b[gj][46:0]) | (y_c[gj][46:0] & (y_a[gj][46:0] | y_b[gj][46:0]))), 1'b0};
+	end
+	endgenerate
+
+	reg [47:0] r_csa1 [0:5];
+	integer ic1;
+	always @(posedge clk) begin
+		if (en_s1_mul) begin
+			for (ic1 = 0; ic1 < 6; ic1 = ic1 + 1)
+				r_csa1[ic1] <= s1_l1[ic1];
+		end
+	end
+
+	wire [47:0] nr0 = ~r_csa1[0], nr1 = ~r_csa1[1], nr2 = ~r_csa1[2];
+	wire [47:0] nr3 = ~r_csa1[3], nr4 = ~r_csa1[4], nr5 = ~r_csa1[5];
+	wire [47:0] x2a  = ~(~(r_csa1[0] & nr1) & ~(nr0 & r_csa1[1]));
+	wire [47:0] nx2a = ~(~(r_csa1[0] & r_csa1[1]) & ~(nr0 & nr1));
+	wire [47:0] s2_l1_0  = ~(~(x2a & nr2) & ~(nx2a & r_csa1[2]));
+	wire [47:0] ns2_l1_0 = ~(~(x2a & r_csa1[2]) & ~(nx2a & nr2));
+	wire [47:0] s2_l1_1  = {((r_csa1[0][46:0] & r_csa1[1][46:0]) | (r_csa1[2][46:0] & (r_csa1[0][46:0] | r_csa1[1][46:0]))), 1'b0};
+	wire [47:0] ns2_l1_1 = ~s2_l1_1;
+
+	wire [47:0] x2b  = ~(~(r_csa1[3] & nr4) & ~(nr3 & r_csa1[4]));
+	wire [47:0] nx2b = ~(~(r_csa1[3] & r_csa1[4]) & ~(nr3 & nr4));
+	wire [47:0] s2_l1_2  = ~(~(x2b & nr5) & ~(nx2b & r_csa1[5]));
+	wire [47:0] ns2_l1_2 = ~(~(x2b & r_csa1[5]) & ~(nx2b & nr5));
+	wire [47:0] s2_l1_3  = {((r_csa1[3][46:0] & r_csa1[4][46:0]) | (r_csa1[5][46:0] & (r_csa1[3][46:0] | r_csa1[4][46:0]))), 1'b0};
+	wire [47:0] ns2_l1_3 = ~s2_l1_3;
+
+	wire [47:0] p42  = ~(~(s2_l1_0 & ns2_l1_2) & ~(ns2_l1_0 & s2_l1_2));
+	wire [47:0] np42 = ~(~(s2_l1_0 & s2_l1_2) & ~(ns2_l1_0 & ns2_l1_2));
+	wire [47:0] q42  = ~(~(s2_l1_1 & ns2_l1_3) & ~(ns2_l1_1 & s2_l1_3));
+	wire [47:0] nq42 = ~(~(s2_l1_1 & s2_l1_3) & ~(ns2_l1_1 & ns2_l1_3));
+
+	wire [47:0] s2_co1  = {((p42[46:0] & s2_l1_1[46:0]) | (np42[46:0] & s2_l1_0[46:0])), 1'b0};
+	wire [47:0] ns2_co1 = {~((p42[46:0] & s2_l1_1[46:0]) | (np42[46:0] & s2_l1_0[46:0])), 1'b1};
+	wire [47:0] pq42    = ~(~(p42 & nq42) & ~(np42 & q42));
+	wire [47:0] npq42   = ~(~(p42 & q42) & ~(np42 & nq42));
+	wire [47:0] s2_l3_s = ~(~(pq42 & ns2_co1) & ~(npq42 & s2_co1));
+	wire [47:0] s2_l3_c = {((pq42[46:0] & s2_co1[46:0]) | (npq42[46:0] & s2_l1_3[46:0])), 1'b0};
+
+	reg [47:0] r_st2_s, r_st2_c;
+	always @(posedge clk) begin
+		if (en_s1b_b) begin
+			r_st2_s <= s2_l3_s;
+			r_st2_c <= s2_l3_c;
+		end
+	end
+
+	wire p2_co_unused;
+	am_add #(.W(48)) u_fin_p (.a(r_st2_s), .b(r_st2_c), .ci(1'b0), .s(p2), .co(p2_co_unused));
+	wire unused_p2_co = p2_co_unused;
+`else
 	am_mul #(.AW(24), .BW(24), .LAT(2)) u_mul (
 		.clk(clk), .en(en_s1_mul), .a(ma), .b(mb), .p(p2)
 	);
+`endif
 
 	reg r1_ea_zero, r1_eb_zero, r1_ea_ff, r1_eb_ff, r1_a_mnz, r1_b_mnz, r1_s;
 	reg [9:0] r1_e;

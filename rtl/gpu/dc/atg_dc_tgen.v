@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -80,6 +80,40 @@ module atg_dc_tgen (
 
 
 `ifdef SYNTH_KINTEX7
+	reg vrr_en_q, flip_ready_q;
+	reg [11:0] vrr_vmax_q;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			vrr_en_q <= 1'b0;
+			flip_ready_q <= 1'b0;
+			vrr_vmax_q <= 12'd0;
+		end else begin
+			vrr_en_q <= vrr_en;
+			flip_ready_q <= flip_ready;
+			vrr_vmax_q <= vrr_vmax;
+		end
+	end
+	wire d_vrr_en = vrr_en_q;
+	wire d_flip_ready = flip_ready_q;
+	wire [11:0] d_vrr_vmax = vrr_vmax_q;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	reg vrr_en_q, flip_ready_q;
+	reg [11:0] vrr_vmax_q;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			vrr_en_q <= 1'b0;
+			flip_ready_q <= 1'b0;
+			vrr_vmax_q <= 12'd0;
+		end else begin
+			vrr_en_q <= vrr_en;
+			flip_ready_q <= flip_ready;
+			vrr_vmax_q <= vrr_vmax;
+		end
+	end
+	wire d_vrr_en = vrr_en_q;
+	wire d_flip_ready = flip_ready_q;
+	wire [11:0] d_vrr_vmax = vrr_vmax_q;
+`elsif SYNTH_ASIC
 	reg vrr_en_q, flip_ready_q;
 	reg [11:0] vrr_vmax_q;
 	always @(posedge clk or negedge rst_n) begin
@@ -200,12 +234,53 @@ module atg_dc_tgen (
 	wire [2:0] bar_inc;
 	wire [6:0] cnt_co_unused;
 
+`ifdef SYNTH_ASIC
+	wire [3:0] h_n0, h_n1, h_n2, v_n0, v_n1, v_n2;
+	wire [5:0] hv_co_unused;
+	am_add #(.W(4)) a_h0 (.a(h[3:0]),  .b(4'd0), .ci(1'b1), .s(h_n0), .co(hv_co_unused[0]));
+	am_add #(.W(4)) a_h1 (.a(h[7:4]),  .b(4'd0), .ci(1'b1), .s(h_n1), .co(hv_co_unused[1]));
+	am_add #(.W(4)) a_h2 (.a(h[11:8]), .b(4'd0), .ci(1'b1), .s(h_n2), .co(hv_co_unused[2]));
+	wire h_a0 = &h[3:0];
+	wire h_a1 = h_a0 && (&h[7:4]);
+	assign h_inc = {h_a1 ? h_n2 : h[11:8], h_a0 ? h_n1 : h[7:4], h_n0};
+
+	am_add #(.W(4)) a_v0 (.a(v[3:0]),  .b(4'd0), .ci(1'b1), .s(v_n0), .co(hv_co_unused[3]));
+	am_add #(.W(4)) a_v1 (.a(v[7:4]),  .b(4'd0), .ci(1'b1), .s(v_n1), .co(hv_co_unused[4]));
+	am_add #(.W(4)) a_v2 (.a(v[11:8]), .b(4'd0), .ci(1'b1), .s(v_n2), .co(hv_co_unused[5]));
+	wire v_a0 = &v[3:0];
+	wire v_a1 = v_a0 && (&v[7:4]);
+	assign v_inc = {v_a1 ? v_n2 : v[11:8], v_a0 ? v_n1 : v[7:4], v_n0};
+	assign cnt_co_unused[1:0] = {&hv_co_unused[5:3], &hv_co_unused[2:0]};
+`else
 	am_add #(.W(12)) a_h (.a(h), .b(12'd0), .ci(1'b1), .s(h_inc), .co(cnt_co_unused[0]));
 	am_add #(.W(12)) a_v (.a(v), .b(12'd0), .ci(1'b1), .s(v_inc), .co(cnt_co_unused[1]));
+`endif
 	am_add #(.W(12)) a_bx (.a(bx), .b(12'd0), .ci(1'b1), .s(bx_inc), .co(cnt_co_unused[2]));
 	am_add #(.W(3)) a_bar (.a(bar), .b(3'd0), .ci(1'b1), .s(bar_inc), .co(cnt_co_unused[3]));
 
 `ifdef SYNTH_KINTEX7
+	wire [11:0] bar_last_w;
+	am_sub #(.W(12)) s_barw (.a(bar_w), .b(12'd1), .bi(1'b0), .d(bar_last_w), .bo(cnt_co_unused[4]));
+	reg [11:0] bar_last_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			bar_last_r <= 12'd0;
+		else
+			bar_last_r <= bar_last_w;
+	end
+	wire [11:0] bar_last = bar_last_r;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [11:0] bar_last_w;
+	am_sub #(.W(12)) s_barw (.a(bar_w), .b(12'd1), .bi(1'b0), .d(bar_last_w), .bo(cnt_co_unused[4]));
+	reg [11:0] bar_last_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			bar_last_r <= 12'd0;
+		else
+			bar_last_r <= bar_last_w;
+	end
+	wire [11:0] bar_last = bar_last_r;
+`elsif SYNTH_ASIC
 	wire [11:0] bar_last_w;
 	am_sub #(.W(12)) s_barw (.a(bar_w), .b(12'd1), .bi(1'b0), .d(bar_last_w), .bo(cnt_co_unused[4]));
 	reg [11:0] bar_last_r;
@@ -222,17 +297,67 @@ module atg_dc_tgen (
 `endif
 
 `ifdef SYNTH_KINTEX7
-	wire [11:0] ha_last_w, va_last_w;
-	am_sub #(.W(12)) s_ha (.a(ha), .b(12'd1), .bi(1'b0), .d(ha_last_w), .bo(cnt_co_unused[5]));
-	am_sub #(.W(12)) s_va (.a(va), .b(12'd1), .bi(1'b0), .d(va_last_w), .bo(cnt_co_unused[6]));
-	reg [11:0] ha_last_r, va_last_r;
+	wire [11:0] ha_last_w, va_last_w, hlast_m1_w;
+	wire hlm1_bo_unused;
+	am_sub #(.W(12)) s_ha   (.a(ha),    .b(12'd1), .bi(1'b0), .d(ha_last_w),  .bo(cnt_co_unused[5]));
+	am_sub #(.W(12)) s_va   (.a(va),    .b(12'd1), .bi(1'b0), .d(va_last_w),  .bo(cnt_co_unused[6]));
+	am_sub #(.W(12)) s_hlm1 (.a(hlast), .b(12'd1), .bi(1'b0), .d(hlast_m1_w), .bo(hlm1_bo_unused));
+	reg [11:0] ha_last_r, va_last_r, hlast_m1_r;
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
-			ha_last_r <= 12'd0;
-			va_last_r <= 12'd0;
+			ha_last_r  <= 12'd0;
+			va_last_r  <= 12'd0;
+			hlast_m1_r <= 12'd0;
 		end else begin
-			ha_last_r <= ha_last_w;
-			va_last_r <= va_last_w;
+			ha_last_r  <= ha_last_w;
+			va_last_r  <= va_last_w;
+			hlast_m1_r <= hlast_m1_w;
+		end
+	end
+	wire [11:0] ha_last = ha_last_r;
+	wire [11:0] va_last = va_last_r;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [11:0] ha_last_w, va_last_w, hlast_m1_w;
+	wire hlm1_bo_unused;
+	am_sub #(.W(12)) s_ha   (.a(ha),    .b(12'd1), .bi(1'b0), .d(ha_last_w),  .bo(cnt_co_unused[5]));
+	am_sub #(.W(12)) s_va   (.a(va),    .b(12'd1), .bi(1'b0), .d(va_last_w),  .bo(cnt_co_unused[6]));
+	am_sub #(.W(12)) s_hlm1 (.a(hlast), .b(12'd1), .bi(1'b0), .d(hlast_m1_w), .bo(hlm1_bo_unused));
+	reg [11:0] ha_last_r, va_last_r, hlast_m1_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			ha_last_r  <= 12'd0;
+			va_last_r  <= 12'd0;
+			hlast_m1_r <= 12'd0;
+		end else begin
+			ha_last_r  <= ha_last_w;
+			va_last_r  <= va_last_w;
+			hlast_m1_r <= hlast_m1_w;
+		end
+	end
+	wire [11:0] ha_last = ha_last_r;
+	wire [11:0] va_last = va_last_r;
+`elsif SYNTH_ASIC
+	wire [11:0] ha_last_w, va_last_w, hlast_m1_w, hss_m1_w, hse_m1_w;
+	wire [2:0] hm1_bo_unused;
+	am_sub #(.W(12)) s_ha   (.a(ha),    .b(12'd1), .bi(1'b0), .d(ha_last_w),  .bo(cnt_co_unused[5]));
+	am_sub #(.W(12)) s_va   (.a(va),    .b(12'd1), .bi(1'b0), .d(va_last_w),  .bo(cnt_co_unused[6]));
+	am_sub #(.W(12)) s_hlm1 (.a(hlast), .b(12'd1), .bi(1'b0), .d(hlast_m1_w), .bo(hm1_bo_unused[0]));
+	am_sub #(.W(12)) s_hssm (.a(hss),   .b(12'd1), .bi(1'b0), .d(hss_m1_w),   .bo(hm1_bo_unused[1]));
+	am_sub #(.W(12)) s_hsem (.a(hse),   .b(12'd1), .bi(1'b0), .d(hse_m1_w),   .bo(hm1_bo_unused[2]));
+	reg [11:0] ha_last_r, va_last_r, hlast_m1_r, hss_m1_r, hse_m1_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			ha_last_r  <= 12'd0;
+			va_last_r  <= 12'd0;
+			hlast_m1_r <= 12'd0;
+			hss_m1_r   <= 12'd0;
+			hse_m1_r   <= 12'd0;
+		end else begin
+			ha_last_r  <= ha_last_w;
+			va_last_r  <= va_last_w;
+			hlast_m1_r <= hlast_m1_w;
+			hss_m1_r   <= hss_m1_w;
+			hse_m1_r   <= hse_m1_w;
 		end
 	end
 	wire [11:0] ha_last = ha_last_r;
@@ -296,6 +421,103 @@ module atg_dc_tgen (
 	wire de_c = h_act_r_a && v_act_r_a;
 	wire de_c_rgb = h_act_r_b && v_act_r_b;
 	wire de_c_rgb10 = h_act_r_c && v_act_r_c;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [11:0] diff_hlast = h ^ hlast;
+	wire h_last_match = ~(|diff_hlast);
+	wire [11:0] diff_halast = h ^ ha_last;
+	wire h_act_end_match = ~(|diff_halast);
+
+	wire [11:0] diff_vlast = v ^ vlast;
+	reg v_last_match_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			v_last_match_r <= 1'b0;
+		else
+			v_last_match_r <= ~(|diff_vlast);
+	end
+	wire v_last_match = v_last_match_r;
+	wire [11:0] diff_valast = v ^ va_last;
+	wire v_act_end_match = ~(|diff_valast);
+
+	reg h_act_r, v_act_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			h_act_r <= 1'b0;
+			v_act_r <= 1'b0;
+		end else if (!enable) begin
+			h_act_r <= 1'b0;
+			v_act_r <= 1'b0;
+		end else if (!running) begin
+			h_act_r <= 1'b1;
+			v_act_r <= 1'b0;
+		end else begin
+			if (h_last_match) begin
+				h_act_r <= 1'b1;
+				if (v_last_match)
+					v_act_r <= 1'b1;
+				else if (v_act_end_match)
+					v_act_r <= 1'b0;
+			end else if (h_act_end_match) begin
+				h_act_r <= 1'b0;
+			end
+		end
+	end
+	wire h_act_r_a, h_act_r_b, h_act_r_c;
+	wire v_act_r_a, v_act_r_b, v_act_r_c;
+	assign h_act_r_a = h_act_r;
+	assign h_act_r_b = h_act_r;
+	assign h_act_r_c = h_act_r;
+	assign v_act_r_a = v_act_r;
+	assign v_act_r_b = v_act_r;
+	assign v_act_r_c = v_act_r;
+
+	wire de_c = h_act_r_a && v_act_r_a;
+	wire de_c_rgb = h_act_r_b && v_act_r_b;
+	wire de_c_rgb10 = h_act_r_c && v_act_r_c;
+`elsif SYNTH_ASIC
+	wire [11:0] diff_hlast = h ^ hlast;
+	wire h_last_match = ~(|diff_hlast);
+	wire [11:0] diff_halast = h ^ ha_last;
+	wire h_act_end_match = ~(|diff_halast);
+
+	wire [11:0] diff_vlast = v ^ vlast;
+	reg v_last_match_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			v_last_match_r <= 1'b0;
+		else
+			v_last_match_r <= ~(|diff_vlast);
+	end
+	wire v_last_match = v_last_match_r;
+	wire [11:0] diff_valast = v ^ va_last;
+	wire v_act_end_match = ~(|diff_valast);
+
+	reg h_act_r, v_act_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			h_act_r <= 1'b0;
+			v_act_r <= 1'b0;
+		end else if (!enable) begin
+			h_act_r <= 1'b0;
+			v_act_r <= 1'b0;
+		end else if (!running) begin
+			h_act_r <= 1'b1;
+			v_act_r <= 1'b0;
+		end else begin
+			if (h_last_match) begin
+				h_act_r <= 1'b1;
+				if (v_last_match)
+					v_act_r <= 1'b1;
+				else if (v_act_end_match)
+					v_act_r <= 1'b0;
+			end else if (h_act_end_match) begin
+				h_act_r <= 1'b0;
+			end
+		end
+	end
+	wire de_c = h_act_r && v_act_r;
+	wire de_c_rgb = de_c;
+	wire de_c_rgb10 = de_c;
 `else
 	wire de_c = h < ha && v < va;
 	wire de_c_rgb = de_c;
@@ -303,7 +525,22 @@ module atg_dc_tgen (
 	wire [11:0] diff_vlast = v ^ vlast;
 	wire v_last_match = ~(|diff_vlast);
 `endif
+`ifdef SYNTH_ASIC
+	reg hs_c_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			hs_c_r <= 1'b0;
+		else if (!enable || !running)
+			hs_c_r <= 1'b0;
+		else if (~(|(h ^ hss_m1_r)))
+			hs_c_r <= 1'b1;
+		else if (~(|(h ^ hse_m1_r)))
+			hs_c_r <= 1'b0;
+	end
+	wire hs_c = hs_c_r;
+`else
 	wire hs_c = h >= hss && h < hse;
+`endif
 `ifdef SYNTH_KINTEX7
 	reg vs_c_r;
 	always @(posedge clk or negedge rst_n) begin
@@ -313,11 +550,49 @@ module atg_dc_tgen (
 			vs_c_r <= (v >= vss && v < vse);
 	end
 	wire vs_c = vs_c_r;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	reg vs_c_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			vs_c_r <= 1'b0;
+		else
+			vs_c_r <= (v >= vss && v < vse);
+	end
+	wire vs_c = vs_c_r;
+`elsif SYNTH_ASIC
+	reg vs_c_r;
+	wire v_ge_vss = (v[11:6] > vss[11:6]) || ((v[11:6] == vss[11:6]) && (v[5:0] >= vss[5:0]));
+	wire v_lt_vse = (v[11:6] < vse[11:6]) || ((v[11:6] == vse[11:6]) && (v[5:0] < vse[5:0]));
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			vs_c_r <= 1'b0;
+		else
+			vs_c_r <= v_ge_vss && v_lt_vse;
+	end
+	wire vs_c = vs_c_r;
 `else
 	wire vs_c = v >= vss && v < vse;
 `endif
+`ifdef SYNTH_KINTEX7
+	wire px_valid_rgb, px_valid_10l, px_valid_10h, px_valid_ctl;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pxv_r   (.I0(px_valid), .O(px_valid_rgb));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pxv_10l (.I0(px_valid), .O(px_valid_10l));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pxv_10h (.I0(px_valid), .O(px_valid_10h));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pxv_ctl (.I0(px_valid), .O(px_valid_ctl));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire px_valid_rgb, px_valid_10l, px_valid_10h, px_valid_ctl;
+	assign px_valid_rgb = px_valid;
+	assign px_valid_10l = px_valid;
+	assign px_valid_10h = px_valid;
+	assign px_valid_ctl = px_valid;
+`else
+	wire px_valid_rgb = px_valid;
+	wire px_valid_10l = px_valid;
+	wire px_valid_10h = px_valid;
+	wire px_valid_ctl = px_valid;
+`endif
 	wire take = de_c && !tp;
-	assign px_ready = running && px_valid && (take || vs_c);
+	assign px_ready = running && px_valid_ctl && (take || vs_c);
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
@@ -336,6 +611,24 @@ module atg_dc_tgen (
 	am_add #(.W(12)) a_vrr_lines (.a(vrr_lines), .b(12'd0), .ci(1'b1), .s(vrr_lines_inc), .co(vrr_co_unused));
 
 `ifdef SYNTH_KINTEX7
+	reg [11:0] eff_vmax_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			eff_vmax_r <= 12'd0;
+		else
+			eff_vmax_r <= (d_vrr_vmax != 12'd0) ? d_vrr_vmax : vlast;
+	end
+	wire [11:0] eff_vmax = eff_vmax_r;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	reg [11:0] eff_vmax_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			eff_vmax_r <= 12'd0;
+		else
+			eff_vmax_r <= (d_vrr_vmax != 12'd0) ? d_vrr_vmax : vlast;
+	end
+	wire [11:0] eff_vmax = eff_vmax_r;
+`elsif SYNTH_ASIC
 	reg [11:0] eff_vmax_r;
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n)
@@ -371,7 +664,97 @@ module atg_dc_tgen (
 	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_v;
 	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_b;
 	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_t;
-	wire h_next_is_last = (h_inc == hlast);
+	wire h_next_is_last = ~(|(h ^ hlast_m1_r));
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			h_last_match_h0 <= 1'b0;
+			h_last_match_h1 <= 1'b0;
+			h_last_match_v  <= 1'b0;
+			h_last_match_b  <= 1'b0;
+			h_last_match_t  <= 1'b0;
+		end else if (!enable || !running) begin
+			h_last_match_h0 <= 1'b0;
+			h_last_match_h1 <= 1'b0;
+			h_last_match_v  <= 1'b0;
+			h_last_match_b  <= 1'b0;
+			h_last_match_t  <= 1'b0;
+		end else begin
+			h_last_match_h0 <= h_next_is_last;
+			h_last_match_h1 <= h_next_is_last;
+			h_last_match_v  <= h_next_is_last;
+			h_last_match_b  <= h_next_is_last;
+			h_last_match_t  <= h_next_is_last;
+		end
+	end
+`elsif SYNTH_KINTEX_ULTRASCALE
+	reg vrr_hold_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			vrr_hold_r <= 1'b0;
+		else
+			vrr_hold_r <= d_vrr_en && (~(|(v ^ vss))) && !d_flip_ready && !vrr_flip_latched && (vrr_lines < eff_vmax);
+	end
+	wire vrr_hold = vrr_hold_r;
+	wire vrr_hold_v, vrr_hold_l, vrr_hold_t;
+	assign vrr_hold_v = vrr_hold;
+	assign vrr_hold_l = vrr_hold;
+	assign vrr_hold_t = vrr_hold;
+
+	wire bx_match = ~(|(bx ^ bar_last));
+	wire bx_match_b, bx_match_c;
+	assign bx_match_b = bx_match;
+	assign bx_match_c = bx_match;
+
+	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_h0;
+	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_h1;
+	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_v;
+	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_b;
+	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_t;
+	wire h_next_is_last = ~(|(h ^ hlast_m1_r));
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			h_last_match_h0 <= 1'b0;
+			h_last_match_h1 <= 1'b0;
+			h_last_match_v  <= 1'b0;
+			h_last_match_b  <= 1'b0;
+			h_last_match_t  <= 1'b0;
+		end else if (!enable || !running) begin
+			h_last_match_h0 <= 1'b0;
+			h_last_match_h1 <= 1'b0;
+			h_last_match_v  <= 1'b0;
+			h_last_match_b  <= 1'b0;
+			h_last_match_t  <= 1'b0;
+		end else begin
+			h_last_match_h0 <= h_next_is_last;
+			h_last_match_h1 <= h_next_is_last;
+			h_last_match_v  <= h_next_is_last;
+			h_last_match_b  <= h_next_is_last;
+			h_last_match_t  <= h_next_is_last;
+		end
+	end
+`elsif SYNTH_ASIC
+	reg vrr_lt_vmax_r;
+	reg vrr_hold_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			vrr_lt_vmax_r <= 1'b0;
+			vrr_hold_r    <= 1'b0;
+		end else begin
+			vrr_lt_vmax_r <= (vrr_lines < eff_vmax);
+			vrr_hold_r    <= d_vrr_en && (~(|(v ^ vss))) && !d_flip_ready && !vrr_flip_latched && vrr_lt_vmax_r;
+		end
+	end
+	wire vrr_hold = vrr_hold_r;
+	wire vrr_hold_v = vrr_hold, vrr_hold_l = vrr_hold, vrr_hold_t = vrr_hold;
+	wire bx_match = ~(|(bx ^ bar_last));
+	wire bx_match_b = bx_match, bx_match_c = bx_match;
+
+	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_h0;
+	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_h1;
+	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_v;
+	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_b;
+	(* keep = "true", equivalent_register_removal = "no" *) reg h_last_match_t;
+	wire h_next_is_last = ~(|(h ^ hlast_m1_r));
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
 			h_last_match_h0 <= 1'b0;
@@ -474,7 +857,18 @@ module atg_dc_tgen (
 	end
 
 	wire v_step = running && h_last_match_v;
+`ifdef SYNTH_ASIC
+	reg [11:0] v_inc_q;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			v_inc_q <= 12'd0;
+		else
+			v_inc_q <= v_inc;
+	end
+	wire [11:0] v_step_val = vrr_hold_v ? vss : (v_last_match ? 12'd0 : v_inc_q);
+`else
 	wire [11:0] v_step_val = vrr_hold_v ? vss : (v_last_match ? 12'd0 : v_inc);
+`endif
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n)
@@ -550,6 +944,10 @@ module atg_dc_tgen (
 	always @(*) begin
 `ifdef SYNTH_KINTEX7
 		if (~(|h) || h_act_end_match || ~(|v) || v_act_end_match)
+`elsif SYNTH_KINTEX_ULTRASCALE
+		if (~(|h) || h_act_end_match || ~(|v) || v_act_end_match)
+`elsif SYNTH_ASIC
+		if (~(|h) || h_act_end_match || ~(|v) || v_act_end_match)
 `else
 		if (h == 12'd0 || h == ha_last || v == 12'd0 || v == va_last)
 `endif
@@ -572,6 +970,11 @@ module atg_dc_tgen (
 	LUT1 #(.INIT(2'b10)) u_buf_clr_rgb (.I0(!running || !de_c_rgb), .O(clr_rgb));
 	LUT1 #(.INIT(2'b10)) u_buf_clr_10l (.I0(!running || !de_c_rgb10), .O(clr_rgb10_lo));
 	LUT1 #(.INIT(2'b10)) u_buf_clr_10h (.I0(!running || !de_c_rgb10), .O(clr_rgb10_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire clr_rgb, clr_rgb10_lo, clr_rgb10_hi;
+	assign clr_rgb = !running || !de_c_rgb;
+	assign clr_rgb10_lo = !running || !de_c_rgb10;
+	assign clr_rgb10_hi = !running || !de_c_rgb10;
 `else
 	wire clr_rgb = !running || !de_c;
 	wire clr_rgb10_lo = clr_rgb;
@@ -598,7 +1001,7 @@ module atg_dc_tgen (
 				rgb <= 24'd0;
 			end else if (tp) begin
 				rgb <= pattern;
-			end else if (px_valid) begin
+			end else if (px_valid_rgb) begin
 				rgb <= convert(fmt, px_data);
 			end else begin
 				rgb <= 24'd0;
@@ -608,7 +1011,7 @@ module atg_dc_tgen (
 				rgb10[14:0] <= 15'd0;
 			end else if (tp) begin
 				rgb10[14:0] <= pattern10[14:0];
-			end else if (px_valid) begin
+			end else if (px_valid_10l) begin
 				rgb10[14:0] <= px_data10[14:0];
 			end else begin
 				rgb10[14:0] <= 15'd0;
@@ -618,7 +1021,7 @@ module atg_dc_tgen (
 				rgb10[29:15] <= 15'd0;
 			end else if (tp) begin
 				rgb10[29:15] <= pattern10[29:15];
-			end else if (px_valid) begin
+			end else if (px_valid_10h) begin
 				rgb10[29:15] <= px_data10[29:15];
 			end else begin
 				rgb10[29:15] <= 15'd0;
@@ -627,7 +1030,7 @@ module atg_dc_tgen (
 				vsync_toggle <= !vsync_toggle;
 			if (running && h == 12'd0 && v == vse)
 				frame_toggle <= !frame_toggle;
-			if (running && take && !px_valid)
+			if (running && take && !px_valid_ctl)
 				underflow_toggle <= !underflow_toggle;
 		end
 	end

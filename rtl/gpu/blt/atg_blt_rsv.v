@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -127,7 +127,7 @@ module atg_blt_rsv #(
 		o_psl != 3'd2);
 
 	/* The mode, taken at the kick. */
-	reg [2:0] psl, m_fmt;
+	(* max_fanout = 16 *) reg [2:0] psl, psl_px, m_fmt;
 	(* max_fanout = 16 *) reg m_tiled;
 
 	/*
@@ -166,55 +166,98 @@ module atg_blt_rsv #(
 	wire [ADDR_W-1:0] sbase = sbase_p64[ADDR_W-1:0] & smask;
 	wire [ADDR_W-1:0] sstride = sstride_p64[ADDR_W-1:0] & smask;
 
-	localparam [2:0] S_IDLE = 3'd0;
-	localparam [2:0] S_CLIP = 3'd1;		/* size, source origin, multiplier */
-	localparam [2:0] S_MUL = 3'd2;		/* row addresses: y * stride */
-	localparam [2:0] S_RCALC = 3'd3;	/* the row's source lines */
-	localparam [2:0] S_RCALC1 = 3'd6;
-	localparam [2:0] S_RCALC2 = 3'd7;
-	localparam [2:0] S_RISSUE = 3'd4;	/* the descriptor and the reads */
-	localparam [2:0] S_DRAIN = 3'd5;	/* wait for every response */
+	localparam [3:0] S_IDLE = 4'd0;
+	localparam [3:0] S_CLIP = 4'd1;		/* delta x/y, clip emptiness */
+	localparam [3:0] S_CLIP1 = 4'd10;	/* size, source origin */
+	localparam [3:0] S_START = 4'd8;	/* precompute acc inputs */
+	localparam [3:0] S_MUL = 4'd2;		/* row addresses: y * stride */
+	localparam [3:0] S_RSTEP = 4'd9;	/* step row addresses */
+	localparam [3:0] S_RCALC = 4'd3;	/* the row's source lines */
+	localparam [3:0] S_RCALC1 = 4'd6;
+	localparam [3:0] S_RCALC2 = 4'd7;
+	localparam [3:0] S_RISSUE = 4'd4;	/* the descriptor and the reads */
+	localparam [3:0] S_DRAIN = 4'd5;	/* wait for every response */
 
-	reg [2:0] state;
+	(* max_fanout = 16 *) reg [3:0] state;
 	reg fail;
 	(* keep = "true" *) reg fail_px_r, fail_q_r;
 
 	reg [16:0] x0, y0, x1, y1;
-	wire empty = x1 <= x0 || y1 <= y0;
+	reg        r_empty;
+	reg [16:0] r_cdx, r_cdy, r_cwidth, r_crows;
+	wire empty_w = x1 <= x0 || y1 <= y0;
 	reg [16:0] width, rows;	/* rows: left after this one */
 	reg [16:0] sx0;
 	reg [1:0] ydl;		/* destination y modulo 4 (tiles) */
 	/* The rows' addresses: base + y stride, then the next row's step. */
 	wire [ADDR_W-1:0] dst_row, src_row;
 	wire d_idle, s_idle;
-	wire row_go = state == S_CLIP && !empty;
+	reg r_row_go, r_row_add;
 
-	/* S_RCALC: the row's source byte range and lines. */
+	/* Registered accumulator inputs (zero pre-LUTs before dacc/sacc). */
+	reg [6:0] r_d_in_tile;
+	reg [ADDR_W-1:0] r_tile_step, r_tile_back, r_d_first, r_dst_back, r_dst_step;
+	reg [ADDR_W-1:0] r_sbase, r_sstride;
+	reg [16:0] r_y_dacc, r_sy0;
+
+	/* S_RCALC: the row's source byte range and lines (16+16 carry-select, cmos3 <= 12). */
 	wire [2:0] sh4;	/* log2 of 4 ps, modulo 8 as the 3-bit sum was */
 	wire [ADDR_W-1:0] sx_b, w_b, w_bm1, r_first, r_last;
-	wire [LA_W-1:0] r_span, r_nl;
-	wire [5:0] rc_co_unused;
+	reg [ADDR_W-1:0] r_sx_b, r_w_b, r_w_bm1;
+	wire [LA_W-1:0] r_nl;
+	wire [9:0] rc_co_unused;
 
 	am_add #(.W(3)) a_sh4 (.a(psl), .b(3'd2), .ci(1'b0), .s(sh4), .co(rc_co_unused[0]));
 	am_shift #(.W(ADDR_W), .SW(3)) h_sx (.a({{(ADDR_W - 17){1'b0}}, sx0}), .amt(sh4), .left(1'b1), .arith(1'b0),
 		.y(sx_b));
 	am_shift #(.W(ADDR_W), .SW(3)) h_w (.a({{(ADDR_W - 17){1'b0}}, width}), .amt(sh4), .left(1'b1), .arith(1'b0),
 		.y(w_b));
-	am_add #(.W(ADDR_W)) a_first (.a(src_row), .b(sx_b), .ci(1'b0), .s(r_first), .co(rc_co_unused[1]));
-	reg [ADDR_W-1:0] r_first_r, w_bm1_r;
+
+	/* a_first = src_row + r_sx_b (16 + (ADDR_W-16) carry-select) */
+	wire [15:0] af_lo;
+	wire [ADDR_W-17:0] af_hi0, af_hi1;
+	wire af_c0;
+	am_add #(.W(16))        a_first_lo  (.a(src_row[15:0]),        .b(r_sx_b[15:0]),        .ci(1'b0), .s(af_lo),  .co(af_c0));
+	am_add #(.W(ADDR_W-16)) a_first_hi0 (.a(src_row[ADDR_W-1:16]), .b(r_sx_b[ADDR_W-1:16]), .ci(1'b0), .s(af_hi0), .co(rc_co_unused[1]));
+	am_add #(.W(ADDR_W-16)) a_first_hi1 (.a(src_row[ADDR_W-1:16]), .b(r_sx_b[ADDR_W-1:16]), .ci(1'b1), .s(af_hi1), .co(rc_co_unused[2]));
+	assign r_first = {af_c0 ? af_hi1 : af_hi0, af_lo};
+
+	reg [ADDR_W-1:0] r_first_r;
+	reg [LA_W-1:0] r_first_m1_r;
 	reg [ADDR_W-1:0] r_last_r;
-	am_sub #(.W(ADDR_W)) s_wbm1 (.a(w_b), .b({ADDR_W{1'b0}}), .bi(1'b1), .d(w_bm1), .bo(rc_co_unused[2]));
-	am_add #(.W(ADDR_W)) a_last (.a(r_first_r), .b(w_bm1_r), .ci(1'b0), .s(r_last), .co(rc_co_unused[3]));
-	am_sub #(.W(LA_W)) s_span (.a(r_last_r[ADDR_W-1:LS]), .b(r_first_r[ADDR_W-1:LS]), .bi(1'b0), .d(r_span),
-		.bo(rc_co_unused[4]));
-	am_add #(.W(LA_W)) a_nl (.a(r_span), .b({LA_W{1'b0}}), .ci(1'b1), .s(r_nl), .co(rc_co_unused[5]));
+	am_sub #(.W(ADDR_W)) s_wbm1 (.a(r_w_b), .b({ADDR_W{1'b0}}), .bi(1'b1), .d(w_bm1), .bo(rc_co_unused[3]));
+
+	/* a_last = r_first_r + r_w_bm1 (16 + (ADDR_W-16) carry-select) */
+	wire [15:0] al_lo;
+	wire [ADDR_W-17:0] al_hi0, al_hi1;
+	wire al_c0;
+	am_add #(.W(16))        a_last_lo  (.a(r_first_r[15:0]),        .b(r_w_bm1[15:0]),        .ci(1'b0), .s(al_lo),  .co(al_c0));
+	am_add #(.W(ADDR_W-16)) a_last_hi0 (.a(r_first_r[ADDR_W-1:16]), .b(r_w_bm1[ADDR_W-1:16]), .ci(1'b0), .s(al_hi0), .co(rc_co_unused[4]));
+	am_add #(.W(ADDR_W-16)) a_last_hi1 (.a(r_first_r[ADDR_W-1:16]), .b(r_w_bm1[ADDR_W-1:16]), .ci(1'b1), .s(al_hi1), .co(rc_co_unused[5]));
+	assign r_last = {al_c0 ? al_hi1 : al_hi0, al_lo};
+
+	/* r_first_m1 = r_first_r[ADDR_W-1:LS] - 1 (computed in S_RCALC1 in parallel with a_last) */
+	wire [15:0] fm1_lo;
+	wire [LA_W-17:0] fm1_hi0, fm1_hi1;
+	wire fm1_b0;
+	am_sub #(.W(16))        s_fm1_lo  (.a(r_first_r[LS +: 16]),     .b(16'd1),              .bi(1'b0), .d(fm1_lo),  .bo(fm1_b0));
+	am_sub #(.W(LA_W-16))   s_fm1_hi0 (.a(r_first_r[ADDR_W-1:LS+16]), .b({(LA_W-16){1'b0}}), .bi(1'b0), .d(fm1_hi0), .bo(rc_co_unused[6]));
+	am_sub #(.W(LA_W-16))   s_fm1_hi1 (.a(r_first_r[ADDR_W-1:LS+16]), .b({(LA_W-16){1'b0}}), .bi(1'b1), .d(fm1_hi1), .bo(rc_co_unused[7]));
+	wire [LA_W-1:0] r_first_m1_w = {fm1_b0 ? fm1_hi1 : fm1_hi0, fm1_lo};
+
+	/* r_nl = r_last_r[ADDR_W-1:LS] - r_first_m1_r (= r_last - r_first + 1, 16 + (LA_W-16) carry-select) */
+	wire [15:0] nl_lo;
+	wire [LA_W-17:0] nl_hi0, nl_hi1;
+	wire nl_b0;
+	am_sub #(.W(16))        s_nl_lo  (.a(r_last_r[LS +: 16]),      .b(r_first_m1_r[15:0]),      .bi(1'b0), .d(nl_lo),  .bo(nl_b0));
+	am_sub #(.W(LA_W-16))   s_nl_hi0 (.a(r_last_r[ADDR_W-1:LS+16]), .b(r_first_m1_r[LA_W-1:16]), .bi(1'b0), .d(nl_hi0), .bo(rc_co_unused[8]));
+	am_sub #(.W(LA_W-16))   s_nl_hi1 (.a(r_last_r[ADDR_W-1:LS+16]), .b(r_first_m1_r[LA_W-1:16]), .bi(1'b1), .d(nl_hi1), .bo(rc_co_unused[9]));
+	assign r_nl = {nl_b0 ? nl_hi1 : nl_hi0, nl_lo};
 
 	reg desc_pend;
 	reg [RD_W-1:0] desc;
 	reg [LA_W-1:0] rd_line;
 	reg [16:0] rd_left;
-	wire row_add = state == S_RISSUE && !fail && !desc_pend && rd_left == 17'd0 &&
-		rows != 17'd0;
 
 	/* The tiled destination's next row. */
 	wire [63:0] by_step64 = by_size(psl, 2'd1);
@@ -228,26 +271,26 @@ module atg_blt_rsv #(
 	wire [31:0] d_in_tile, d_first;
 	wire [3:0] st_co_unused;
 
-	am_sub #(.W(ADDR_W)) s_back (.a(ext_dstride), .b(tile_back), .bi(1'b0), .d(dst_back), .bo(st_co_unused[0]));
-	wire [ADDR_W-1:0] dst_step = m_tiled ? (ydl == 2'd3 ? dst_back : tile_step) :
+	am_sub #(.W(ADDR_W)) s_back (.a(ext_dstride), .b(r_tile_back), .bi(1'b0), .d(dst_back), .bo(st_co_unused[0]));
+	wire [ADDR_W-1:0] dst_step_w = m_tiled ? (ydl == 2'd3 ? r_dst_back : r_tile_step) :
 		ext_dstride;
 	am_sub #(.W(17)) s_cdy (.a(y0), .b(dy), .bi(1'b0), .d(c_dy), .bo(st_co_unused[1]));
-	am_add #(.W(17)) a_sy0 (.a({1'b0, s_src_xy[31:16]}), .b(c_dy), .ci(1'b0), .s(sy0), .co(st_co_unused[2]));
+	am_add #(.W(17)) a_sy0 (.a({1'b0, s_src_xy[31:16]}), .b(r_cdy), .ci(1'b0), .s(sy0), .co(st_co_unused[2]));
 
 	/* The first row's address within its tile row: (y mod 4) x 4 pixels, in bytes. */
 	am_shift #(.W(32), .SW(3)) h_dt (.a(m_tiled ? {28'd0, y0[1:0], 2'b00} : 32'd0), .amt(psl), .left(1'b1),
 		.arith(1'b0), .y(d_in_tile));
-	am_add #(.W(32)) a_df (.a(dbase), .b(d_in_tile), .ci(1'b0), .s(d_first), .co(st_co_unused[3]));
+	am_add #(.W(32)) a_df (.a(dbase), .b({25'd0, r_d_in_tile}), .ci(1'b0), .s(d_first), .co(st_co_unused[3]));
 
 	wire [63:0] dfirst_ext64 = {32'd0, d_first};
 	atg_blt_acc #(.W(ADDR_W)) dacc (
-		.clk(clk), .rst_n(rst_n), .go(row_go), .y(m_tiled ? {2'b00, y0[16:2]} : y0),
-		.s(ext_dstride), .b(dfirst_ext64[ADDR_W-1:0]),
-		.add(row_add), .d(dst_step), .r(dst_row), .idle(d_idle)
+		.clk(clk), .rst_n(rst_n), .go(r_row_go), .y(r_y_dacc),
+		.s(ext_dstride), .b(r_d_first),
+		.add(r_row_add), .d(r_dst_step), .r(dst_row), .idle(d_idle)
 	);
 	atg_blt_acc #(.W(ADDR_W)) sacc (
-		.clk(clk), .rst_n(rst_n), .go(row_go), .y(sy0), .s(sstride), .b(sbase),
-		.add(row_add), .d(sstride), .r(src_row), .idle(s_idle)
+		.clk(clk), .rst_n(rst_n), .go(r_row_go), .y(r_sy0), .s(r_sstride), .b(r_sbase),
+		.add(r_row_add), .d(r_sstride), .r(src_row), .idle(s_idle)
 	);
 
 	/* The pixel path. */
@@ -273,7 +316,7 @@ module atg_blt_rsv #(
 		.clk(clk),
 		.rst_n(rst_n),
 		.stop(fail_px_r),
-		.psl(psl),
+		.psl(psl_px),
 		.fmt(m_fmt),
 		.tiled(m_tiled),
 		.rd_valid(desc_pend),
@@ -312,8 +355,8 @@ module atg_blt_rsv #(
 	assign px_wr_ready = q_open && px_wr_valid;
 	wire [DEPTH_LOG2+1:0] held_p1, held_m1, held_next;
 	wire [1:0] held_co_unused;
-	wire [DEPTH_LOG2:0] rd_up, rd_next;
-	wire [7:0] wr_up, wr_next;
+	wire [DEPTH_LOG2:0] rd_p1, rd_m1, rd_next;
+	wire [7:0] wr_p1, wr_m1, wr_next;
 	wire [LA_W-1:0] rd_line_inc;
 	wire [16:0] rd_left_dec, c_width, c_rows, c_dx, c_sx0, rows_dec;
 	wire [1:0] ydl_inc;
@@ -325,18 +368,22 @@ module atg_blt_rsv #(
 	am_sub #(.W(DEPTH_LOG2 + 2)) s_held_m1 (.a(held_r), .b({{(DEPTH_LOG2+1){1'b0}}, 1'b1}), .bi(1'b0),
 		.d(held_m1), .bo(held_co_unused[1]));
 	assign q_co_unused[0] = 1'b0;
-	am_add #(.W(DEPTH_LOG2 + 1)) a_rd (.a(rd_out), .b({(DEPTH_LOG2 + 1){1'b0}}), .ci(q_fire && !q_write), .s(rd_up),
+	wire rd_inc = q_fire && !q_write;
+	wire wr_inc = q_fire && q_write;
+	am_add #(.W(DEPTH_LOG2 + 1)) a_rd (.a(rd_out), .b({(DEPTH_LOG2 + 1){1'b0}}), .ci(1'b1), .s(rd_p1),
 		.co(q_co_unused[1]));
-	am_sub #(.W(DEPTH_LOG2 + 1)) s_rd (.a(rd_up), .b({(DEPTH_LOG2 + 1){1'b0}}), .bi(rsp_rd), .d(rd_next),
+	am_sub #(.W(DEPTH_LOG2 + 1)) s_rd (.a(rd_out), .b({(DEPTH_LOG2 + 1){1'b0}}), .bi(1'b1), .d(rd_m1),
 		.bo(q_co_unused[2]));
-	am_add #(.W(8)) a_wr (.a(wr_out), .b(8'd0), .ci(q_fire && q_write), .s(wr_up), .co(q_co_unused[3]));
-	am_sub #(.W(8)) s_wr (.a(wr_up), .b(8'd0), .bi(rsp_wr), .d(wr_next), .bo(q_co_unused[4]));
+	assign rd_next = (rd_inc == rsp_rd) ? rd_out : (rd_inc ? rd_p1 : rd_m1);
+	am_add #(.W(8)) a_wr (.a(wr_out), .b(8'd0), .ci(1'b1), .s(wr_p1), .co(q_co_unused[3]));
+	am_sub #(.W(8)) s_wr (.a(wr_out), .b(8'd0), .bi(1'b1), .d(wr_m1), .bo(q_co_unused[4]));
+	assign wr_next = (wr_inc == rsp_wr) ? wr_out : (wr_inc ? wr_p1 : wr_m1);
 	am_add #(.W(LA_W)) a_rl (.a(rd_line), .b({LA_W{1'b0}}), .ci(1'b1), .s(rd_line_inc), .co(q_co_unused[5]));
 	am_sub #(.W(17)) s_rl (.a(rd_left), .b(17'd0), .bi(1'b1), .d(rd_left_dec), .bo(q_co_unused[6]));
 	am_sub #(.W(17)) s_w (.a(x1), .b(x0), .bi(1'b0), .d(c_width), .bo(q_co_unused[7]));
 	am_sub #(.W(17)) s_rows (.a(y1), .b(y0), .bi(1'b1), .d(c_rows), .bo(q_co_unused[8]));
 	am_sub #(.W(17)) s_cdx (.a(x0), .b(dx), .bi(1'b0), .d(c_dx), .bo(q_co_unused[9]));
-	am_add #(.W(17)) a_sx0 (.a({1'b0, s_src_xy[15:0]}), .b(c_dx), .ci(1'b0), .s(c_sx0), .co(q_co_unused[10]));
+	am_add #(.W(17)) a_sx0 (.a({1'b0, s_src_xy[15:0]}), .b(r_cdx), .ci(1'b0), .s(c_sx0), .co(q_co_unused[10]));
 	am_sub #(.W(17)) s_rdec (.a(rows), .b(17'd0), .bi(1'b1), .d(rows_dec), .bo(q_co_unused[11]));
 	am_add #(.W(2)) a_ydl (.a(ydl), .b(2'd0), .ci(1'b1), .s(ydl_inc), .co(q_co_unused[12]));
 `ifdef MUT_RSV_CREDIT
@@ -360,16 +407,38 @@ module atg_blt_rsv #(
 			error <= 1'b0;
 			error_kind <= 4'd0;
 			psl <= 3'd2;
+			psl_px <= 3'd2;
 			m_fmt <= 3'd0;
 			m_tiled <= 1'b0;
 			x0 <= 17'd0;
 			y0 <= 17'd0;
 			x1 <= 17'd0;
 			y1 <= 17'd0;
+			r_empty <= 1'b0;
+			r_cdx <= 17'd0;
+			r_cdy <= 17'd0;
+			r_cwidth <= 17'd0;
+			r_crows <= 17'd0;
 			width <= 17'd0;
 			rows <= 17'd0;
 			sx0 <= 17'd0;
+			r_row_go <= 1'b0;
+			r_row_add <= 1'b0;
+			r_d_in_tile <= 7'd0;
+			r_tile_step <= {ADDR_W{1'b0}};
+			r_tile_back <= {ADDR_W{1'b0}};
+			r_d_first <= {ADDR_W{1'b0}};
+			r_dst_back <= {ADDR_W{1'b0}};
+			r_dst_step <= {ADDR_W{1'b0}};
+			r_sbase <= {ADDR_W{1'b0}};
+			r_sstride <= {ADDR_W{1'b0}};
+			r_y_dacc <= 17'd0;
+			r_sy0 <= 17'd0;
+			r_sx_b <= {ADDR_W{1'b0}};
+			r_w_b <= {ADDR_W{1'b0}};
+			r_w_bm1 <= {ADDR_W{1'b0}};
 			r_first_r <= {ADDR_W{1'b0}};
+			r_first_m1_r <= {LA_W{1'b0}};
 			r_last_r <= {ADDR_W{1'b0}};
 			ydl <= 2'd0;
 			desc_pend <= 1'b0;
@@ -386,6 +455,8 @@ module atg_blt_rsv #(
 		end else begin
 			done <= 1'b0;
 			error <= 1'b0;
+			r_row_go <= 1'b0;
+			r_row_add <= 1'b0;
 
 			/* The port and the outstanding requests. */
 			rd_out <= rd_next;
@@ -425,6 +496,7 @@ module atg_blt_rsv #(
 					fail_px_r <= 1'b0;
 					fail_q_r <= 1'b0;
 					psl <= o_psl;
+					psl_px <= o_psl;
 					m_fmt <= o_fmt[2:0];
 					m_tiled <= s_resolve[8];
 					if (!op_ok) begin
@@ -438,29 +510,53 @@ module atg_blt_rsv #(
 						y1 <= clip_y1;
 					end
 				end
-			S_CLIP:
-				if (empty) begin
+			S_CLIP: begin
+				state <= S_CLIP1;
+				r_empty <= empty_w;
+				r_cdx <= c_dx;
+				r_cdy <= c_dy;
+				r_cwidth <= c_width;
+				r_crows <= c_rows;
+			end
+			S_CLIP1:
+				if (r_empty) begin
 					state <= S_IDLE;
 					done <= 1'b1;
 				end else begin
-					state <= S_MUL;
-					width <= c_width;
-					rows <= c_rows;
+					state <= S_START;
+					width <= r_cwidth;
+					rows <= r_crows;
 					sx0 <= c_sx0;
 					ydl <= y0[1:0];
+					r_d_in_tile <= d_in_tile[6:0];
+					r_tile_step <= tile_step;
+					r_tile_back <= tile_back;
+					r_sbase <= sbase;
+					r_sstride <= sstride;
+					r_sy0 <= sy0;
+					r_y_dacc <= m_tiled ? {2'b00, y0[16:2]} : y0;
 				end
-			S_MUL:
+			S_START: begin
+				state <= S_MUL;
+				r_d_first <= dfirst_ext64[ADDR_W-1:0];
+				r_dst_back <= dst_back;
+				r_sx_b <= sx_b;
+				r_w_b <= w_b;
+				r_row_go <= 1'b1;
+			end
+			S_MUL: begin
+				r_w_bm1 <= w_bm1;
 				if (fail)
 					state <= S_DRAIN;
-				else if (d_idle && s_idle)
+				else if (!r_row_go && d_idle && s_idle)
 					state <= S_RCALC;
+			end
 			S_RCALC:
 				if (fail) begin
 					state <= S_DRAIN;
 				end else begin
 					state <= S_RCALC1;
 					r_first_r <= r_first;
-					w_bm1_r   <= w_bm1;
 				end
 			S_RCALC1:
 				if (fail) begin
@@ -468,6 +564,7 @@ module atg_blt_rsv #(
 				end else begin
 					state <= S_RCALC2;
 					r_last_r <= r_last;
+					r_first_m1_r <= r_first_m1_w;
 				end
 			S_RCALC2:
 				if (fail) begin
@@ -486,11 +583,18 @@ module atg_blt_rsv #(
 					if (rows == 17'd0) begin
 						state <= S_DRAIN;
 					end else begin
-						state <= S_RCALC;
+						state <= S_RSTEP;
+						r_dst_step <= dst_step_w;
+						r_row_add <= 1'b1;
 						rows <= rows_dec;
 						ydl <= ydl_inc;
 					end
 				end
+			S_RSTEP:
+				if (fail)
+					state <= S_DRAIN;
+				else
+					state <= S_RCALC;
 			S_DRAIN:
 				if ((px_idle || fail) && !q_valid && rd_out == {(DEPTH_LOG2 + 1){1'b0}} &&
 				    wr_out == 8'd0 && !rsp_valid) begin
@@ -520,7 +624,8 @@ module atg_blt_rsv #(
 `endif
 
 	wire unused_ok = &{1'b0, o_fmt[3], c_fill, c_ok, rsp_tag, r_nl[LA_W-1:17], r_last_r[LS-1:0], rc_co_unused,
-		st_co_unused, q_co_unused, held_co_unused, ln_count, unused_rsv_src_slice, unused_rsv_dst_slice, unused_rsv_depth};
+		st_co_unused, q_co_unused, held_co_unused, ln_count, d_in_tile[31:7], dfirst_ext64[63:ADDR_W],
+		unused_rsv_src_slice, unused_rsv_dst_slice, unused_rsv_depth};
 endmodule
 
 `default_nettype wire

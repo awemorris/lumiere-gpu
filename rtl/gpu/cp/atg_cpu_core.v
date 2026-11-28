@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -93,18 +93,80 @@ module atg_cpu_core (
 
 	/* Pipeline state. */
 	reg [31:0] pc_f;	/* address fetched this cycle */
-	wire [31:0] pc_f_4;	/* pc_f + 4 */
-	wire pc_f_co;
+	/* 32-bit alternating AOI/OAI Kogge-Stone adder (<= 8 cmos3, zero sc8->sc24 ripple). */
+	function [32:0] fn_ks_add32;
+		input [31:0] a_in;
+		input [31:0] b_in;
+		input ci_in;
+		reg [31:0] x0, g0_n, p0_n, g1, p1, g2_n, p2_n, g3, p3, g4_n, p4_n, g5, sum_w;
+		begin
+			x0      = a_in ^ b_in;
+			g0_n    = ~(a_in & b_in);
+			p0_n    = ~(a_in | b_in);
+			g0_n[0] = ~((a_in[0] & b_in[0]) | ((a_in[0] | b_in[0]) & ci_in));
+			g1      = ~(g0_n & (p0_n | {g0_n[30:0], 1'b1}));
+			p1      = ~(p0_n | {p0_n[30:0], 1'b1});
+			g2_n    = ~(g1 | (p1 & {g1[29:0], 2'b00}));
+			p2_n    = ~(p1 & {p1[29:0], 2'b00});
+			g3      = ~(g2_n & (p2_n | {g2_n[27:0], 4'hF}));
+			p3      = ~(p2_n | {p2_n[27:0], 4'hF});
+			g4_n    = ~(g3 | (p3 & {g3[23:0], 8'h00}));
+			p4_n    = ~(p3 & {p3[23:0], 8'h00});
+			g5      = ~(g4_n & (p4_n | {g4_n[15:0], 16'hFFFF}));
+			sum_w   = x0 ^ {g5[30:0], ci_in};
+			fn_ks_add32 = {g5[31], sum_w};
+		end
+	endfunction
 
-	am_add #(.W(32)) pc_f_add (.a(pc_f), .b(32'd4), .ci(1'b0), .s(pc_f_4), .co(pc_f_co));
+	/* 32-bit alternating AOI/OAI parallel-prefix comparator (a_in < b_in, <= 7 cmos3). */
+	function fn_cmp_lt;
+		input [31:0] a_in;
+		input [31:0] b_in;
+		reg [31:0] g0_n, t0_n, g1, t1, g2_n, t2_n, g3, t3, g4_n, t4_n, g5;
+		begin
+			g0_n = ~(b_in & ~a_in);
+			t0_n = ~(b_in | ~a_in);
+			g1   = ~(g0_n & (t0_n | {g0_n[30:0], 1'b1}));
+			t1   = ~(t0_n | {t0_n[30:0], 1'b1});
+			g2_n = ~(g1 | (t1 & {g1[29:0], 2'b00}));
+			t2_n = ~(t1 & {t1[29:0], 2'b00});
+			g3   = ~(g2_n & (t2_n | {g2_n[27:0], 4'hF}));
+			t3   = ~(t2_n | {t2_n[27:0], 4'hF});
+			g4_n = ~(g3 | (t3 & {g3[23:0], 8'h00}));
+			t4_n = ~(t3 & {t3[23:0], 8'h00});
+			g5   = ~(g4_n & (t4_n | {g4_n[15:0], 16'hFFFF}));
+			fn_cmp_lt = g5[31];
+		end
+	endfunction
+
+	wire [32:0] pc_f_res = fn_ks_add32(pc_f, 32'd4, 1'b0);
+	wire [31:0] pc_f_4 = pc_f_res[31:0];	/* pc_f + 4 */
+	wire pc_f_co = pc_f_res[32];
 	(* DONT_TOUCH = "TRUE" *) reg [31:0] pc_d;	/* address of the instruction in D (i_rdata) */
+	reg [31:0] pc_d4;
 	reg d_vld;
 	(* DONT_TOUCH = "TRUE" *) reg [31:0] pc_e;	/* address of the instruction in E */
-	(* DONT_TOUCH = "TRUE" *) reg [31:0] ir_e;
+	reg [31:0] pc_e4;
+	reg [4:0] rd_e;
+	reg [2:0] f3_e;
+	reg rd_nz_e;
+	reg is_auipc_e, is_jal_e, is_jalr_e, is_br_e, is_ld_e, is_st_e;
+	reg is_m_e, is_mret_e, is_wfi_e, is_fast_e, legal_e, is_mem_e, has_rd_e, pc_out_e;
+	reg br_sel_j_e, br_sel_eq_e, br_sel_lt_e, br_sel_ltu_e;
+	reg [31:0] ea_b_e, pc_imm_b_e;
 	(* DONT_TOUCH = "TRUE" *) reg [31:0] rs1_e, rs2_e;	/* its operands as read in D */
-	(* DONT_TOUCH = "TRUE" *) reg fwd1_e, fwd2_e;	/* take them from W instead (decided in D: timing) */
+	(* keep = "true" *) reg fwd1_e0, fwd1_e1, fwd1_e2, fwd1_e3;
+	(* keep = "true" *) reg fwd2_e0, fwd2_e1, fwd2_e2, fwd2_e3;	/* take them from W instead (decided in D: timing) */
 	reg e_vld;
 	reg e_busy;	/* its access or multiply/divide has started */
+	reg mem_prep_r, mem_req_r, mem_done_r;
+	reg d_valid_r, d_write_r;
+	reg [31:0] d_addr_r, mem_rdata_r;
+	reg [1:0] ea_r;
+	reg jump_s1_r, jump_pend_r, br_eq_p_r, br_lt_p_r, br_ltu_p_r;
+	reg md_s1_r;
+	reg [31:0] jump_tgt_r;
+	reg [31:0] op1_r, op2_r;
 	(* DONT_TOUCH = "TRUE" *) reg w_wen;	/* W: the last completed instruction writes w_rd */
 	(* DONT_TOUCH = "TRUE" *) reg [4:0] w_rd;
 	(* DONT_TOUCH = "TRUE" *) reg [31:0] w_val;
@@ -133,255 +195,228 @@ module atg_cpu_core (
 	wire [6:0] d_f7  = i_rdata[31:25];
 
 	wire [31:0] d_imm_i = {{20{i_rdata[31]}}, i_rdata[31:20]};
+	wire [31:0] d_imm_s = {{20{i_rdata[31]}}, i_rdata[31:25], i_rdata[11:7]};
+	wire [31:0] d_imm_b = {{19{i_rdata[31]}}, i_rdata[31], i_rdata[7], i_rdata[30:25], i_rdata[11:8], 1'b0};
 	wire [31:0] d_imm_u = {i_rdata[31:12], 12'd0};
+	wire [31:0] d_imm_j = {{11{i_rdata[31]}}, i_rdata[31], i_rdata[19:12], i_rdata[20], i_rdata[30:21], 1'b0};
 
-	wire d_is_lui = d_opc == OPC_LUI;
-	wire d_is_imm = d_opc == OPC_IMM && (d_f3 == 3'd1 ? d_f7 == 7'd0 : d_f3 == 3'd5 ? (d_f7 == 7'd0 || d_f7 == 7'h20) : 1'b1);
-	wire d_is_op  = d_opc == OPC_OP && (d_f7 == 7'd0 || (d_f7 == 7'h20 && (d_f3 == 3'd0 || d_f3 == 3'd5)));
+	wire d_opc_op  = d_opc[1:0] == 2'b11;
+	wire [4:0] d_op5 = d_opc[6:2];
+	wire d_is_lui   = d_opc_op && d_op5 == 5'b01101;
+	wire d_is_auipc = d_opc_op && d_op5 == 5'b00101;
+	wire d_is_jal   = d_opc_op && d_op5 == 5'b11011;
+	wire d_is_jalr  = d_opc_op && d_op5 == 5'b11001 && d_f3 == 3'd0;
+	wire d_is_br    = d_opc_op && d_op5 == 5'b11000 && d_f3[2:1] != 2'b01;
+	wire d_is_ld    = d_opc_op && d_op5 == 5'b00000 && (d_f3 == 3'd0 || d_f3 == 3'd1 || d_f3 == 3'd2 ||
+		d_f3 == 3'd4 || d_f3 == 3'd5);
+	wire d_is_st    = d_opc_op && d_op5 == 5'b01000 && (d_f3 == 3'd0 || d_f3 == 3'd1 || d_f3 == 3'd2);
+	wire d_f7_0  = (d_f7 == 7'd0);
+	wire d_f7_20 = (d_f7 == 7'h20);
+	wire d_imm_bad  = (d_f3 == 3'd1 && !d_f7_0) || (d_f3 == 3'd5 && !d_f7_0 && !d_f7_20);
+	wire d_is_imm   = d_opc_op && d_op5 == 5'b00100 && !d_imm_bad;
+	wire d_is_op    = d_opc_op && d_op5 == 5'b01100 && (d_f7_0 || (d_f7_20 && (d_f3 == 3'd0 || d_f3 == 3'd5)));
+	wire d_is_m     = d_opc_op && d_op5 == 5'b01100 && d_f7 == 7'd1;
+	wire d_is_fence = d_opc_op && d_op5 == 5'b00011 && d_f3[2:1] == 2'b00;
+	wire d_is_mret  = (i_rdata == 32'h3020_0073);
+	wire d_is_wfi   = (i_rdata == 32'h1050_0073);
+	wire d_leg_a = d_is_lui || d_is_auipc || d_is_jal || d_is_jalr;
+	wire d_leg_b = d_is_br || d_is_ld || d_is_st || d_is_fence;
+	wire d_leg_c = d_is_imm || d_is_op || d_is_m;
+	wire d_leg_s = d_is_mret || d_is_wfi;
+	wire d_legal = (d_leg_a || d_leg_b) || (d_leg_c || d_leg_s);
+	wire d_is_mem   = d_is_ld || d_is_st;
+	wire d_has_rd   = d_is_lui || d_is_auipc || d_is_jal || d_is_jalr || d_is_ld || d_is_imm || d_is_op || d_is_m;
+	wire [31:0] d_ea_b     = d_is_st ? d_imm_s : d_imm_i;
+	wire [31:0] d_pc_imm_b = d_is_jal ? d_imm_j : (d_is_br ? d_imm_b : d_imm_u);
 
-	wire [31:0] d_alu_b_imm = d_is_lui ? d_imm_u : d_imm_i;
-	wire d_alu_b_sel_imm = d_is_lui || d_is_imm;
-	wire d_is_alu = d_is_lui || d_is_imm || d_is_op;
+	wire [31:0] d_alu_b_imm = (d_is_lui || d_is_auipc) ? d_imm_u : d_imm_i;
+	wire d_alu_b_sel_imm = d_is_lui || d_is_imm || d_is_auipc;
+	wire d_is_alu = d_is_lui || d_is_imm || d_is_op || d_is_auipc;
+	wire d_is_fast = !(d_is_mem || d_is_br || d_is_jalr || d_is_jal) && !(d_is_alu || d_is_m || d_is_wfi);
 
-	reg [3:0] d_alu_op;
-	always @(*) begin
-		if (d_is_lui)
-			d_alu_op = A_PASS_B;
-		else begin
-			case (d_f3)
-			3'd0: d_alu_op = (d_is_op && d_f7[5]) ? A_SUB : A_ADD;
-			3'd1: d_alu_op = A_SLL;
-			3'd2: d_alu_op = A_SLT;
-			3'd3: d_alu_op = A_SLTU;
-			3'd4: d_alu_op = A_XOR;
-			3'd5: d_alu_op = d_f7[5] ? A_SRA : A_SRL;
-			3'd6: d_alu_op = A_OR;
-			default: d_alu_op = A_AND;
-			endcase
-		end
-	end
+	wire [3:0] d_alu_norm =
+		(d_f3 == 3'd0) ? ((d_is_op && d_f7[5]) ? A_SUB : A_ADD) :
+		(d_f3 == 3'd1) ? A_SLL :
+		(d_f3 == 3'd2) ? A_SLT :
+		(d_f3 == 3'd3) ? A_SLTU :
+		(d_f3 == 3'd4) ? A_XOR :
+		(d_f3 == 3'd5) ? (d_f7[5] ? A_SRA : A_SRL) :
+		(d_f3 == 3'd6) ? A_OR : A_AND;
+	wire [3:0] d_alu_op = d_is_lui ? A_PASS_B : (d_is_auipc ? A_ADD : d_alu_norm);
 
-	/* E: decode of ir_e. */
-	wire [31:0] ir = ir_e;
-	wire [6:0] opc = ir[6:0];
-	wire [4:0] rd = ir[11:7];
-	wire [2:0] f3 = ir[14:12];
-	wire [6:0] f7 = ir[31:25];
-
-	wire [31:0] imm_i = {{20{ir[31]}}, ir[31:20]};
-	wire [31:0] imm_s = {{20{ir[31]}}, ir[31:25], ir[11:7]};
-	wire [31:0] imm_b = {{19{ir[31]}}, ir[31], ir[7], ir[30:25], ir[11:8], 1'b0};
-	wire [31:0] imm_u = {ir[31:12], 12'd0};
-	wire [31:0] imm_j = {{11{ir[31]}}, ir[31], ir[19:12], ir[20], ir[30:21], 1'b0};
-
-	wire is_lui = opc == OPC_LUI;
-	wire is_auipc = opc == OPC_AUIPC;
-	wire is_jal = opc == OPC_JAL;
-	wire is_jalr = opc == OPC_JALR && f3 == 3'd0;
-	wire is_br = opc == OPC_BRANCH && f3[2:1] != 2'b01;
-	wire is_ld = opc == OPC_LOAD && (f3 == 3'd0 || f3 == 3'd1 || f3 == 3'd2 ||
-		f3 == 3'd4 || f3 == 3'd5);
-	wire is_st = opc == OPC_STORE && (f3 == 3'd0 || f3 == 3'd1 || f3 == 3'd2);
-	wire is_imm = opc == OPC_IMM && (f3 == 3'd1 ? f7 == 7'd0 :
-		f3 == 3'd5 ? (f7 == 7'd0 || f7 == 7'h20) : 1'b1);
-	wire is_op = opc == OPC_OP && (f7 == 7'd0 ||
-		(f7 == 7'h20 && (f3 == 3'd0 || f3 == 3'd5)));
-	wire is_m = opc == OPC_OP && f7 == 7'd1;
-	wire is_fence = opc == OPC_FENCE && f3[2:1] == 2'b00;
-	wire is_mret = ir == MRET;
-	wire is_wfi = ir == WFI;
-	wire legal = is_lui || is_auipc || is_jal || is_jalr || is_br || is_ld || is_st ||
-		is_imm || is_op || is_m || is_fence || is_mret || is_wfi;
-	wire is_mem = is_ld || is_st;
-	wire has_rd = is_lui || is_auipc || is_jal || is_jalr || is_ld || is_imm || is_op || is_m;
+	/* E: decode precomputed in D. */
+	wire [4:0] rd      = rd_e;
+	wire [2:0] f3      = f3_e;
+	wire is_auipc      = is_auipc_e;
+	wire is_jal        = is_jal_e;
+	wire is_jalr       = is_jalr_e;
+	wire is_br         = is_br_e;
+	wire is_ld         = is_ld_e;
+	wire is_st         = is_st_e;
+	wire is_m          = is_m_e;
+	wire is_mret       = is_mret_e;
+	wire is_wfi        = is_wfi_e;
+	wire legal         = legal_e;
+	wire is_mem        = is_mem_e;
+	wire has_rd        = has_rd_e;
 
 	/* E's operands: W holds the instruction just before it (program order). */
-	wire [31:0] rs1 = fwd1_e ? w_val : rs1_e;
-	wire [31:0] rs2 = fwd2_e ? w_val : rs2_e;
+	wire [31:0] rs1 = {
+		fwd1_e3 ? w_val[31:24] : rs1_e[31:24],
+		fwd1_e2 ? w_val[23:16] : rs1_e[23:16],
+		fwd1_e1 ? w_val[15:8]  : rs1_e[15:8],
+		fwd1_e0 ? w_val[7:0]   : rs1_e[7:0]
+	};
+	wire [31:0] rs2 = {
+		fwd2_e3 ? w_val[31:24] : rs2_e[31:24],
+		fwd2_e2 ? w_val[23:16] : rs2_e[23:16],
+		fwd2_e1 ? w_val[15:8]  : rs2_e[15:8],
+		fwd2_e0 ? w_val[7:0]   : rs2_e[7:0]
+	};
 
-	/* ALU: a = rs1; b = an immediate or rs2. */
+	/* ALU: registered operands on Cycle 0 (alu_issue), alu_y_r on Cycle 1 (alu_s1_r), wb on Cycle 2 (alu_s2_r). */
 	wire [31:0] alu_b = alu_b_sel_imm_e ? alu_b_imm_e : rs2;
 	wire [3:0] alu_op = alu_op_e;
 	wire [31:0] alu_y;
 	wire alu_eq, alu_lt, alu_ltu;
+	reg irq_r;
+	reg alu_s1_r, alu_s2_r;
+	reg [31:0] alu_a_r, alu_b_r, alu_y_r;
 
 	atg_cpu_alu alu (
-		.op(alu_op), .a(rs1), .b(alu_b),
+		.op(alu_op), .a(alu_a_r), .b(alu_b_r),
 		.y(alu_y), .eq(alu_eq), .lt(alu_lt), .ltu(alu_ltu)
 	);
 
-	/* The branch compare: a second ALU on rs1 and rs2 directly, so the
-	 * compare does not wait for the decode of alu_b (timing at 200 MHz);
-	 * only its eq/lt/ltu are used. */
-	wire [31:0] br_y;
-	wire br_eq, br_lt, br_ltu;
+	/* Parallel prefix branch comparator on resolved op1_r and op2_r (registered into jump_taken_r). */
+	wire br_eq = (op1_r[31:24] == op2_r[31:24]) && (op1_r[23:16] == op2_r[23:16]) &&
+		(op1_r[15:8] == op2_r[15:8]) && (op1_r[7:0] == op2_r[7:0]);
+	wire br_ltu = fn_cmp_lt(op1_r, op2_r);
+	wire br_lt  = fn_cmp_lt({~op1_r[31], op1_r[30:0]}, {~op2_r[31], op2_r[30:0]});
+	wire [31:0] br_y = 32'd0;
 
-	atg_cpu_alu alu_br (
-		.op(A_SUB), .a(rs1), .b(rs2),
-		.y(br_y), .eq(br_eq), .lt(br_lt), .ltu(br_ltu)
-	);
+	/* Fast 4-way branch condition from pre-decoded jump/branch type & polarity-adjusted br_*_p_r flags. */
+	wire br_cond_pend = br_sel_j_e | (br_sel_eq_e & br_eq_p_r) |
+		(br_sel_lt_e & br_lt_p_r) | (br_sel_ltu_e & br_ltu_p_r);
+	wire jump_taken_pend = jump_pend_r && br_cond_pend;
 
-	/* Branch condition (b = rs2 for branches). */
-	reg br_cond;
+	/*
+	 * Fast Kogge-Stone effective address (from op1_r) and branch target.
+	 */
+	wire [31:0] ea_b = ea_b_e;
+	wire [32:0] ea_res = fn_ks_add32(op1_r, ea_b, 1'b0);
+	wire [31:0] ea_full = ea_res[31:0];
+	wire ea_co = ea_res[32];
+	wire [1:0] ea_p = {op1_r[1] ^ ea_b[1] ^ (op1_r[0] & ea_b[0]), op1_r[0] ^ ea_b[0]};
 
-	always @(*) begin
-		case (f3)
-		3'd0: br_cond = br_eq;
-		3'd1: br_cond = !br_eq;
-		3'd4: br_cond = br_lt;
-		3'd5: br_cond = !br_lt;
-		3'd6: br_cond = br_ltu;
-		default: br_cond = !br_ltu;
-		endcase
-	end
+	wire [31:0] pc_imm_b = pc_imm_b_e;
+	wire [32:0] pi_res = fn_ks_add32(pc_e, pc_imm_b, 1'b0);
+	wire [31:0] pc_imm = pi_res[31:0];
+	wire pc_imm_co = pi_res[32];
 
-	/* The data address and JALR target have their own dedicated fast 4x8b carry-select
-	 * adder (not through the ALU's result mux: timing). */
-	wire [31:0] ea_b = is_st ? imm_s : imm_i;
-	wire [7:0] ea0, ea1_0, ea1_1, ea2_0, ea2_1, ea3_0, ea3_1;
-	wire ea_c0, ea_c1_0, ea_c1_1, ea_c2_0, ea_c2_1, ea_c3_0, ea_c3_1;
-	am_add #(.W(8)) ea_a0   (.a(rs1[7:0]),   .b(ea_b[7:0]),   .ci(1'b0), .s(ea0),   .co(ea_c0));
-	am_add #(.W(8)) ea_a1_0 (.a(rs1[15:8]),  .b(ea_b[15:8]),  .ci(1'b0), .s(ea1_0), .co(ea_c1_0));
-	am_add #(.W(8)) ea_a1_1 (.a(rs1[15:8]),  .b(ea_b[15:8]),  .ci(1'b1), .s(ea1_1), .co(ea_c1_1));
-	am_add #(.W(8)) ea_a2_0 (.a(rs1[23:16]), .b(ea_b[23:16]), .ci(1'b0), .s(ea2_0), .co(ea_c2_0));
-	am_add #(.W(8)) ea_a2_1 (.a(rs1[23:16]), .b(ea_b[23:16]), .ci(1'b1), .s(ea2_1), .co(ea_c2_1));
-	am_add #(.W(8)) ea_a3_0 (.a(rs1[31:24]), .b(ea_b[31:24]), .ci(1'b0), .s(ea3_0), .co(ea_c3_0));
-	am_add #(.W(8)) ea_a3_1 (.a(rs1[31:24]), .b(ea_b[31:24]), .ci(1'b1), .s(ea3_1), .co(ea_c3_1));
-	wire ea_c1 = ea_c0 ? ea_c1_1 : ea_c1_0;
-	wire ea_c2 = ea_c2_0 | (ea_c2_1 & ea_c1_0) | (ea_c2_1 & ea_c1_1 & ea_c0);
-	wire [31:0] ea_full = {
-		ea_c2 ? ea3_1 : ea3_0,
-		ea_c1 ? ea2_1 : ea2_0,
-		ea_c0 ? ea1_1 : ea1_0,
-		ea0
-	};
-	wire ea_co = ea_c2 ? ea_c3_1 : ea_c3_0;
-	wire [1:0] ea;
-	wire ea_lo_co;
-	am_add #(.W(2)) ea_lo_add (
-		.a(rs1[1:0]), .b(ea_b[1:0]), .ci(1'b0), .s(ea), .co(ea_lo_co)
-	);
-
-	/* PC arithmetic (fast 4x8b carry-select). */
-	wire [31:0] pc_imm_b = is_jal ? imm_j : is_br ? imm_b : imm_u;
-	wire [7:0] pi0, pi1_0, pi1_1, pi2_0, pi2_1, pi3_0, pi3_1;
-	wire pi_c0, pi_c1_0, pi_c1_1, pi_c2_0, pi_c2_1, pi_c3_0, pi_c3_1;
-	am_add #(.W(8)) pi_a0   (.a(pc_e[7:0]),   .b(pc_imm_b[7:0]),   .ci(1'b0), .s(pi0),   .co(pi_c0));
-	am_add #(.W(8)) pi_a1_0 (.a(pc_e[15:8]),  .b(pc_imm_b[15:8]),  .ci(1'b0), .s(pi1_0), .co(pi_c1_0));
-	am_add #(.W(8)) pi_a1_1 (.a(pc_e[15:8]),  .b(pc_imm_b[15:8]),  .ci(1'b1), .s(pi1_1), .co(pi_c1_1));
-	am_add #(.W(8)) pi_a2_0 (.a(pc_e[23:16]), .b(pc_imm_b[23:16]), .ci(1'b0), .s(pi2_0), .co(pi_c2_0));
-	am_add #(.W(8)) pi_a2_1 (.a(pc_e[23:16]), .b(pc_imm_b[23:16]), .ci(1'b1), .s(pi2_1), .co(pi_c2_1));
-	am_add #(.W(8)) pi_a3_0 (.a(pc_e[31:24]), .b(pc_imm_b[31:24]), .ci(1'b0), .s(pi3_0), .co(pi_c3_0));
-	am_add #(.W(8)) pi_a3_1 (.a(pc_e[31:24]), .b(pc_imm_b[31:24]), .ci(1'b1), .s(pi3_1), .co(pi_c3_1));
-	wire pi_c1 = pi_c0 ? pi_c1_1 : pi_c1_0;
-	wire pi_c2 = pi_c2_0 | (pi_c2_1 & pi_c1_0) | (pi_c2_1 & pi_c1_1 & pi_c0);
-	wire [31:0] pc_imm = {
-		pi_c2 ? pi3_1 : pi3_0,
-		pi_c1 ? pi2_1 : pi2_0,
-		pi_c0 ? pi1_1 : pi1_0,
-		pi0
-	};
-	wire pc_imm_co = pi_c2 ? pi_c3_1 : pi_c3_0;
-	wire [31:0] link;
-	wire [1:0] pc_imm_lo;
-	wire pc_imm_lo_co, link_co;
-	am_add #(.W(2)) pc_imm_lo_add (
-		.a(pc_e[1:0]), .b(pc_imm_b[1:0]), .ci(1'b0), .s(pc_imm_lo), .co(pc_imm_lo_co)
-	);
-	am_add #(.W(32)) link_add (.a(pc_e), .b(32'd4), .ci(1'b0), .s(link), .co(link_co));
+	wire [31:0] link = pc_e4;
+	wire [1:0] pc_imm_lo = {pc_e[1] ^ pc_imm_b[1] ^ (pc_e[0] & pc_imm_b[0]), pc_e[0] ^ pc_imm_b[0]};
 	wire [31:0] jalr_t = {ea_full[31:1], 1'b0};
-	wire taken = is_jal || is_jalr || (is_br && br_cond) || is_mret;
-	wire [31:0] target = is_mret ? mepc : is_jalr ? jalr_t : pc_imm;
-	wire [1:0] target_lo = is_mret ? mepc[1:0] : is_jalr ? {ea[1], 1'b0} : pc_imm_lo;
+	wire taken = is_mret | jump_taken_pend;
+	wire [31:0] target = is_mret ? mepc : jump_tgt_r;
+	wire [1:0] target_lo = is_mret ? mepc[1:0] : jump_tgt_r[1:0];
 
 	/* Multiply/divide. */
 	wire md_busy, md_done;
 	wire [31:0] md_y;
 
-	/* Faults of the instruction in E. */
-	wire mis_mem = is_mem && (f3[1:0] == 2'd2 ? ea != 2'd0 :
-		f3[1:0] == 2'd1 ? ea[0] : 1'b0);
+	/* Faults of the instruction in E (memory misalignment checked on mem_prep_r from op1_r). */
+	wire mis_mem = mem_prep_r && (f3[1] ? (ea_p[1] | ea_p[0]) : (f3[0] & ea_p[0]));
 	wire mis_jump = taken && target_lo != 2'd0;
-	wire pc_out = pc_e[31:17] != 15'd0;
+	wire pc_out = pc_out_e;
 	wire bad = !legal || mis_mem || mis_jump || pc_out;
 
-	/* Execution control. */
-	wire take_irq = e_vld && !e_busy && !faulted && run && irq && !in_irq;
-	wire exec = e_vld && !faulted && !take_irq && (run || e_busy);
-	wire do_fault = exec && bad;
+	/* Execution control (flattened: exec and issue signals bypass take_irq). */
+	wire irq_cond = irq_r && !in_irq;
+	wire take_irq = e_vld && !e_busy && !faulted && run && irq_cond;
+	wire exec_nf  = e_vld && (e_busy || (run && !irq_cond));
+	wire do_fault = !faulted && ((exec_nf && (!legal || mis_jump || pc_out)) || mis_mem);
+	wire [3:0] do_fault_cause = pc_out ? 4'd1 : (!legal ? 4'd2 : (mis_jump ? 4'd0 : (is_ld ? 4'd4 : 4'd6)));
 	/* A faulting instruction may still "complete" (it writes nothing and
 	 * the core stops the next cycle), so e_done does not wait for the
 	 * fault checks (timing). */
-	wire md_start = exec && is_m && !e_busy && !pc_out;
-	reg e_done;
+	wire issue_base_nf = e_vld && !e_busy && run && !irq_cond && !pc_out;
+	wire issue_base = !faulted && issue_base_nf;
+	wire md_issue_nf   = issue_base_nf && is_m && !md_s1_r;
+	wire mem_issue_nf  = issue_base_nf && is_mem && !mem_prep_r && !mem_req_r && !mem_done_r;
+	wire jump_issue_nf = issue_base_nf && (is_br || is_jalr || is_jal) && !jump_s1_r && !jump_pend_r;
+	wire alu_issue_nf  = issue_base_nf && is_alu_e && !alu_s1_r && !alu_s2_r;
+	wire md_issue   = !faulted && md_issue_nf;
+	wire mem_issue  = !faulted && mem_issue_nf;
+	wire jump_issue = !faulted && jump_issue_nf;
+	wire alu_issue  = !faulted && alu_issue_nf;
+	wire fast_done_nofault = e_vld && run && !irq_cond && ((is_wfi && irq_r) | is_fast_e);
+	wire e_done_other = mem_done_r | jump_pend_r | alu_s2_r | md_done;
+	wire e_done_nofault = e_done_other | fast_done_nofault;
+	wire e_done = e_done_other | (!faulted && fast_done_nofault);
 
-	always @(*) begin
-		if (!exec)
-			e_done = 1'b0;
-		else if (is_mem)
-			e_done = d_ready;
-		else if (is_m)
-			e_done = e_busy && md_done;
-		else if (is_wfi)
-			e_done = irq;
-		else
-			e_done = 1'b1;
-	end
-
-	wire redirect = take_irq || (e_done && taken);
+	wire exec_ok_nf = e_vld && !e_busy && run;
+	wire exec_ok = !faulted && exec_ok_nf;
+	wire take_irq_nf = exec_ok_nf && irq_cond;
+	wire taken_done_nf = jump_taken_pend || (exec_ok_nf && !irq_cond && is_mret);
+	wire taken_done = jump_taken_pend || (exec_ok && !irq_cond && is_mret);
+	wire redirect_nf = jump_taken_pend || (exec_ok_nf && (irq_cond ? !e_busy : is_mret));
+	wire redirect = jump_taken_pend || (exec_ok && (irq_cond ? !e_busy : is_mret));
 	/* D moves into E when E is empty or completes (and nothing is flushed). */
 	/* E takes D's instruction when it is empty or completes; a redirect
 	 * only marks it invalid (the data registers do not wait for it). */
 	wire e_free = !e_vld || e_done;
-	wire d_adv = d_vld && e_free;
+	wire d_adv_nf = d_vld && (!e_vld || e_done_nofault);
+	wire d_adv = !faulted && d_adv_nf;
+	wire i_en_nf = !d_vld || !e_vld || e_done_nofault;
 
-	assign i_en = !faulted && (!d_vld || e_free);
+	assign i_en = !faulted && i_en_nf;
 	assign i_addr = {pc_f[31:2], 2'b00};
 	assign stopped = faulted || (!run && !e_busy);
 
-	/* Data port. */
-	/* Only the checks that can hit a load/store gate it (not the branch's). */
-	assign d_valid = exec && is_mem && !mis_mem && !pc_out;
-	assign d_write = is_st;
-	assign d_addr = ea_full;
+	/* Data port (fully registered via mem_issue so atg_cpu_win receives clean FFs). */
+	assign d_valid = d_valid_r;
+	assign d_write = d_write_r;
+	assign d_addr  = d_addr_r;
+	reg [3:0]  d_be_c;
+	reg [31:0] d_wdata_c;
 
 	always @(*) begin
 		case (f3[1:0])
 		2'd0: begin
-			d_be = ea == 2'd0 ? 4'b0001 : ea == 2'd1 ? 4'b0010 :
-				ea == 2'd2 ? 4'b0100 : 4'b1000;
-			d_wdata = {4{rs2[7:0]}};
+			d_be_c = ea_p == 2'd0 ? 4'b0001 : ea_p == 2'd1 ? 4'b0010 :
+				ea_p == 2'd2 ? 4'b0100 : 4'b1000;
+			d_wdata_c = {4{op2_r[7:0]}};
 		end
 		2'd1: begin
-			d_be = ea[1] ? 4'b1100 : 4'b0011;
-			d_wdata = {2{rs2[15:0]}};
+			d_be_c = ea_p[1] ? 4'b1100 : 4'b0011;
+			d_wdata_c = {2{op2_r[15:0]}};
 		end
 		default: begin
-			d_be = 4'b1111;
-			d_wdata = rs2;
+			d_be_c = 4'b1111;
+			d_wdata_c = op2_r;
 		end
 		endcase
 	end
 
-	/* Load extraction. */
-	/* The loaded word moved down to its byte (four constant shifts). */
-	wire [31:0] ld_sh = ea == 2'd0 ? d_rdata : ea == 2'd1 ? {8'd0, d_rdata[31:8]} :
-		ea == 2'd2 ? {16'd0, d_rdata[31:16]} : {24'd0, d_rdata[31:24]};
+	/* Split load alignment (mem_req_r && d_ready -> mem_rdata_r) and width/sign decode (mem_done_r -> w_val). */
+	wire [31:0] ld_sh_w = ea_r == 2'd0 ? d_rdata : ea_r == 2'd1 ? {8'd0, d_rdata[31:8]} :
+		ea_r == 2'd2 ? {16'd0, d_rdata[31:16]} : {24'd0, d_rdata[31:24]};
 	reg [31:0] ld_val;
 
 	always @(*) begin
 		case (f3)
-		3'd0: ld_val = {{24{ld_sh[7]}}, ld_sh[7:0]};
-		3'd1: ld_val = {{16{ld_sh[15]}}, ld_sh[15:0]};
-		3'd4: ld_val = {24'd0, ld_sh[7:0]};
-		3'd5: ld_val = {16'd0, ld_sh[15:0]};
-		default: ld_val = ld_sh;
+		3'd0: ld_val = {{24{mem_rdata_r[7]}}, mem_rdata_r[7:0]};
+		3'd1: ld_val = {{16{mem_rdata_r[15]}}, mem_rdata_r[15:0]};
+		3'd4: ld_val = {24'd0, mem_rdata_r[7:0]};
+		3'd5: ld_val = {16'd0, mem_rdata_r[15:0]};
+		default: ld_val = mem_rdata_r;
 		endcase
 	end
 
-	/* Write-back value: split into fast ALU path and other sources */
-	wire [31:0] other_wb = is_ld ? ld_val : (is_m ? md_y : (is_auipc ? pc_imm : link));
-	wire [31:0] wb = is_alu_e ? alu_y : other_wb;
+	/* Write-back value: split into fast registered ALU path and other sources */
+	wire [31:0] other_wb = is_ld ? ld_val : (is_m ? md_y : link);
+	wire [31:0] wb = is_alu_e ? alu_y_r : other_wb;
 
 	/* W: the register write (repeated while W holds it: harmless). */
 	always @(posedge clk) begin
@@ -390,7 +425,7 @@ module atg_cpu_core (
 	end
 
 	atg_cpu_muldiv muldiv (
-		.clk(clk), .rst_n(rst_n), .start(md_start), .op(f3), .a(rs1), .b(rs2),
+		.clk(clk), .rst_n(rst_n), .start(md_s1_r), .op(f3), .a(op1_r), .b(op2_r),
 		.busy(md_busy), .done(md_done), .y(md_y)
 	);
 
@@ -401,6 +436,31 @@ module atg_cpu_core (
 			e_vld <= 1'b0;
 			w_wen <= 1'b0;
 			e_busy <= 1'b0;
+			mem_prep_r <= 1'b0;
+			mem_req_r <= 1'b0;
+			mem_done_r <= 1'b0;
+			d_valid_r <= 1'b0;
+			d_write_r <= 1'b0;
+			d_addr_r <= 32'd0;
+			mem_rdata_r <= 32'd0;
+			d_wdata <= 32'd0;
+			d_be <= 4'd0;
+			ea_r <= 2'd0;
+			jump_s1_r <= 1'b0;
+			jump_pend_r <= 1'b0;
+			br_eq_p_r <= 1'b0;
+			br_lt_p_r <= 1'b0;
+			br_ltu_p_r <= 1'b0;
+			md_s1_r <= 1'b0;
+			jump_tgt_r <= 32'd0;
+			op1_r <= 32'd0;
+			op2_r <= 32'd0;
+			irq_r <= 1'b0;
+			alu_s1_r <= 1'b0;
+			alu_s2_r <= 1'b0;
+			alu_a_r <= 32'd0;
+			alu_b_r <= 32'd0;
+			alu_y_r <= 32'd0;
 			faulted <= 1'b0;
 			in_irq <= 1'b0;
 			mepc <= 32'd0;
@@ -410,50 +470,111 @@ module atg_cpu_core (
 		end else begin
 			fault <= 1'b0;
 			if (do_fault) begin
-				faulted <= 1'b1;
-				fault <= 1'b1;
-				if (pc_out)
-					mcause_q <= 4'd1;
-				else if (!legal)
-					mcause_q <= 4'd2;
-				else if (mis_jump)
-					mcause_q <= 4'd0;
-				else if (is_ld && mis_mem)
-					mcause_q <= 4'd4;
-				else if (is_st && mis_mem)
-					mcause_q <= 4'd6;
-				else
-					mcause_q <= 4'd2;
+				faulted  <= 1'b1;
+				fault    <= 1'b1;
+				mcause_q <= do_fault_cause;
 			end
 			/* Follows E until the fault, then holds (no enable on the
 			 * fault checks: timing). */
 			if (!faulted)
 				fault_pc <= pc_e;
-			if (e_done)
+			if (mem_issue || jump_issue || md_issue) begin
+				op1_r <= rs1;
+				op2_r <= rs2;
+			end
+			md_s1_r <= md_issue;
+			if (mem_issue)
+				mem_prep_r <= 1'b1;
+			else if (mem_prep_r)
+				mem_prep_r <= 1'b0;
+			if (mem_prep_r && !mis_mem) begin
+				mem_req_r <= 1'b1;
+				d_valid_r <= 1'b1;
+				d_write_r <= is_st_e;
+				d_addr_r  <= ea_full;
+				d_be      <= d_be_c;
+				d_wdata   <= d_wdata_c;
+				ea_r      <= ea_p;
+			end else if (mem_req_r && d_ready) begin
+				mem_req_r   <= 1'b0;
+				d_valid_r   <= 1'b0;
+				mem_done_r  <= 1'b1;
+				mem_rdata_r <= ld_sh_w;
+			end else if (mem_done_r) begin
+				mem_done_r <= 1'b0;
+			end
+			if (jump_issue)
+				jump_s1_r <= 1'b1;
+			if (jump_s1_r) begin
+				jump_s1_r   <= 1'b0;
+				jump_pend_r <= 1'b1;
+			end else if (jump_pend_r) begin
+				jump_pend_r <= 1'b0;
+			end
+			/* Latched on jump_s1_r cycle from op1_r/op2_r with f3_e[0] polarity folded in. */
+			br_eq_p_r  <= br_eq ^ f3_e[0];
+			br_lt_p_r  <= br_lt ^ f3_e[0];
+			br_ltu_p_r <= br_ltu ^ f3_e[0];
+			jump_tgt_r <= is_jalr ? jalr_t : pc_imm;
+			alu_y_r <= alu_y;
+			if (alu_issue) begin
+				alu_s1_r <= 1'b1;
+				alu_a_r  <= is_auipc ? pc_e : rs1;
+				alu_b_r  <= alu_b;
+			end else if (alu_s1_r) begin
+				alu_s1_r <= 1'b0;
+				alu_s2_r <= 1'b1;
+			end else if (alu_s2_r) begin
+				alu_s2_r <= 1'b0;
+			end
+			irq_r <= irq;
+			if (faulted) begin
+				if (e_done_other)
+					e_busy <= 1'b0;
+			end else if (e_done_nofault)
 				e_busy <= 1'b0;
-			else if ((d_valid && !d_ready) || md_start)
+			else if (mem_issue_nf || md_issue_nf || jump_issue_nf || alu_issue_nf)
 				e_busy <= 1'b1;
-			if (take_irq) begin
+			if (faulted) begin
+				if (e_done_other && is_mret)
+					in_irq <= 1'b0;
+			end else if (take_irq_nf) begin
 				mepc <= is_wfi ? link : pc_e;
 				in_irq <= 1'b1;
 				mcause_q <= 4'd11;
-			end else if (e_done && is_mret) begin
+			end else if (e_done_nofault && is_mret) begin
 				in_irq <= 1'b0;
 			end
-			if (e_done)
-				w_wen <= has_rd && rd != 5'd0 && !bad;
+			if (faulted ? e_done_other : e_done_nofault)
+				w_wen <= has_rd && rd_nz_e && !bad;
 			/* E. */
-			if (d_adv)
-				e_vld <= !redirect;
-			else if (e_done || take_irq)
+			if (faulted) begin
+				if (e_done_other)
+					e_vld <= 1'b0;
+			end else if (d_adv_nf) begin
+				e_vld <= !redirect_nf;
+			end else if (e_done_nofault || take_irq_nf) begin
 				e_vld <= 1'b0;
-			/* F and D. */
-			if (redirect) begin
-				pc_f <= take_irq ? IRQ_VECTOR : target;
+			end
+			/* F and D: flattened 1-hot next-PC mux (cuts pc_imm -> target -> redirect -> pc_f chain). */
+			if (faulted) begin
+				if (jump_taken_pend)
+					d_vld <= 1'b0;
+			end else if (redirect_nf) begin
 				d_vld <= 1'b0;
-			end else if (i_en) begin
-				pc_f <= pc_f_4;
+			end else if (i_en_nf) begin
 				d_vld <= 1'b1;
+			end
+
+			if (faulted) begin
+				if (jump_taken_pend)
+					pc_f <= jump_tgt_r;
+			end else if (take_irq_nf) begin
+				pc_f <= IRQ_VECTOR;
+			end else if (taken_done_nf) begin
+				pc_f <= is_mret ? mepc : jump_tgt_r;
+			end else if (i_en_nf) begin
+				pc_f <= pc_f_4;
 			end
 		end
 	end
@@ -462,12 +583,42 @@ module atg_cpu_core (
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
 			pc_d            <= 32'd0;
+			pc_d4           <= 32'd0;
 			pc_e            <= 32'd0;
-			ir_e            <= 32'd0;
+			pc_e4           <= 32'd0;
+			rd_e            <= 5'd0;
+			f3_e            <= 3'd0;
+			rd_nz_e         <= 1'b0;
+			is_auipc_e      <= 1'b0;
+			is_jal_e        <= 1'b0;
+			is_jalr_e       <= 1'b0;
+			is_br_e         <= 1'b0;
+			is_ld_e         <= 1'b0;
+			is_st_e         <= 1'b0;
+			is_m_e          <= 1'b0;
+			is_mret_e       <= 1'b0;
+			is_wfi_e        <= 1'b0;
+			is_fast_e       <= 1'b0;
+			br_sel_j_e      <= 1'b0;
+			br_sel_eq_e     <= 1'b0;
+			br_sel_lt_e     <= 1'b0;
+			br_sel_ltu_e    <= 1'b0;
+			legal_e         <= 1'b0;
+			is_mem_e        <= 1'b0;
+			has_rd_e        <= 1'b0;
+			pc_out_e        <= 1'b0;
+			ea_b_e          <= 32'd0;
+			pc_imm_b_e      <= 32'd0;
 			rs1_e           <= 32'd0;
 			rs2_e           <= 32'd0;
-			fwd1_e          <= 1'b0;
-			fwd2_e          <= 1'b0;
+			fwd1_e0         <= 1'b0;
+			fwd1_e1         <= 1'b0;
+			fwd1_e2         <= 1'b0;
+			fwd1_e3         <= 1'b0;
+			fwd2_e0         <= 1'b0;
+			fwd2_e1         <= 1'b0;
+			fwd2_e2         <= 1'b0;
+			fwd2_e3         <= 1'b0;
 			alu_op_e        <= A_ADD;
 			alu_b_imm_e     <= 32'd0;
 			alu_b_sel_imm_e <= 1'b0;
@@ -475,24 +626,58 @@ module atg_cpu_core (
 			w_rd            <= 5'd0;
 			w_val           <= 32'd0;
 		end else begin
-			if (i_en)
-				pc_d <= pc_f;
+			if (i_en) begin
+				pc_d  <= pc_f;
+				pc_d4 <= pc_f_4;
+			end
 			if (d_adv) begin
 				pc_e            <= pc_d;
-				ir_e            <= i_rdata;
+				pc_e4           <= pc_d4;
+				rd_e            <= i_rdata[11:7];
+				f3_e            <= d_f3;
+				rd_nz_e         <= i_rdata[11:7] != 5'd0;
+				is_auipc_e      <= d_is_auipc;
+				is_jal_e        <= d_is_jal;
+				is_jalr_e       <= d_is_jalr;
+				is_br_e         <= d_is_br;
+				is_ld_e         <= d_is_ld;
+				is_st_e         <= d_is_st;
+				is_m_e          <= d_is_m;
+				is_mret_e       <= d_is_mret;
+				is_wfi_e        <= d_is_wfi;
+				is_fast_e       <= d_is_fast;
+				br_sel_j_e      <= d_is_jal || d_is_jalr;
+				br_sel_eq_e     <= d_is_br && !d_f3[2];
+				br_sel_lt_e     <= d_is_br &&  d_f3[2] && !d_f3[1];
+				br_sel_ltu_e    <= d_is_br &&  d_f3[2] &&  d_f3[1];
+				legal_e         <= d_legal;
+				is_mem_e        <= d_is_mem;
+				has_rd_e        <= d_has_rd;
+				pc_out_e        <= pc_d[31:17] != 15'd0;
+				ea_b_e          <= d_ea_b;
+				pc_imm_b_e      <= d_pc_imm_b;
 				rs1_e           <= d_rs1;
 				rs2_e           <= d_rs2;
-				/* What W will hold while this instruction is in E. */
-				fwd1_e          <= d_ra != 5'd0 && (e_done ? (has_rd && rd == d_ra) : (w_wen && w_rd == d_ra));
-				fwd2_e          <= d_rb != 5'd0 && (e_done ? (has_rd && rd == d_rb) : (w_wen && w_rd == d_rb));
+				/* What W will hold while this instruction is in E (e_vld avoids e_done on D). */
+				fwd1_e0         <= d_ra != 5'd0 && (e_vld ? (has_rd && rd == d_ra) : (w_wen && w_rd == d_ra));
+				fwd1_e1         <= d_ra != 5'd0 && (e_vld ? (has_rd && rd == d_ra) : (w_wen && w_rd == d_ra));
+				fwd1_e2         <= d_ra != 5'd0 && (e_vld ? (has_rd && rd == d_ra) : (w_wen && w_rd == d_ra));
+				fwd1_e3         <= d_ra != 5'd0 && (e_vld ? (has_rd && rd == d_ra) : (w_wen && w_rd == d_ra));
+				fwd2_e0         <= d_rb != 5'd0 && (e_vld ? (has_rd && rd == d_rb) : (w_wen && w_rd == d_rb));
+				fwd2_e1         <= d_rb != 5'd0 && (e_vld ? (has_rd && rd == d_rb) : (w_wen && w_rd == d_rb));
+				fwd2_e2         <= d_rb != 5'd0 && (e_vld ? (has_rd && rd == d_rb) : (w_wen && w_rd == d_rb));
+				fwd2_e3         <= d_rb != 5'd0 && (e_vld ? (has_rd && rd == d_rb) : (w_wen && w_rd == d_rb));
 				alu_op_e        <= d_alu_op;
 				alu_b_imm_e     <= d_alu_b_imm;
 				alu_b_sel_imm_e <= d_alu_b_sel_imm;
 				is_alu_e        <= d_is_alu;
 			end
-			if (e_done) begin
-				w_rd <= rd;
-				w_val <= wb;
+			if (alu_s2_r) begin
+				w_rd  <= rd;
+				w_val <= alu_y_r;
+			end else if (e_done) begin
+				w_rd  <= rd;
+				w_val <= other_wb;
 			end
 		end
 	end
@@ -503,8 +688,8 @@ module atg_cpu_core (
 	assign curr_in_irq = in_irq;
 	assign curr_faulted = faulted;
 
-	wire unused_ok = &{1'b0, md_busy, alu_eq, alu_lt, alu_ltu, br_y, pc_imm_co, pc_imm_lo_co, link_co, ea_co, ea_lo_co,
-		pc_f_co};
+	wire unused_ok = &{1'b0, md_busy, alu_eq, alu_lt, alu_ltu, br_y, pc_imm_co, ea_co,
+		pc_f_co, target, pc_imm_lo, is_auipc_e};
 endmodule
 
 `default_nettype wire

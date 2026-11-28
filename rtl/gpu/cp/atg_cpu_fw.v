@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -95,6 +95,8 @@ module atg_cpu_fw (
 	reg ready = 1'b1;
 	/* Cleared by RESET. */
 	reg run, halt, park, fault_st, alive, held;
+	reg core_stopped_r;
+	reg core_run_no_hreq_r, park_and_run_r;
 	reg [7:0] fw_state;
 	reg [31:0] version;
 	reg [31:0] mbox0, mbox1, mbox2, mbox3;
@@ -103,21 +105,18 @@ module atg_cpu_fw (
 	wire loading = state != S_IDLE;
 
 	assign core_rst_n = !loading && !held;
-	assign core_run = run && !(park && halting);
+	assign core_run = core_run_no_hreq_r && !(park_and_run_r && halt_req);
 	assign fw_curr_state = fw_state;
 
-	wire [31:0] status = {16'd0, fw_state, 3'd0, loading, core_stopped || !core_rst_n,
+	wire [31:0] status = {16'd0, fw_state, 3'd0, loading, core_stopped_r || !core_rst_n,
 		alive, fault_st, ready};
 
 	/* HCR. */
 	wire hw_mbox = hcr_we && hcr_widx[9:2] == R_MBOX0[9:2];
-	wire sw_mbox = sb_we && sb_idx >= W_MBOX0 && sb_idx < W_MBOX0 + 6'd4;
-	wire [1:0] sw_mi;	/* the mailbox of a firmware write: sb_idx - W_MBOX0 */
-	wire sw_mi_bo;
-
-	am_sub #(.W(2)) sw_mi_sub (
-		.a(sb_idx[1:0]), .b(W_MBOX0[1:0]), .bi(1'b0), .d(sw_mi), .bo(sw_mi_bo)
-	);
+	wire sw_mbox0 = sb_we && (sb_idx == 6'h21);
+	wire sw_mbox1 = sb_we && (sb_idx == 6'h22);
+	wire sw_mbox2 = sb_we && (sb_idx == 6'h23);
+	wire sw_mbox3 = sb_we && (sb_idx == 6'h24);
 	wire load_ok = open && (core_stopped || !core_rst_n) && !loading;
 	wire load_go = hcr_we && hcr_widx == R_CTRL && hcr_wmask[GHCI_CPFW_CTRL_LOAD] &&
 		hcr_wdata[GHCI_CPFW_CTRL_LOAD] && load_ok;
@@ -126,8 +125,6 @@ module atg_cpu_fw (
 	wire [1:0] hr_mi = hcr_ridx[1:0];
 	wire [31:0] mbox_h = hr_mi == 2'd0 ? mbox0 : hr_mi == 2'd1 ? mbox1 :
 		hr_mi == 2'd2 ? mbox2 : mbox3;
-	wire [31:0] mbox_s = sw_mi == 2'd0 ? mbox0 : sw_mi == 2'd1 ? mbox1 :
-		sw_mi == 2'd2 ? mbox2 : mbox3;
 
 	/* A host write merged by WSTRB: (old & ~mask) | new (no function:
 	 * Verilator 5.032's V3Gate stumbled on it in a board top). */
@@ -149,16 +146,19 @@ module atg_cpu_fw (
 		endcase
 	end
 
+	wire fw_hit = sb_re && (sb_idx[5:3] == 3'b100);
+	reg [31:0] sb_rdata_raw;
 	always @(*) begin
-		sb_rdata = 32'd0;
-		if (sb_re) begin
-			if (sb_idx == W_FW_STATUS)
-				sb_rdata = status;
-			else if (sb_idx >= W_MBOX0 && sb_idx < W_MBOX0 + 6'd4)
-				sb_rdata = mbox_s;
-			else if (sb_idx == W_FW_VERSION)
-				sb_rdata = version;
-		end
+		case (sb_idx[2:0])
+		3'd0: sb_rdata_raw = status;
+		3'd1: sb_rdata_raw = mbox0;
+		3'd2: sb_rdata_raw = mbox1;
+		3'd3: sb_rdata_raw = mbox2;
+		3'd4: sb_rdata_raw = mbox3;
+		3'd5: sb_rdata_raw = version;
+		default: sb_rdata_raw = 32'd0;
+		endcase
+		sb_rdata = {32{fw_hit}} & sb_rdata_raw;
 	end
 
 	/* The kept registers: host writes only. Initialized by board reset (por_n). */
@@ -194,6 +194,9 @@ module atg_cpu_fw (
 			fault_st <= 1'b0;
 			alive <= 1'b0;
 			held <= 1'b0;
+			core_stopped_r <= 1'b1;
+			core_run_no_hreq_r <= 1'b0;
+			park_and_run_r <= 1'b0;
 			fw_state <= 8'd0;
 			version <= 32'd0;
 			mbox0 <= 32'd0;
@@ -207,6 +210,7 @@ module atg_cpu_fw (
 			fault <= 1'b0;
 			fault_addr <= 32'd0;
 		end else begin
+			core_stopped_r <= core_stopped;
 			ld_start <= 1'b0;
 			fault <= 1'b0;
 			if (hcr_we && hcr_widx == R_CTRL) begin
@@ -224,13 +228,13 @@ module atg_cpu_fw (
 				mbox2 <= ((mbox2 & hw_keep) | hw_new);
 			if (hw_mbox && hcr_widx[1:0] == 2'd3)
 				mbox3 <= ((mbox3 & hw_keep) | hw_new);
-			if (sw_mbox && sw_mi == 2'd0)
+			if (sw_mbox0)
 				mbox0 <= sb_wdata;
-			if (sw_mbox && sw_mi == 2'd1)
+			if (sw_mbox1)
 				mbox1 <= sb_wdata;
-			if (sw_mbox && sw_mi == 2'd2)
+			if (sw_mbox2)
 				mbox2 <= sb_wdata;
-			if (sw_mbox && sw_mi == 2'd3)
+			if (sw_mbox3)
 				mbox3 <= sb_wdata;
 			if (sb_we && sb_idx == W_FW_STATUS) begin
 				fw_state <= sb_wdata[15:8];
@@ -246,6 +250,16 @@ module atg_cpu_fw (
 				fault <= 1'b1;
 				fault_addr <= core_fault_pc;
 				held <= 1'b1;
+			end
+			begin : b_core_run_reg
+				reg nxt_run, nxt_halt, nxt_park;
+				nxt_run  = (hcr_we && hcr_widx == R_CTRL && hcr_wmask[GHCI_CPFW_CTRL_RUN])  ? hcr_wdata[GHCI_CPFW_CTRL_RUN]  : run;
+				nxt_halt = (hcr_we && hcr_widx == R_CTRL && hcr_wmask[GHCI_CPFW_CTRL_HALT]) ? hcr_wdata[GHCI_CPFW_CTRL_HALT] : halt;
+				nxt_park = !halting ? 1'b0 :
+					((state == S_IDLE && load_go) ? 1'b0 :
+					((sb_we && sb_idx == W_FW_STATUS) ? sb_wdata[16] : park));
+				core_run_no_hreq_r <= nxt_run && !(nxt_park && nxt_halt);
+				park_and_run_r     <= nxt_run && nxt_park;
 			end
 			case (state)
 			S_IDLE:
@@ -285,7 +299,6 @@ module atg_cpu_fw (
 		end
 	end
 
-	wire unused_mi = &{1'b0, sw_mi_bo};
 endmodule
 
 `default_nettype wire

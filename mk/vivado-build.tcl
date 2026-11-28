@@ -72,9 +72,9 @@ proc env_or {name default} {
 }
 
 proc report_dsp_cells {file_path label} {
-	set dsps [get_cells -hierarchical -filter {REF_NAME == DSP48E1 || PRIMITIVE_TYPE =~ ADVANCED.MULT.*}]
+	set dsps [get_cells -hierarchical -filter {REF_NAME == DSP48E1 || REF_NAME == DSP48E2 || PRIMITIVE_TYPE =~ ADVANCED.MULT.* || PRIMITIVE_TYPE =~ ARITHMETIC.DSP.*}]
 	set f [open $file_path a]
-	puts $f "=== DSP48E1 Cells ($label) ==="
+	puts $f "=== DSP48 Cells ($label) ==="
 	puts $f "Total count: [llength $dsps]"
 	foreach d [lsort $dsps] {
 		set areg [get_property -quiet AREG $d]
@@ -109,6 +109,8 @@ if {$from_synth ne ""} {
 		set synth_define "SYNTH_KINTEX7"
 	} elseif {[string match "*zu*" $part] || [string match "*zcu106*" $topdir]} {
 		set synth_define "SYNTH_ZYNQ_ULTRASCALE"
+	} elseif {[string match "*ku*" $part] || [string match "*xcku5p*" $topdir]} {
+		set synth_define "SYNTH_KINTEX_ULTRASCALE"
 	}
 	set synth_cmd [list synth_design -top $top -part $part -verilog_define $synth_define -include_dirs [list [file join $root include]]]
 	if {[info exists ::env(VIVADO_SYNTH_DIRECTIVE)] && $::env(VIVADO_SYNTH_DIRECTIVE) ne ""} {
@@ -160,6 +162,10 @@ set wns [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
 set whs [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -hold]]
 puts "vivado-build: $top on $part WNS $wns ns WHS $whs ns"
 
+if {[env_or VIVADO_NO_BITSTREAM 0]} {
+	puts "vivado-build: P&R completed (VIVADO_NO_BITSTREAM=1)"
+	return
+}
 if {[expr {$wns < 0 || $whs < 0}]} {
 	if {[env_or VIVADO_FORCE_BITSTREAM 0]} {
 		puts "vivado-build: WARNING: Timing constraints not met! WNS $wns ns, WHS $whs ns. Proceeding with bitstream generation (VIVADO_FORCE_BITSTREAM=1)."

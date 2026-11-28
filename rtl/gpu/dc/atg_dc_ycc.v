@@ -54,7 +54,7 @@ module atg_dc_ycc (
 	 *   112 = 128 - 16, 38 = 32 + 4 + 2, 74 = 64 + 8 + 2;
 	 *   94 = 128 - 32 - 2, 18 = 16 + 2.
 	 */
-	/* 3:2 CSA reduction in Stage 1; single 16-bit Kogge-Stone am_add per channel in Stage 2. */
+	/* Stage 1 (split into 1a/1b under SYNTH_ASIC); Stage 2: final 16-bit add + pair. */
 	wire [15:0] y_sum, cb_sum, cr_sum;
 	wire [2:0] sum_co_unused;
 
@@ -64,8 +64,6 @@ module atg_dc_ycc (
 	wire [15:0] ys1b = yt3 ^ yt4 ^ yt5, yc1b = ((yt3 & yt4) | (yt3 & yt5) | (yt4 & yt5)) << 1;
 	wire [15:0] ys2a = ys1a ^ yc1a ^ ys1b, yc2a = ((ys1a & yc1a) | (ys1a & ys1b) | (yc1a & ys1b)) << 1;
 	wire [15:0] ys2b = yc1b ^ yt6  ^ yt7,  yc2b = ((yc1b & yt6)  | (yc1b & yt7)  | (yt6  & yt7))  << 1;
-	wire [15:0] ys3  = ys2a ^ yc2a ^ ys2b, yc3  = ((ys2a & yc2a) | (ys2a & ys2b) | (yc2a & ys2b)) << 1;
-	wire [15:0] ys4  = ys3  ^ yc3  ^ yc2b, yc4  = ((ys3  & yc3)  | (ys3  & yc2b) | (yc3  & yc2b)) << 1;
 
 	/* Cb: 128 B + 32896 - (16 B + 32 R + 4 R + 2 R + 64 G + 8 G + 2 G) = sum + 7 + 32896 */
 	wire [15:0] ct0 = b << 7,    ct1 = ~(g << 1), ct2 = ~(b << 4);
@@ -76,8 +74,6 @@ module atg_dc_ycc (
 	wire [15:0] cs1c = ct6 ^ ct7 ^ ct8, cc1c = ((ct6 & ct7) | (ct6 & ct8) | (ct7 & ct8)) << 1;
 	wire [15:0] cs2a = cs1a ^ cc1a ^ cs1b, cc2a = ((cs1a & cc1a) | (cs1a & cs1b) | (cc1a & cs1b)) << 1;
 	wire [15:0] cs2b = cc1b ^ cs1c ^ cc1c, cc2b = ((cc1b & cs1c) | (cc1b & cc1c) | (cs1c & cc1c)) << 1;
-	wire [15:0] cs3  = cs2a ^ cc2a ^ cs2b, cc3  = ((cs2a & cc2a) | (cs2a & cs2b) | (cc2a & cs2b)) << 1;
-	wire [15:0] cs4  = cs3  ^ cc3  ^ cc2b, cc4  = ((cs3  & cc3)  | (cs3  & cc2b) | (cc3  & cc2b)) << 1;
 
 	/* Cr: 128 R + 32896 + 32 G + 2 G - (16 R + 128 G + 16 B + 2 B) = sum + 4 + 32896 */
 	wire [15:0] rt0 = r << 7,    rt1 = g << 5,    rt2 = g << 1,    rt3 = ~(r << 4);
@@ -86,8 +82,39 @@ module atg_dc_ycc (
 	wire [15:0] rs1b = rt3 ^ rt4 ^ rt5, rc1b = ((rt3 & rt4) | (rt3 & rt5) | (rt4 & rt5)) << 1;
 	wire [15:0] rs2a = rs1a ^ rc1a ^ rs1b, rc2a = ((rs1a & rc1a) | (rs1a & rs1b) | (rc1a & rs1b)) << 1;
 	wire [15:0] rs2b = rc1b ^ rt6  ^ rt7,  rc2b = ((rc1b & rt6)  | (rc1b & rt7)  | (rt6  & rt7))  << 1;
+
+`ifdef SYNTH_ASIC
+	reg [15:0] ys2a_r, yc2a_r, ys2b_r, yc2b_r;
+	reg [15:0] cs2a_r, cc2a_r, cs2b_r, cc2b_r;
+	reg [15:0] rs2a_r, rc2a_r, rs2b_r, rc2b_r;
+	reg de0, hs0, vs0;
+	always @(posedge clk or posedge rst_high) begin
+		if (rst_high) begin
+			ys2a_r <= 16'd0; yc2a_r <= 16'd0; ys2b_r <= 16'd0; yc2b_r <= 16'd0;
+			cs2a_r <= 16'd0; cc2a_r <= 16'd0; cs2b_r <= 16'd0; cc2b_r <= 16'd0;
+			rs2a_r <= 16'd0; rc2a_r <= 16'd0; rs2b_r <= 16'd0; rc2b_r <= 16'd0;
+			de0 <= 1'b0; hs0 <= 1'b0; vs0 <= 1'b0;
+		end else begin
+			ys2a_r <= ys2a; yc2a_r <= yc2a; ys2b_r <= ys2b; yc2b_r <= yc2b;
+			cs2a_r <= cs2a; cc2a_r <= cc2a; cs2b_r <= cs2b; cc2b_r <= cc2b;
+			rs2a_r <= rs2a; rc2a_r <= rc2a; rs2b_r <= rs2b; rc2b_r <= rc2b;
+			de0 <= de; hs0 <= hs; vs0 <= vs;
+		end
+	end
+	wire [15:0] ys3 = ys2a_r ^ yc2a_r ^ ys2b_r, yc3 = ((ys2a_r & yc2a_r) | (ys2a_r & ys2b_r) | (yc2a_r & ys2b_r)) << 1;
+	wire [15:0] ys4 = ys3    ^ yc3    ^ yc2b_r, yc4 = ((ys3    & yc3)    | (ys3    & yc2b_r) | (yc3    & yc2b_r)) << 1;
+	wire [15:0] cs3 = cs2a_r ^ cc2a_r ^ cs2b_r, cc3 = ((cs2a_r & cc2a_r) | (cs2a_r & cs2b_r) | (cc2a_r & cs2b_r)) << 1;
+	wire [15:0] cs4 = cs3    ^ cc3    ^ cc2b_r, cc4 = ((cs3    & cc3)    | (cs3    & cc2b_r) | (cc3    & cc2b_r)) << 1;
+	wire [15:0] rs3 = rs2a_r ^ rc2a_r ^ rs2b_r, rc3 = ((rs2a_r & rc2a_r) | (rs2a_r & rs2b_r) | (rc2a_r & rs2b_r)) << 1;
+	wire [15:0] rs4 = rs3    ^ rc3    ^ rc2b_r, rc4 = ((rs3    & rc3)    | (rs3    & rc2b_r) | (rc3    & rc2b_r)) << 1;
+`else
+	wire [15:0] ys3  = ys2a ^ yc2a ^ ys2b, yc3  = ((ys2a & yc2a) | (ys2a & ys2b) | (yc2a & ys2b)) << 1;
+	wire [15:0] ys4  = ys3  ^ yc3  ^ yc2b, yc4  = ((ys3  & yc3)  | (ys3  & yc2b) | (yc3  & yc2b)) << 1;
+	wire [15:0] cs3  = cs2a ^ cc2a ^ cs2b, cc3  = ((cs2a & cc2a) | (cs2a & cs2b) | (cc2a & cs2b)) << 1;
+	wire [15:0] cs4  = cs3  ^ cc3  ^ cc2b, cc4  = ((cs3  & cc3)  | (cs3  & cc2b) | (cc3  & cc2b)) << 1;
 	wire [15:0] rs3  = rs2a ^ rc2a ^ rs2b, rc3  = ((rs2a & rc2a) | (rs2a & rs2b) | (rc2a & rs2b)) << 1;
 	wire [15:0] rs4  = rs3  ^ rc3  ^ rc2b, rc4  = ((rs3  & rc3)  | (rs3  & rc2b) | (rc3  & rc2b)) << 1;
+`endif
 
 	/* Stage 1: registered CSA sum/carry vectors. */
 	reg [15:0] ys_r, yc_r, cs_r, cc_r, rs_r, rc_r;
@@ -97,9 +124,28 @@ module atg_dc_ycc (
 	am_add #(.W(16)) u_cb_add (.a(cs_r), .b(cc_r), .ci(1'b0), .s(cb_sum), .co(sum_co_unused[1]));
 	am_add #(.W(16)) u_cr_add (.a(rs_r), .b(rc_r), .ci(1'b0), .s(cr_sum), .co(sum_co_unused[2]));
 
+`ifdef SYNTH_ASIC
+	reg [7:0] y1_q, cb1_q, cr1_q;
+	reg de2, hs2, vs2;
+	always @(posedge clk or posedge rst_high) begin
+		if (rst_high) begin
+			y1_q <= 8'd0; cb1_q <= 8'd0; cr1_q <= 8'd0;
+			de2 <= 1'b0; hs2 <= 1'b0; vs2 <= 1'b0;
+		end else begin
+			y1_q <= y_sum[15:8]; cb1_q <= cb_sum[15:8]; cr1_q <= cr_sum[15:8];
+			de2 <= de1; hs2 <= hs1; vs2 <= vs1;
+		end
+	end
+	wire [7:0] y1 = y1_q, cb1 = cb1_q, cr1 = cr1_q;
+	wire de_out = de2, hs_out = hs2, vs_out = vs2;
+	wire de_pipe = de0, hs_pipe = hs0, vs_pipe = vs0;
+`else
 	wire [7:0] y1  = y_sum[15:8];
 	wire [7:0] cb1 = cb_sum[15:8];
 	wire [7:0] cr1 = cr_sum[15:8];
+	wire de_out = de1, hs_out = hs1, vs_out = vs1;
+	wire de_pipe = de, hs_pipe = hs, vs_pipe = vs;
+`endif
 	reg odd;
 	reg [7:0] cr_held;
 
@@ -127,14 +173,14 @@ module atg_dc_ycc (
 			cc_r <= cc4;
 			rs_r <= rs4;
 			rc_r <= rc4;
-			de1 <= de;
-			hs1 <= hs;
-			vs1 <= vs;
+			de1 <= de_pipe;
+			hs1 <= hs_pipe;
+			vs1 <= vs_pipe;
 
-			ycc_de <= de1;
-			ycc_hs <= hs1;
-			ycc_vs <= vs1;
-			if (!de1) begin
+			ycc_de <= de_out;
+			ycc_hs <= hs_out;
+			ycc_vs <= vs_out;
+			if (!de_out) begin
 				odd <= 1'b0;
 				ycc <= {8'd128, 8'd16};
 			end else begin

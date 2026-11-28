@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -18,7 +18,7 @@
  * sends the control symbol of {C1, C0} and cnt is 0: channel 0 (blue)
  * carries {vs, hs}, channels 1 and 2 send {0, 0}.  Symbols are LSB first:
  * tmds[9:0] is channel 0, [19:10] channel 1 (green), [29:20] channel 2
- * (red).  Two cycles of latency.
+ * (red).  Five cycles of latency (pipelined for <= 12 cmos3 / 15 FO4).
  */
 
 `timescale 1ns / 1ps
@@ -50,8 +50,30 @@ module atg_dc_tmds (
 		end
 	endfunction
 
-	reg [8:0] s1_qm [0:2];
-	reg [1:0] s1_ctrl [0:2];
+	reg [7:0] s1a_qm_xor [0:2];
+	reg       s1a_xnor   [0:2];
+	reg [1:0] s1a_ctrl   [0:2];
+	reg       s1a_de;
+
+	reg [8:0] s1b_qm     [0:2];
+	reg [2:0] s1b_n_even [0:2];
+	reg [2:0] s1b_n_odd  [0:2];
+	reg [1:0] s1b_ctrl   [0:2];
+	reg       s1b_de;
+
+	reg [8:0] s1c_qm     [0:2];
+	reg [3:0] s1c_n1     [0:2];
+	reg [1:0] s1c_ctrl   [0:2];
+	reg       s1c_de;
+
+	reg [8:0] s1_qm      [0:2];
+	reg       s1_n1_eq4  [0:2];
+	reg       s1_n1_gt4  [0:2];
+	reg       s1_n1_lt4  [0:2];
+	reg [3:0] s1_dh_bal  [0:2];
+	reg [3:0] s1_dh_same [0:2];
+	reg [3:0] s1_dh_diff [0:2];
+	reg [1:0] s1_ctrl    [0:2];
 	(* max_fanout = 16 *) reg s1_de;
 
 `ifdef SYNTH_KINTEX7
@@ -59,8 +81,17 @@ module atg_dc_tmds (
 	genvar gi;
 	generate
 		for (gi = 0; gi < 24; gi = gi + 1) begin : g_rgb_buf
-			LUT1 #(.INIT(2'b10)) u_buf_a (.I0(rgb[gi]), .O(rgb_a[gi]));
-			LUT1 #(.INIT(2'b10)) u_buf_b (.I0(rgb[gi]), .O(rgb_b[gi]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_a (.I0(rgb[gi]), .O(rgb_a[gi]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_b (.I0(rgb[gi]), .O(rgb_b[gi]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [23:0] rgb_a, rgb_b;
+	genvar gi;
+	generate
+		for (gi = 0; gi < 24; gi = gi + 1) begin : g_rgb_buf
+			assign rgb_a[gi] = rgb[gi];
+			assign rgb_b[gi] = rgb[gi];
 		end
 	endgenerate
 `else
@@ -70,40 +101,58 @@ module atg_dc_tmds (
 
 	always @(posedge clk or posedge rst_high) begin
 		if (rst_high) begin
+			s1a_de <= 1'b0;
+			s1a_ctrl[0] <= 2'd0;
+			s1a_ctrl[1] <= 2'd0;
+			s1a_ctrl[2] <= 2'd0;
+			s1b_de <= 1'b0;
+			s1b_ctrl[0] <= 2'd0;
+			s1b_ctrl[1] <= 2'd0;
+			s1b_ctrl[2] <= 2'd0;
+			s1c_de <= 1'b0;
+			s1c_ctrl[0] <= 2'd0;
+			s1c_ctrl[1] <= 2'd0;
+			s1c_ctrl[2] <= 2'd0;
 			s1_de <= 1'b0;
 			s1_ctrl[0] <= 2'd0;
 			s1_ctrl[1] <= 2'd0;
 			s1_ctrl[2] <= 2'd0;
 		end else begin
-			s1_de <= de;
-			s1_ctrl[0] <= {vs, hs};
-			s1_ctrl[1] <= 2'd0;
-			s1_ctrl[2] <= 2'd0;
+			s1a_de <= de;
+			s1a_ctrl[0] <= {vs, hs};
+			s1a_ctrl[1] <= 2'd0;
+			s1a_ctrl[2] <= 2'd0;
+			s1b_de <= s1a_de;
+			s1b_ctrl[0] <= s1a_ctrl[0];
+			s1b_ctrl[1] <= s1a_ctrl[1];
+			s1b_ctrl[2] <= s1a_ctrl[2];
+			s1c_de <= s1b_de;
+			s1c_ctrl[0] <= s1b_ctrl[0];
+			s1c_ctrl[1] <= s1b_ctrl[1];
+			s1c_ctrl[2] <= s1b_ctrl[2];
+			s1_de <= s1c_de;
+			s1_ctrl[0] <= s1c_ctrl[0];
+			s1_ctrl[1] <= s1c_ctrl[1];
+			s1_ctrl[2] <= s1c_ctrl[2];
 		end
 	end
 
 	genvar c;
 	generate
 	for (c = 0; c < 3; c = c + 1) begin : g_ch
-		/* Stage 1: q_m by the number of ones of the byte. */
+		/* Stage 1a: xnor_ decision and balanced <= 3-level XOR tree for qm_xor. */
 		wire [7:0] d_a = rgb_a[8*c +: 8];
 		wire [7:0] d_b = rgb_b[8*c +: 8];
-		wire [3:0] d1;
-		/* xnor_ iff d1 > 4 or (d1 == 4 && !d[0]), which is algebraically
-		 * identical to (ones3(d_a[3:1]) + ones4(d_a[7:4]) >= 4). */
 		wire [1:0] d_c0_3 = {
 			(d_a[1] & d_a[2]) | (d_a[1] & d_a[3]) | (d_a[2] & d_a[3]),
 			d_a[1] ^ d_a[2] ^ d_a[3]
 		};
 		wire [2:0] d_c1 = ones4(d_a[7:4]);
-		wire d1_co_unused = (d_c0_3 == 2'd0) && (d_c1 == 3'd0);
-		assign d1 = {1'b0, d_c1};
 		wire xnor_ = (d_c1 >= 3'd4) ||
 			(d_c1 == 3'd3 && d_c0_3 >= 2'd1) ||
 			(d_c1 == 3'd2 && d_c0_3 >= 2'd2) ||
 			(d_c1 == 3'd1 && d_c0_3 == 2'd3);
 
-		/* Balanced <= 3-level XOR trees for qm_xor[7:0] */
 		wire px_01 = d_b[0] ^ d_b[1];
 		wire px_23 = d_b[2] ^ d_b[3];
 		wire px_45 = d_b[4] ^ d_b[5];
@@ -119,75 +168,115 @@ module atg_dc_tmds (
 		assign qm_xor[6] = px_03 ^ px_45 ^ d_b[6];
 		assign qm_xor[7] = px_03 ^ (px_45 ^ px_67);
 
-		wire [8:0] next_qm = {
-			!xnor_,
-			qm_xor[7] ^ xnor_,
-			qm_xor[6],
-			qm_xor[5] ^ xnor_,
-			qm_xor[4],
-			qm_xor[3] ^ xnor_,
-			qm_xor[2],
-			qm_xor[1] ^ xnor_,
-			qm_xor[0]
-		};
-
-		wire [2:0] n_even = ones4({qm_xor[6], qm_xor[4], qm_xor[2], qm_xor[0]});
-		wire [2:0] n_odd_xor = ones4({qm_xor[7], qm_xor[5], qm_xor[3], qm_xor[1]});
-		wire [2:0] n_odd_xnor = ones4(~{qm_xor[7], qm_xor[5], qm_xor[3], qm_xor[1]});
-
-		wire [3:0] n1_xor, n1_xnor;
-		wire n1_xor_co_unused, n1_xnor_co_unused;
-		am_add #(.W(4)) a_n1_xor (
-			.a({1'b0, n_even}), .b({1'b0, n_odd_xor}), .ci(1'b0),
-			.s(n1_xor), .co(n1_xor_co_unused)
-		);
-		am_add #(.W(4)) a_n1_xnor (
-			.a({1'b0, n_even}), .b({1'b0, n_odd_xnor}), .ci(1'b0),
-			.s(n1_xnor), .co(n1_xnor_co_unused)
-		);
-		wire [3:0] next_n1 = xnor_ ? n1_xnor : n1_xor;
-
-		reg [3:0] s1_n1_r;
 		always @(posedge clk or posedge rst_high) begin
 			if (rst_high) begin
-				s1_qm[c] <= 9'd0;
-				s1_n1_r  <= 4'd0;
+				s1a_qm_xor[c] <= 8'd0;
+				s1a_xnor[c]   <= 1'b0;
 			end else begin
-				s1_qm[c] <= next_qm;
-				s1_n1_r  <= next_n1;
+				s1a_qm_xor[c] <= qm_xor;
+				s1a_xnor[c]   <= xnor_;
 			end
 		end
-		wire [8:0] q = s1_qm[c];
-		wire [3:0] n1 = s1_n1_r;
-		wire n1_co_unused = n1_xor_co_unused ^ n1_xnor_co_unused;
-		reg [4:0] cnt;	/* running disparity, signed, even */
-		reg [9:0] out;
-		/* n1 in 0..8 -> diff = 2*n1 - 8 (even); delta_half = delta/2 in [-5..5] (4b) */
-		wire n1_eq4 = (n1 == 4'd4);
-		wire n1_gt4 = n1[3] || (n1[2] && (|n1[1:0]));
-		wire n1_lt4 = !n1[3] && !n1[2];
-		wire balanced  = (cnt == 5'd0) || n1_eq4;
-		wire same_sign = (cnt != 5'd0) && ((!cnt[4] && n1_gt4) || (cnt[4] && n1_lt4));
 
-		/* Precompute 4-bit half-delta candidates directly from n1[3:0] and select in 1 mux:
-		 *   pos_h   = n1 - 4
-		 *   pos_m1h = n1 - 5
-		 *   neg_h   = 4 - n1
-		 *   neg_p1h = 5 - n1 */
+		/* Stage 1b: apply xnor_ to form next_qm and count even/odd nibble ones. */
+		wire [8:0] next_qm = {
+			!s1a_xnor[c],
+			s1a_qm_xor[c][7] ^ s1a_xnor[c],
+			s1a_qm_xor[c][6],
+			s1a_qm_xor[c][5] ^ s1a_xnor[c],
+			s1a_qm_xor[c][4],
+			s1a_qm_xor[c][3] ^ s1a_xnor[c],
+			s1a_qm_xor[c][2],
+			s1a_qm_xor[c][1] ^ s1a_xnor[c],
+			s1a_qm_xor[c][0]
+		};
+		wire [2:0] next_n_even = ones4({next_qm[6], next_qm[4], next_qm[2], next_qm[0]});
+		wire [2:0] next_n_odd  = ones4({next_qm[7], next_qm[5], next_qm[3], next_qm[1]});
+
+		always @(posedge clk or posedge rst_high) begin
+			if (rst_high) begin
+				s1b_qm[c]     <= 9'd0;
+				s1b_n_even[c] <= 3'd0;
+				s1b_n_odd[c]  <= 3'd0;
+			end else begin
+				s1b_qm[c]     <= next_qm;
+				s1b_n_even[c] <= next_n_even;
+				s1b_n_odd[c]  <= next_n_odd;
+			end
+		end
+
+		/* Stage 1c: 4-bit add n1 = n_even + n_odd. */
+		wire [3:0] next_n1;
+		wire n1_co_unused;
+		am_add #(.W(4)) a_n1 (
+			.a({1'b0, s1b_n_even[c]}), .b({1'b0, s1b_n_odd[c]}), .ci(1'b0),
+			.s(next_n1), .co(n1_co_unused)
+		);
+
+		always @(posedge clk or posedge rst_high) begin
+			if (rst_high) begin
+				s1c_qm[c] <= 9'd0;
+				s1c_n1[c] <= 4'd0;
+			end else begin
+				s1c_qm[c] <= s1b_qm[c];
+				s1c_n1[c] <= next_n1;
+			end
+		end
+
+		/* Stage 1d: precompute n1 flags and the three candidate half-deltas. */
+		wire [3:0] c_n1 = s1c_n1[c];
+		wire c_q8 = s1c_qm[c][8];
+		wire c_eq4 = (c_n1 == 4'd4);
+		wire c_gt4 = c_n1[3] || (c_n1[2] && (|c_n1[1:0]));
+		wire c_lt4 = !c_n1[3] && !c_n1[2];
+
 		wire [3:0] dh_pos, dh_pos_m1, dh_neg, dh_neg_p1;
 		wire [3:0] dh_unused;
-		am_sub #(.W(4)) s_dh_p  (.a(n1),   .b(4'd4), .bi(1'b0), .d(dh_pos),    .bo(dh_unused[0]));
-		am_sub #(.W(4)) s_dh_pm (.a(n1),   .b(4'd5), .bi(1'b0), .d(dh_pos_m1), .bo(dh_unused[1]));
-		am_sub #(.W(4)) s_dh_n  (.a(4'd4), .b(n1),   .bi(1'b0), .d(dh_neg),    .bo(dh_unused[2]));
-		am_sub #(.W(4)) s_dh_np (.a(4'd5), .b(n1),   .bi(1'b0), .d(dh_neg_p1), .bo(dh_unused[3]));
+		am_sub #(.W(4)) s_dh_p  (.a(c_n1), .b(4'd4), .bi(1'b0), .d(dh_pos),    .bo(dh_unused[0]));
+		am_sub #(.W(4)) s_dh_pm (.a(c_n1), .b(4'd5), .bi(1'b0), .d(dh_pos_m1), .bo(dh_unused[1]));
+		am_sub #(.W(4)) s_dh_n  (.a(4'd4), .b(c_n1), .bi(1'b0), .d(dh_neg),    .bo(dh_unused[2]));
+		am_sub #(.W(4)) s_dh_np (.a(4'd5), .b(c_n1), .bi(1'b0), .d(dh_neg_p1), .bo(dh_unused[3]));
 
-		wire [3:0] delta_h = balanced  ? (q[8] ? dh_pos    : dh_neg) :
-		                     same_sign ? (q[8] ? dh_neg_p1 : dh_neg) :
-		                                 (q[8] ? dh_pos    : dh_pos_m1);
-		wire [4:0] cnt_next;
-		wire cnt_next_co_unused;
-		am_add #(.W(4)) a_cnt (.a(cnt[4:1]), .b(delta_h), .ci(1'b0), .s(cnt_next[4:1]), .co(cnt_next_co_unused));
-		assign cnt_next[0] = 1'b0;
+		always @(posedge clk or posedge rst_high) begin
+			if (rst_high) begin
+				s1_qm[c]      <= 9'd0;
+				s1_n1_eq4[c]  <= 1'b0;
+				s1_n1_gt4[c]  <= 1'b0;
+				s1_n1_lt4[c]  <= 1'b0;
+				s1_dh_bal[c]  <= 4'd0;
+				s1_dh_same[c] <= 4'd0;
+				s1_dh_diff[c] <= 4'd0;
+			end else begin
+				s1_qm[c]      <= s1c_qm[c];
+				s1_n1_eq4[c]  <= c_eq4;
+				s1_n1_gt4[c]  <= c_gt4;
+				s1_n1_lt4[c]  <= c_lt4;
+				s1_dh_bal[c]  <= c_q8 ? dh_pos    : dh_neg;
+				s1_dh_same[c] <= c_q8 ? dh_neg_p1 : dh_neg;
+				s1_dh_diff[c] <= c_q8 ? dh_pos    : dh_pos_m1;
+			end
+		end
+
+		/* Stage 2: running disparity cnt update with 3 parallel 4-bit adders + mux. */
+		wire [8:0] q = s1_qm[c];
+		reg [4:0] cnt;	/* running disparity, signed, even */
+		reg [9:0] out;
+		wire cnt_zero  = ~(|cnt[4:1]);
+		wire balanced  = cnt_zero || s1_n1_eq4[c];
+		wire same_sign = !cnt_zero && ((!cnt[4] && s1_n1_gt4[c]) || (cnt[4] && s1_n1_lt4[c]));
+
+		wire [3:0] cnt_bal_h, cnt_same_h, cnt_diff_h;
+		wire [2:0] cnt_co_unused;
+		am_add #(.W(4)) a_cnt_bal  (.a(cnt[4:1]), .b(s1_dh_bal[c]),  .ci(1'b0), .s(cnt_bal_h),  .co(cnt_co_unused[0]));
+		am_add #(.W(4)) a_cnt_same (.a(cnt[4:1]), .b(s1_dh_same[c]), .ci(1'b0), .s(cnt_same_h), .co(cnt_co_unused[1]));
+		am_add #(.W(4)) a_cnt_diff (.a(cnt[4:1]), .b(s1_dh_diff[c]), .ci(1'b0), .s(cnt_diff_h), .co(cnt_co_unused[2]));
+
+		wire [4:0] cnt_next = {
+			balanced  ? cnt_bal_h :
+			same_sign ? cnt_same_h :
+			            cnt_diff_h,
+			1'b0
+		};
 		assign tmds[10*c +: 10] = out;
 
 		always @(posedge clk or posedge rst_high) begin
@@ -214,7 +303,7 @@ module atg_dc_tmds (
 			end
 		end
 
-		wire unused_ok = &{1'b0, d1, d1_co_unused, n1_co_unused, dh_unused, cnt_next_co_unused};
+		wire unused_ok = &{1'b0, n1_co_unused, dh_unused, cnt_co_unused};
 	end
 	endgenerate
 endmodule

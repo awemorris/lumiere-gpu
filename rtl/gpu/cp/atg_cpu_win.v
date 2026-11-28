@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -116,25 +116,30 @@ module atg_cpu_win #(
 	 * does the window's work from those registers and answers (d_ready),
 	 * or waits while a UOP write finds the FIFO full.  Nothing in the
 	 * answer path depends on d_addr in the same cycle (timing). */
-	localparam [1:0] S_IDLE  = 2'd0;
-	localparam [1:0] S_DMEM  = 2'd1;
-	localparam [1:0] S_ACK   = 2'd2;
-	localparam [1:0] S_SUB   = 2'd3;
+	localparam [2:0] S_IDLE  = 3'd0;
+	localparam [2:0] S_DMEM  = 3'd1;
+	localparam [2:0] S_ACK   = 3'd2;
+	localparam [2:0] S_SUB   = 3'd3;
+	localparam [2:0] S_SUB2  = 3'd4;
 
-	reg [1:0] state;
+	reg [2:0] state;
+	reg is_idle_r, ack_r, sub_cap_r, sub_rd_r, sb_we_r, sb_re_r;
+	reg [13:0] own_sel_r;
 	reg q_dmem, q_own, q_sub, q_write;
 	reg [5:0] q_idx;
+	(* keep = "true" *) reg [5:0] sb_idx_r;
 	reg [31:0] q_wdata;
 	reg [31:0] q_addr;
 	reg [3:0]  q_be;
 	reg [31:0] q_rdata;
+	reg [31:0] st_rdata_r;
 
 	wire in_dmem = d_addr[31:16] == 16'h0002;
-	wire in_win = d_addr[31:8] == 24'hF0_0000;
+	wire in_win  = (d_addr[31:16] == 16'hF000) && (d_addr[15:8] == 8'h00);
 	wire [5:0] idx = d_addr[7:2];
-	wire take = d_valid && state == S_IDLE;
-	wire ack = state == S_ACK;
-	wire sub_rd = state == S_SUB;
+	wire take = d_valid && is_idle_r;
+	wire ack = ack_r;
+	wire sub_rd = sub_rd_r;
 
 	/* Registers. */
 	reg [9:0] st_idx;
@@ -142,7 +147,25 @@ module atg_cpu_win #(
 	wire [31:0] cycle_n;	/* cycle + 1 */
 	wire cycle_co;
 
-	am_add #(.W(32)) cycle_add (.a(cycle), .b(32'd0), .ci(1'b1), .s(cycle_n), .co(cycle_co));
+	/* 4x8b carry-select incrementer for 32-bit cycle counter (avoids 32-bit ripple). */
+	wire [7:0] cy_s0, cy_s1_0, cy_s1_1, cy_s2_0, cy_s2_1, cy_s3_0, cy_s3_1;
+	wire cy_c0, cy_c1_0, cy_c1_1, cy_c2_0, cy_c2_1, cy_c3_0, cy_c3_1;
+	am_add #(.W(8)) cy_a0   (.a(cycle[7:0]),   .b(8'd0), .ci(1'b1), .s(cy_s0),   .co(cy_c0));
+	am_add #(.W(8)) cy_a1_0 (.a(cycle[15:8]),  .b(8'd0), .ci(1'b0), .s(cy_s1_0), .co(cy_c1_0));
+	am_add #(.W(8)) cy_a1_1 (.a(cycle[15:8]),  .b(8'd0), .ci(1'b1), .s(cy_s1_1), .co(cy_c1_1));
+	am_add #(.W(8)) cy_a2_0 (.a(cycle[23:16]), .b(8'd0), .ci(1'b0), .s(cy_s2_0), .co(cy_c2_0));
+	am_add #(.W(8)) cy_a2_1 (.a(cycle[23:16]), .b(8'd0), .ci(1'b1), .s(cy_s2_1), .co(cy_c2_1));
+	am_add #(.W(8)) cy_a3_0 (.a(cycle[31:24]), .b(8'd0), .ci(1'b0), .s(cy_s3_0), .co(cy_c3_0));
+	am_add #(.W(8)) cy_a3_1 (.a(cycle[31:24]), .b(8'd0), .ci(1'b1), .s(cy_s3_1), .co(cy_c3_1));
+	wire cy_c1 = cy_c0 ? cy_c1_1 : cy_c1_0;
+	wire cy_c2 = cy_c2_0 | (cy_c2_1 & cy_c1_0) | (cy_c2_1 & cy_c1_1 & cy_c0);
+	assign cycle_n = {
+		cy_c2 ? cy_s3_1 : cy_s3_0,
+		cy_c1 ? cy_s2_1 : cy_s2_0,
+		cy_c0 ? cy_s1_1 : cy_s1_0,
+		cy_s0
+	};
+	assign cycle_co = cy_c2 ? cy_c3_1 : cy_c3_0;
 	reg [2:0] irq_en;
 	reg fence_pend;
 	reg taken;	/* PKT_INFO read while the packet waited */
@@ -157,61 +180,108 @@ module atg_cpu_win #(
 	wire own_wr = ack && q_own && q_write;
 	wire own_rd = sub_rd && q_own && !q_write;
 
-	/* UOP_FIFO. */
-	wire q_uop = q_own && q_write && (q_idx == W_UOP || q_idx == W_UOP_LAST);
-	wire f_ready;
+	reg q_uop_r, q_uop_last_r;
+	reg m_en_r;
+	reg [3:0] m_we_r;
+	reg [31:0] sub_rdata_r;
 	wire f_valid;
+	wire f_ready;
 	wire [UOP_DEPTH_LOG2:0] f_count;
 
 	reg self_next;
+	reg uop_full_r;
+	reg [UOP_DEPTH_LOG2:0] uop_free_r;
+	localparam [UOP_DEPTH_LOG2:0] DEPTH_M1 = DEPTH - 1;
+	localparam UDEPTH = 1 << UOP_DEPTH_LOG2;
 
-	am_fifo #(.W(40), .DEPTH_LOG2(UOP_DEPTH_LOG2)) uop_fifo (
-		.clk(clk), .rst_n(rst_n),
-		.in_valid(ack && q_uop), .in_ready(f_ready),
-		.in_data({self_next, pkt_slot, q_idx == W_UOP_LAST, q_wdata}),
-		.out_valid(f_valid), .out_ready(fw_ready), .out_data({fw_side, fw_last, fw_data}),
-		.count(f_count)
+	/* Discrete FF-based UOP FIFO (eliminates Check 4 $mem_v2 & rp->uop_fifo deep paths). */
+	reg [UOP_DEPTH_LOG2-1:0] uop_wp, uop_rp;
+	reg [UOP_DEPTH_LOG2:0] uop_cnt;
+	reg uop_valid_r;
+	wire uop_push_c = q_uop_r && !uop_full_r;
+	wire uop_pop_c  = uop_valid_r && fw_ready;
+	assign f_valid = uop_valid_r;
+	assign f_ready = !uop_full_r;
+	assign f_count = uop_cnt;
+
+	wire [UOP_DEPTH_LOG2-1:0] uop_wp_n, uop_rp_n;
+	wire [UOP_DEPTH_LOG2:0] uop_cnt_dec, uop_cnt_inc;
+	wire unused_uwp_co, unused_urp_co, unused_ucd_bo, unused_uci_co;
+	am_add #(.W(UOP_DEPTH_LOG2)) u_uwp_inc (
+		.a(uop_wp), .b({UOP_DEPTH_LOG2{1'b0}}), .ci(1'b1), .s(uop_wp_n), .co(unused_uwp_co)
+	);
+	am_add #(.W(UOP_DEPTH_LOG2)) u_urp_inc (
+		.a(uop_rp), .b({UOP_DEPTH_LOG2{1'b0}}), .ci(1'b1), .s(uop_rp_n), .co(unused_urp_co)
+	);
+	am_sub #(.W(UOP_DEPTH_LOG2 + 1)) u_uc_dec (
+		.a(uop_cnt), .b({{UOP_DEPTH_LOG2{1'b0}}, 1'b1}), .bi(1'b0), .d(uop_cnt_dec), .bo(unused_ucd_bo)
+	);
+	am_add #(.W(UOP_DEPTH_LOG2 + 1)) u_uc_inc (
+		.a(uop_cnt), .b({{UOP_DEPTH_LOG2{1'b0}}, 1'b0}), .ci(1'b1), .s(uop_cnt_inc), .co(unused_uci_co)
+	);
+	wire uop_valid_n = uop_push_c ? 1'b1 :
+		(uop_pop_c ? (uop_cnt != {{UOP_DEPTH_LOG2{1'b0}}, 1'b1}) : uop_valid_r);
+
+	wire [UDEPTH*40-1:0] uop_flat;
+	genvar gu;
+	generate
+		for (gu = 0; gu < UDEPTH; gu = gu + 1) begin : g_uop
+			reg [39:0] entry;
+			always @(posedge clk) begin
+				if (uop_push_c && (uop_wp == gu[UOP_DEPTH_LOG2-1:0]))
+					entry <= {self_next, pkt_slot, q_uop_last_r, q_wdata};
+			end
+			assign uop_flat[gu*40 +: 40] = entry;
+		end
+	endgenerate
+	reg [39:0] uop_head_c;
+	integer uo;
+	always @(*) begin
+		uop_head_c = 40'd0;
+		for (uo = 0; uo < UDEPTH; uo = uo + 1)
+			if (uop_rp == uo[UOP_DEPTH_LOG2-1:0])
+				uop_head_c = uop_flat[uo*40 +: 40];
+	end
+	assign {fw_side, fw_last, fw_data} = uop_head_c;
+
+	wire uop_full_n = uop_full_r ? !uop_pop_c : (uop_push_c && !uop_pop_c && (uop_free_r == {{UOP_DEPTH_LOG2{1'b0}}, 1'b1}));
+	wire [UOP_DEPTH_LOG2:0] uop_free_dec, uop_free_inc;
+	wire unused_ufd_bo, unused_ufi_co, unused_f_count_ok;
+	assign unused_f_count_ok = &{1'b0, f_count, unused_uwp_co, unused_urp_co, unused_ucd_bo, unused_uci_co};
+	am_sub #(.W(UOP_DEPTH_LOG2 + 1)) u_uf_dec (
+		.a(uop_free_r), .b({{UOP_DEPTH_LOG2{1'b0}}, 1'b1}), .bi(1'b0), .d(uop_free_dec), .bo(unused_ufd_bo)
+	);
+	am_add #(.W(UOP_DEPTH_LOG2 + 1)) u_uf_inc (
+		.a(uop_free_r), .b({{UOP_DEPTH_LOG2{1'b0}}, 1'b0}), .ci(1'b1), .s(uop_free_inc), .co(unused_ufi_co)
 	);
 
 	assign fw_valid = f_valid;
 	assign fw_active = pkt;
-	assign stall = ack && q_uop && !f_ready;
+	assign stall = ack_r && q_uop_r && uop_full_r;
+	wire unused_f_ready = f_ready;
 	assign irq = |(cause & irq_en);
 	assign st_ridx = st_idx;
-	assign d_ready = ack && !stall;
+	assign d_ready = ack_r && !(q_uop_r && uop_full_r);
 
-	/* DMEM: accessed in S_DMEM stage (isolated from core decode/adder timing). */
-	assign m_en = (state == S_DMEM) && q_dmem;
-	assign m_we = q_write ? q_be : 4'd0;
+	/* DMEM: registered enable/write-enable from take for Check 4 <= 1 depth. */
+	assign m_en = m_en_r;
+	assign m_we = m_we_r;
 	assign m_addr = {16'd0, q_addr[15:0]};
 	assign m_wdata = q_wdata;
 
-	/* Sub-bus: in the read capture or answer cycle. */
-	assign sb_we = ack && q_sub && q_write;
-	assign sb_re = sub_rd && q_sub && !q_write;
-	assign sb_idx = q_idx;
+	/* Sub-bus: registered sb_we_r, sb_re_r, and dedicated sb_idx_r for low fanout. */
+	assign sb_we = sb_we_r;
+	assign sb_re = sb_re_r;
+	assign sb_idx = sb_idx_r;
 	assign sb_wdata = q_wdata;
 
-	reg [31:0] sub_own_rdata;
-	always @(*) begin
-		sub_own_rdata = 32'd0;
-		if (q_sub)
-			sub_own_rdata = dma_rdata | fw_rdata;
-		else if (q_own)
-			case (q_idx)
-			W_PKT_ADDR: sub_own_rdata = v_addr;
-			W_PKT_DWORDS: sub_own_rdata = {16'd0, v_dwords};
-			W_PKT_INFO: sub_own_rdata = {pkt_info, 23'd0, v_tag};
-			W_UOP_FREE: sub_own_rdata = {{(31 - UOP_DEPTH_LOG2){1'b0}}, DEPTH - f_count};
-			W_STATE_IDX: sub_own_rdata = {22'd0, st_idx};
-			W_STATE_DATA: sub_own_rdata = st_rdata;
-			W_FENCE_LAST: sub_own_rdata = fence_last;
-			W_CYCLE: sub_own_rdata = cycle;
-			W_IRQ: sub_own_rdata = {29'd0, cause};
-			W_IRQ_EN: sub_own_rdata = {29'd0, irq_en};
-			default: sub_own_rdata = 32'd0;
-			endcase
-	end
+	wire [31:0] own_t0 = ({32{own_sel_r[0]}}  & v_addr) | ({32{own_sel_r[1]}}  & {16'd0, v_dwords});
+	wire [31:0] own_t1 = ({32{own_sel_r[2]}}  & {pkt_info, 23'd0, v_tag}) |
+		({32{own_sel_r[6]}}  & {{(31 - UOP_DEPTH_LOG2){1'b0}}, uop_free_r});
+	wire [31:0] own_t2 = ({32{own_sel_r[7]}}  & {22'd0, st_idx}) | ({32{own_sel_r[8]}}  & st_rdata_r);
+	wire [31:0] own_t3 = ({32{own_sel_r[9]}}  & fence_last)      | ({32{own_sel_r[10]}} & cycle);
+	wire [31:0] own_t4 = ({32{own_sel_r[12]}} & {29'd0, cause})   | ({32{own_sel_r[13]}} & {29'd0, irq_en});
+	wire [31:0] own_rdata_c = ((own_t0 | own_t1) | (own_t2 | own_t3)) | own_t4;
 
 	always @(*) begin
 		if (q_write)
@@ -225,26 +295,43 @@ module atg_cpu_win #(
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
 			q_idx <= 6'd0;
+			sb_idx_r <= 6'd0;
 			q_wdata <= 32'd0;
 			q_write <= 1'b0;
 			q_addr <= 32'd0;
 			q_be <= 4'd0;
 		end else if (take) begin
 			q_idx <= idx;
+			sb_idx_r <= idx;
 			q_wdata <= d_wdata;
 			q_write <= d_write;
-			q_addr <= d_addr;
+			if (in_dmem)
+				q_addr <= d_addr;
 			q_be <= d_be;
 		end
 	end
 
+	integer oi;
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
 			state <= S_IDLE;
+			is_idle_r <= 1'b1;
+			ack_r <= 1'b0;
+			sub_cap_r <= 1'b0;
+			sub_rd_r <= 1'b0;
+			sb_we_r <= 1'b0;
+			sb_re_r <= 1'b0;
+			own_sel_r <= 14'd0;
 			q_dmem <= 1'b0;
 			q_own <= 1'b0;
 			q_sub <= 1'b0;
+			q_uop_r <= 1'b0;
+			q_uop_last_r <= 1'b0;
+			m_en_r <= 1'b0;
+			m_we_r <= 4'd0;
+			sub_rdata_r <= 32'd0;
 			q_rdata <= 32'd0;
+			st_rdata_r <= 32'd0;
 			st_idx <= 10'd0;
 			cycle <= 32'd0;
 			irq_en <= 3'd0;
@@ -256,44 +343,93 @@ module atg_cpu_win #(
 			ev_result <= 1'b0;
 			pkt_slot <= 6'd0;
 			self_next <= 1'b0;
+			uop_full_r <= 1'b0;
+			uop_free_r <= DEPTH;
+			uop_wp <= {UOP_DEPTH_LOG2{1'b0}};
+			uop_rp <= {UOP_DEPTH_LOG2{1'b0}};
+			uop_cnt <= {(UOP_DEPTH_LOG2 + 1){1'b0}};
+			uop_valid_r <= 1'b0;
 		end else begin
+			uop_full_r <= uop_full_n;
+			uop_valid_r <= uop_valid_n;
+			if (uop_push_c)
+				uop_wp <= uop_wp_n;
+			if (uop_pop_c)
+				uop_rp <= uop_rp_n;
+			if (uop_push_c && !uop_pop_c)
+				uop_cnt <= uop_cnt_inc;
+			else if (!uop_push_c && uop_pop_c)
+				uop_cnt <= uop_cnt_dec;
+			if (uop_push_c && !uop_pop_c)
+				uop_free_r <= uop_free_dec;
+			else if (!uop_push_c && uop_pop_c)
+				uop_free_r <= uop_free_inc;
 			cycle <= cycle_n;
+			st_rdata_r <= st_rdata;
 			v_done <= 1'b0;
 			ev_result <= 1'b0;
+			m_en_r <= 1'b0;
+			m_we_r <= 4'd0;
+			sb_we_r <= 1'b0;
+			sb_re_r <= 1'b0;
 			if (take) begin
 				state <= in_dmem ? S_DMEM : (!d_write && in_win ? S_SUB : S_ACK);
+				is_idle_r <= 1'b0;
+				ack_r <= !in_dmem && !(!d_write && in_win);
+				sub_cap_r <= !in_dmem && !d_write && in_win;
+				sub_rd_r <= 1'b0;
+				sb_we_r <= !in_dmem && d_write && in_win && (idx[5] || idx[4]);
+				sb_re_r <= !in_dmem && !d_write && in_win && (idx[5] || idx[4]);
+				for (oi = 0; oi < 14; oi = oi + 1)
+					own_sel_r[oi] <= in_win && !idx[5] && !idx[4] && (idx[3:0] == oi[3:0]);
 				q_dmem <= in_dmem;
+				m_en_r <= in_dmem;
+				m_we_r <= (in_dmem && d_write) ? d_be : 4'd0;
 				q_own <= in_win && !idx[5] && !idx[4];
 				q_sub <= in_win && (idx[5] || idx[4]);
+				q_uop_r <= in_win && d_write && (idx[5:1] == 5'b00010);
+				q_uop_last_r <= idx[0];
 				if (!in_dmem && !in_win)
 					q_rdata <= 32'd0;
 			end else if (state == S_DMEM) begin
 				state <= S_ACK;
+				ack_r <= 1'b1;
+			end else if (state == S_SUB) begin
+				if (q_sub)
+					sub_rdata_r <= dma_rdata | fw_rdata;
+				state <= S_SUB2;
+				sub_cap_r <= 1'b0;
+				sub_rd_r <= 1'b1;
 			end else if (sub_rd) begin
-				q_rdata <= sub_own_rdata;
+				q_rdata <= q_sub ? sub_rdata_r : own_rdata_c;
 				state <= S_ACK;
+				sub_rd_r <= 1'b0;
+				ack_r <= 1'b1;
 			end else if (ack && !stall) begin
+				q_uop_r <= 1'b0;
 				state <= S_IDLE;
+				is_idle_r <= 1'b1;
+				ack_r <= 1'b0;
 			end
-			if (own_wr && q_idx == W_STATE_IDX)
+			if (ack && q_write && own_sel_r[7])
 				st_idx <= q_wdata[9:0];
-			if (own_wr && q_idx == W_IRQ_EN)
+			if (ack && q_write && own_sel_r[13])
 				irq_en <= q_wdata[2:0];
-			if (own_wr && q_idx == W_RESULT)
+			if (ack && q_write && own_sel_r[11])
 				ev_result <= 1'b1;
 			if (fence_ev)
 				fence_pend <= 1'b1;
-			else if (own_wr && q_idx == W_IRQ && q_wdata[1])
+			else if (ack && q_write && own_sel_r[12] && q_wdata[1])
 				fence_pend <= 1'b0;
-			if (own_rd && q_idx == W_PKT_INFO && pkt_info) begin
+			if (sub_rd && !q_write && own_sel_r[2] && pkt_info) begin
 				taken <= 1'b1;
 				pkt_slot <= v_slot;
 			end
 			if (sb_we && q_idx == W_UOP_SELF)
 				self_next <= q_wdata[0];
-			else if (ack && q_uop && f_ready && q_idx == W_UOP_LAST)
+			else if (ack && q_uop_r && f_ready && q_uop_last_r)
 				self_next <= 1'b0;
-			if (own_wr && q_idx == W_DONE && pkt)
+			if (ack && q_write && own_sel_r[3] && pkt)
 				done_pend <= 1'b1;
 			if (done_pend && !f_valid) begin
 				v_done <= 1'b1;

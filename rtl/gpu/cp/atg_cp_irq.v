@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -64,9 +64,17 @@ module atg_cp_irq (
 	(* keep = "true", dont_touch = "true" *) wire irq_crst_high;
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h1)) u_irq_rst  (.I0(rst_n),      .O(irq_rst_high));
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h1)) u_irq_crst (.I0(core_rst_n), .O(irq_crst_high));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", dont_touch = "true" *) wire irq_rst_high;
+	(* keep = "true", dont_touch = "true" *) wire irq_crst_high;
+	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h1)) u_irq_rst  (.I0(rst_n),      .O(irq_rst_high));
+	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h1)) u_irq_crst (.I0(core_rst_n), .O(irq_crst_high));
 `endif
 
 `ifdef SYNTH_KINTEX7
+	always @(posedge clk or posedge irq_rst_high) begin
+		if (irq_rst_high) begin
+`elsif SYNTH_KINTEX_ULTRASCALE
 	always @(posedge clk or posedge irq_rst_high) begin
 		if (irq_rst_high) begin
 `else
@@ -81,6 +89,9 @@ module atg_cp_irq (
 	end
 
 `ifdef SYNTH_KINTEX7
+	always @(posedge clk or posedge irq_crst_high) begin
+		if (irq_crst_high) begin
+`elsif SYNTH_KINTEX_ULTRASCALE
 	always @(posedge clk or posedge irq_crst_high) begin
 		if (irq_crst_high) begin
 `else

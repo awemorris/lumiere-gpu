@@ -146,7 +146,7 @@ module atg_rep #(
 
 		genvar gs;
 		for (gs = 0; gs < STAGES; gs = gs + 1) begin : g_stg
-			am_skid #(.WIDTH(FW + 1), .RST_DATA(0)) u_req_skid (
+			atg_ex_rt_skid #(.WIDTH(FW + 1), .SL_S(7)) u_req_skid (
 				.clk(clk), .rst_n(rst_noc_n),
 				.in_valid(req_v[gs]), .in_ready(req_r[gs]),
 				.in_data({req_l[gs], req_d[gs]}),
@@ -154,7 +154,7 @@ module atg_rep #(
 				.out_data({req_l[gs+1], req_d[gs+1]})
 			);
 
-			am_skid #(.WIDTH(RFW), .RST_DATA(0)) u_rsp_skid (
+			atg_ex_rt_skid #(.WIDTH(RFW), .SL_S(7)) u_rsp_skid (
 				.clk(clk), .rst_n(rst_noc_n),
 				.in_valid(rsp_v[gs]), .in_ready(rsp_r[gs]),
 				.in_data(rsp_d[gs]),

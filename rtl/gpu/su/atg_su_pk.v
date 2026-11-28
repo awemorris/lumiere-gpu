@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -109,6 +109,28 @@ module atg_su_pk #(
 	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bq_ovh1 (.I0(ovr_hi), .O(ovr_hi_q1));
 	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bq_hsw0 (.I0(hsel_swap), .O(hsel_sw_q0));
 	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bq_hsw1 (.I0(hsel_swap), .O(hsel_sw_q1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar gqb;
+	generate
+		for (gqb = 0; gqb < 4; gqb = gqb + 1) begin : g_q_op
+			assign op_q0[gqb] = op[gqb];
+			assign op_q1[gqb] = op[gqb];
+		end
+		for (gqb = 0; gqb < 3; gqb = gqb + 1) begin : g_q_rm
+			assign rm_q0[gqb] = rm[gqb];
+			assign rm_q1[gqb] = rm[gqb];
+		end
+	endgenerate
+	assign sat_q0 = sat;
+	assign sat_q1 = sat;
+	assign mine_q0 = mine;
+	assign mine_q1 = mine;
+	assign ovr_lo_q0 = ovr_lo;
+	assign ovr_lo_q1 = ovr_lo;
+	assign ovr_hi_q0 = ovr_hi;
+	assign ovr_hi_q1 = ovr_hi;
+	assign hsel_sw_q0 = hsel_swap;
+	assign hsel_sw_q1 = hsel_swap;
 `else
 	assign op_q0 = op;
 	assign op_q1 = op;
@@ -150,6 +172,9 @@ module atg_su_pk #(
 `ifdef SYNTH_KINTEX7
 		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_hsw0 (.I0(hsel_sw_lane), .O(hsel_sw_lo_l));
 		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_hsw1 (.I0(hsel_sw_lane), .O(hsel_sw_hi_l));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign hsel_sw_lo_l = hsel_sw_lane;
+		assign hsel_sw_hi_l = hsel_sw_lane;
 `else
 		assign hsel_sw_lo_l = hsel_sw_lane;
 		assign hsel_sw_hi_l = hsel_sw_lane;
@@ -180,6 +205,23 @@ module atg_su_pk #(
 		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bovr_lo (.I0(ovr_lo_lane), .O(ovr_lo_l));
 		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bovr_hi (.I0(ovr_hi_lane), .O(ovr_hi_l));
 		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bsub    (.I0(sub),          .O(sub_l));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		genvar gob;
+		for (gob = 0; gob < 4; gob = gob + 1) begin : g_op_buf
+			assign op_lo_l[gob] = op_lane[gob];
+			assign op_hi_l[gob] = op_lane[gob];
+		end
+		for (gob = 0; gob < 3; gob = gob + 1) begin : g_rm_buf
+			assign rm_lo_l[gob] = rm_lane[gob];
+			assign rm_hi_l[gob] = rm_lane[gob];
+		end
+		assign sat_lo_l = sat_lane;
+		assign sat_hi_l = sat_lane;
+		assign mine_lo_l = mine_lane;
+		assign mine_hi_l = mine_lane;
+		assign ovr_lo_l = ovr_lo_lane;
+		assign ovr_hi_l = ovr_hi_lane;
+		assign sub_l = sub;
 `else
 		assign op_lo_l = op_lane;
 		assign op_hi_l = op_lane;
@@ -193,8 +235,14 @@ module atg_su_pk #(
 		assign ovr_hi_l = ovr_hi_lane;
 		assign sub_l = sub;
 `endif
-		wire [31:0] un;
-		am_fp_h2f #(.DENORM(0), .LAT(0)) u_un (.h(sub_l ? la[31:16] : la[15:0]), .f(un));
+		wire [15:0] un_h = sub_l ? la[31:16] : la[15:0];
+		wire        un_e1f = (un_h[14:10] == 5'h1F);
+		wire        un_ez  = (un_h[14:10] == 5'd0);
+		wire        un_mnz = (un_h[9:0]   != 10'd0);
+		wire [7:0]  un_en  = {un_h[14], {3{~un_h[14]}}, un_h[13:10]};
+		wire [31:0] un = un_e1f ? (un_mnz ? 32'h7FC00000 : {un_h[15], 8'hFF, 23'd0}) :
+		                 un_ez  ? {un_h[15], 31'd0} :
+		                          {un_h[15], un_en, un_h[9:0], 13'd0};
 
 		wire is_unpack_lo = (op_lo_l == ATG_PK_UNPACKH[3:0]);
 		wire is_swaph_lo  = (op_lo_l == ATG_PK_SWAPH[3:0]);

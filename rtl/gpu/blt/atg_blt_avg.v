@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -27,27 +27,40 @@
 `timescale 1ns / 1ps
 `default_nettype none
 
-module atg_blt_avg_s1 (
-	input wire [2:0] fmt,
-	input wire [2:0] psl,
+module atg_blt_avg_s1_r (
+	input wire [2:0] fmt0,
+	input wire [2:0] fmt1,
+	input wire [2:0] fmt2,
+	input wire [2:0] fmt3,
+	input wire [2:0] psl0,
+	input wire [2:0] psl1,
+	input wire [2:0] psl2,
+	input wire [2:0] psl3,
+	input wire [2:0] psl_s0,
 	input wire [511:0] in_s,
 	output wire [191:0] csa_s_out,
 	output wire [191:0] csa_c_out,
 	output wire [127:0] s0_only
 );
-	function [127:0] sample0;
+	function [127:0] sample0_fast;
 		input [2:0] pl;
 		input [511:0] x;
-		integer p, k, ps;
 		reg [127:0] o;
+		integer b;
 		begin
 			o = 128'd0;
-			ps = 1 << pl;
-			for (p = 0; p < 4; p = p + 1)
-				for (k = 0; k < 16; k = k + 1)
-					if (k < ps && ps * p + k < 16)
-						o[8 * (ps * p + k) +: 8] = x[8 * (ps * 4 * p + k) +: 8];
-			sample0 = o;
+			case (pl)
+			3'd0: o[31:0] = {x[103:96], x[71:64], x[39:32], x[7:0]};
+			3'd1: o[63:0] = {x[207:192], x[143:128], x[79:64], x[15:0]};
+			3'd2: o = {x[415:384], x[287:256], x[159:128], x[31:0]};
+			3'd3: o = {x[319:256], x[63:0]};
+			3'd4: o = x[127:0];
+			default: begin
+				for (b = 0; b < 16; b = b + 1)
+					o[8*b +: 8] = x[8*b +: 8];
+			end
+			endcase
+			sample0_fast = o;
 		end
 	endfunction
 
@@ -56,6 +69,8 @@ module atg_blt_avg_s1 (
 	for (j = 0; j < 16; j = j + 1) begin : g_avg
 		localparam integer PP = j / 4;
 		localparam integer CH = j % 4;
+		wire [2:0] p_fmt_l = (PP == 0) ? fmt0 : (PP == 1) ? fmt1 : (PP == 2) ? fmt2 : fmt3;
+		wire [2:0] p_psl_l = (PP == 0) ? psl0 : (PP == 1) ? psl1 : (PP == 2) ? psl2 : psl3;
 		wire [9:0] v [0:3];
 
 		for (sm = 0; sm < 4; sm = sm + 1) begin : g_s
@@ -66,9 +81,9 @@ module atg_blt_avg_s1 (
 			reg [9:0] v_val;
 
 			always @(*) begin
-				case (fmt)
+				case (p_fmt_l)
 				3'd0: begin
-					case (psl)
+					case (p_psl_l)
 					3'd0: v_val = (CH == 0) ? {2'd0, in_b} : 10'd0;
 					3'd1: v_val = (CH == 0) ? {2'd0, in_h[7:0]} : (CH == 1) ? {2'd0, in_h[15:8]} : 10'd0;
 					3'd2: v_val = (CH == 0) ? {2'd0, in_w[7:0]} : (CH == 1) ? {2'd0, in_w[15:8]} : (CH == 2) ? {2'd0, in_w[23:16]} : {2'd0, in_w[31:24]};
@@ -118,48 +133,81 @@ module atg_blt_avg_s1 (
 	end
 	endgenerate
 
-	reg [127:0] s0_data;
-	always @(*) begin
-		case (psl)
-		3'd0: s0_data = sample0(3'd0, in_s);
-		3'd1: s0_data = sample0(3'd1, in_s);
-		3'd2: s0_data = sample0(3'd2, in_s);
-		3'd3: s0_data = sample0(3'd3, in_s);
-		3'd4: s0_data = sample0(3'd4, in_s);
-		default: s0_data = sample0(3'd5, in_s);
-		endcase
-	end
-	assign s0_only = s0_data;
+	assign s0_only = sample0_fast(psl_s0, in_s);
 endmodule
 
-module atg_blt_avg_s2 (
+module atg_blt_avg_s1 (
 	input wire [2:0] fmt,
 	input wire [2:0] psl,
+	input wire [511:0] in_s,
+	output wire [191:0] csa_s_out,
+	output wire [191:0] csa_c_out,
+	output wire [127:0] s0_only
+);
+	atg_blt_avg_s1_r u_s1_r (
+		.fmt0(fmt), .fmt1(fmt), .fmt2(fmt), .fmt3(fmt),
+		.psl0(psl), .psl1(psl), .psl2(psl), .psl3(psl), .psl_s0(psl),
+		.in_s(in_s),
+		.csa_s_out(csa_s_out),
+		.csa_c_out(csa_c_out),
+		.s0_only(s0_only)
+	);
+endmodule
+
+module atg_blt_avg_s2a (
 	input wire [191:0] csa_s_in,
 	input wire [191:0] csa_c_in,
+	output wire [63:0] sum_lo_out,
+	output wire [15:0] c4_s_out,
+	output wire [127:0] hi0_out,
+	output wire [127:0] hi1_out
+);
+	genvar j;
+	generate
+	for (j = 0; j < 16; j = j + 1) begin : g_avga
+		wire [11:0] csa2_s = csa_s_in[j*12 +: 12];
+		wire [11:0] csa2_c = csa_c_in[j*12 +: 12];
+		wire [1:0] hi_co_unused;
+		am_add #(.W(4)) a_slo (.a(csa2_s[3:0]),  .b(csa2_c[3:0]),  .ci(1'b0), .s(sum_lo_out[j*4 +: 4]), .co(c4_s_out[j]));
+		am_add #(.W(8)) a_hi0 (.a(csa2_s[11:4]), .b(csa2_c[11:4]), .ci(1'b0), .s(hi0_out[j*8 +: 8]),    .co(hi_co_unused[0]));
+		am_add #(.W(8)) a_hi1 (.a(csa2_s[11:4]), .b(csa2_c[11:4]), .ci(1'b1), .s(hi1_out[j*8 +: 8]),    .co(hi_co_unused[1]));
+		wire unused_ok = &{1'b0, hi_co_unused};
+	end
+	endgenerate
+endmodule
+
+module atg_blt_avg_s2b (
+	input wire [2:0] fmt,
+	input wire [2:0] psl,
+	input wire [63:0] sum_lo_in,
+	input wire [15:0] c4_s_in,
+	input wire [127:0] hi0_in,
+	input wire [127:0] hi1_in,
 	output wire [127:0] avg_only
 );
 	wire [159:0] q;
 
 	genvar j;
 	generate
-	for (j = 0; j < 16; j = j + 1) begin : g_avg
-		wire [11:0] csa2_s = csa_s_in[j*12 +: 12];
-		wire [11:0] csa2_c = csa_c_in[j*12 +: 12];
-		wire [11:0] sum, sum_p4;
-		wire [1:0] sum_co_unused;
-		am_add #(.W(12)) a_s (.a(csa2_s), .b(csa2_c), .ci(1'b0), .s(sum), .co(sum_co_unused[0]));
-		wire [9:0] p4_csa_s = csa2_s[11:2] ^ csa2_c[11:2] ^ 10'd1;
-		wire [9:0] p4_csa_c = {((csa2_s[10:2] & csa2_c[10:2]) | (csa2_s[10:2] & 9'd1) | (csa2_c[10:2] & 9'd1)), 1'b0};
-		am_add #(.W(12)) a_sp4 (.a({p4_csa_s, csa2_s[1:0]}), .b({p4_csa_c, csa2_c[1:0]}), .ci(1'b0), .s(sum_p4), .co(sum_co_unused[1]));
+	for (j = 0; j < 16; j = j + 1) begin : g_avgb
+		wire [3:0] sum_lo = sum_lo_in[j*4 +: 4];
+		wire c4_s = c4_s_in[j];
+		wire [7:0] hi0 = hi0_in[j*8 +: 8];
+		wire [7:0] hi1 = hi1_in[j*8 +: 8];
+		wire       slo_c1_dummy;
+		wire [2:0] p4_32;
+		am_add #(.W(3)) a_p4_add (.a({1'b0, sum_lo[3:2]}), .b(3'd1), .ci(1'b0), .s(p4_32), .co(slo_c1_dummy));
+		wire c4_p4_exact = c4_s | p4_32[2];
 `ifdef MUT_RSV_RNE
-		wire round_up = sum[1];
+		wire round_up = sum_lo[1];
 `else
-		wire round_up = sum[1] && (sum[0] || sum[2]);
+		wire round_up = sum_lo[1] && (sum_lo[0] || sum_lo[2]);
 `endif
-		assign q[10 * j +: 10] = round_up ? sum_p4[11:2] : sum[11:2];
+		wire [1:0] q_lo = round_up ? p4_32[1:0] : sum_lo[3:2];
+		wire       c4_sel = round_up ? c4_p4_exact : c4_s;
+		assign q[10 * j +: 10] = {c4_sel ? hi1 : hi0, q_lo};
 
-		wire unused_ok = &{1'b0, sum_co_unused, sum_p4[1:0]};
+		wire unused_ok = &{1'b0, slo_c1_dummy};
 	end
 	endgenerate
 
@@ -208,19 +256,43 @@ module atg_blt_avg_s2 (
 		q1_3[7:0], q1_2[7:0], q1_1[7:0], q1_0[7:0],
 		q0_3[7:0], q0_2[7:0], q0_1[7:0], q0_0[7:0]
 	};
-	wire [127:0] f0_out = (psl == 3'd0) ? f0_p0 : (psl == 3'd1 ? f0_p1 : f0_p2);
 
 	reg [127:0] avg_core;
 	always @(*) begin
-		case (fmt)
-		3'd0: avg_core = f0_out;
-		3'd1: avg_core = f1_out;
-		3'd6: avg_core = f6_out;
-		3'd7: avg_core = f7_out;
+		case ({fmt, psl[1:0]})
+		5'b000_00: avg_core = f0_p0;
+		5'b000_01: avg_core = f0_p1;
+		5'b000_10,
+		5'b000_11: avg_core = f0_p2;
+		5'b001_00, 5'b001_01, 5'b001_10, 5'b001_11: avg_core = f1_out;
+		5'b110_00, 5'b110_01, 5'b110_10, 5'b110_11: avg_core = f6_out;
+		5'b111_00, 5'b111_01, 5'b111_10, 5'b111_11: avg_core = f7_out;
 		default: avg_core = 128'd0;
 		endcase
 	end
+	wire unused_psl2 = psl[2];
 	assign avg_only = avg_core;
+endmodule
+
+module atg_blt_avg_s2 (
+	input wire [2:0] fmt,
+	input wire [2:0] psl,
+	input wire [191:0] csa_s_in,
+	input wire [191:0] csa_c_in,
+	output wire [127:0] avg_only
+);
+	wire [63:0] sum_lo_w;
+	wire [15:0] c4_s_w;
+	wire [127:0] hi0_w, hi1_w;
+	atg_blt_avg_s2a u_s2a (
+		.csa_s_in(csa_s_in), .csa_c_in(csa_c_in),
+		.sum_lo_out(sum_lo_w), .c4_s_out(c4_s_w), .hi0_out(hi0_w), .hi1_out(hi1_w)
+	);
+	atg_blt_avg_s2b u_s2b (
+		.fmt(fmt), .psl(psl),
+		.sum_lo_in(sum_lo_w), .c4_s_in(c4_s_w), .hi0_in(hi0_w), .hi1_in(hi1_w),
+		.avg_only(avg_only)
+	);
 endmodule
 
 module atg_blt_avg (

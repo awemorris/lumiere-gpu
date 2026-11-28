@@ -69,39 +69,48 @@ module atg_dc_tmds_tb;
 		end
 	endfunction
 
-	/* The inputs of two cycles ago. */
-	reg [23:0] rgb1 = 0, rgb2 = 0;
-	reg de1 = 0, de2 = 0;
-	reg [1:0] sy1 = 0, sy2 = 0;
+	/* The inputs of five cycles ago. */
+	reg [23:0] rgb1 = 0, rgb2 = 0, rgb3 = 0, rgb4 = 0, rgb5 = 0;
+	reg de1 = 0, de2 = 0, de3 = 0, de4 = 0, de5 = 0;
+	reg [1:0] sy1 = 0, sy2 = 0, sy3 = 0, sy4 = 0, sy5 = 0;
 	reg checking = 0;
 	reg [9:0] sym;
 
 	always @(posedge clk) begin
 		rgb1 <= rgb;
 		rgb2 <= rgb1;
+		rgb3 <= rgb2;
+		rgb4 <= rgb3;
+		rgb5 <= rgb4;
 		de1 <= de;
 		de2 <= de1;
+		de3 <= de2;
+		de4 <= de3;
+		de5 <= de4;
 		sy1 <= {vs, hs};
 		sy2 <= sy1;
+		sy3 <= sy2;
+		sy4 <= sy3;
+		sy5 <= sy4;
 	end
 
 	always @(negedge clk) begin
 		if (checking) begin
 			for (c = 0; c < 3; c = c + 1) begin
 				sym = tmds[10*c +: 10];
-				if (de2) begin
-					if (decode(sym) !== rgb2[8*c +: 8]) begin
+				if (de5) begin
+					if (decode(sym) !== rgb5[8*c +: 8]) begin
 						e_enc = e_enc + 1;
 						if (e_enc < 5)
 							$display("FAIL atg_dc_tmds.encode: ch %0d %b -> %h, expected %h",
-								c, sym, decode(sym), rgb2[8*c +: 8]);
+								c, sym, decode(sym), rgb5[8*c +: 8]);
 					end
 					disp[c] = disp[c] + 2 * ones(sym) - 10;
 					if (disp[c] > maxd) maxd = disp[c];
 					if (-disp[c] > maxd) maxd = -disp[c];
 				end else begin
 					disp[c] = 0;
-					if (sym !== ctrl_sym(c == 0 ? sy2 : 2'b00)) begin
+					if (sym !== ctrl_sym(c == 0 ? sy5 : 2'b00)) begin
 						e_ctrl = e_ctrl + 1;
 						if (e_ctrl < 5)
 							$display("FAIL atg_dc_tmds.ctrl: ch %0d %b", c, sym);
@@ -120,7 +129,7 @@ module atg_dc_tmds_tb;
 		maxd = 0;
 		repeat (3) @(negedge clk);
 		rst_n = 1;
-		repeat (3) @(negedge clk);
+		repeat (6) @(negedge clk);
 		checking = 1;
 		for (i = 0; i < 20000; i = i + 1) begin
 			@(negedge clk);

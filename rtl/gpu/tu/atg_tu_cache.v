@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -127,6 +127,10 @@ module atg_tu_cache #(
 	(* keep = "true", extract_reset = "no" *) reg [TW-1:0] s2_tag_w_q [0:WAYS-1];
 	(* keep = "true", extract_reset = "no" *) reg [TW-1:0] s3_tag_w_q [0:WAYS-1];
 	(* keep = "true" *) reg [WAYS-1:0] s0_vld_q, s1_vld_q, s2_vld_q, s3_vld_q;
+	(* extract_reset = "no" *) reg [WAYS-1:0] s0_vld4_q [0:N_P4-1];
+	(* extract_reset = "no" *) reg [WAYS-1:0] s1_vld4_q [0:N_P4-1];
+	(* extract_reset = "no" *) reg [WAYS-1:0] s2_vld4_q [0:N_P4-1];
+	(* extract_reset = "no" *) reg [WAYS-1:0] s3_vld4_q [0:N_P4-1];
 	(* keep = "true" *) reg [WAYS-1:0] s0_hit_w_q, s1_hit_w_q, s2_hit_w_q, s3_hit_w_q;
 	(* keep = "true" *) reg            s0_need_q, s1_need_q, s2_need_q, s3_need_q;
 
@@ -154,13 +158,19 @@ module atg_tu_cache #(
 	(* extract_reset = "no", ram_style = "registers" *) reg [WAYS-1:0] vld [0:NSETS-1];
 	(* extract_reset = "no", ram_style = "registers" *) reg [2:0] plru [0:NSETS-1];
 
-	(* keep = "true", max_fanout = 12 *) reg [3:0] st;
+	(* keep = "true", max_fanout = 12 *) reg [11:0] st;
+	(* keep = "true", max_fanout = 12 *) reg tc_valid_r;
 	(* keep = "true" *) reg req_valid_r;
 	(* keep = "true", max_fanout = 12 *) reg [1:0] lane;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [1:0] lane_hi;
 	reg drop;
 	(* keep = "true", extract_reset = "no" *) reg [ADDR_W-LINE_SHIFT-1:0] mline;
 	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [IW-1:0] mline_set_v0, mline_set_v1, mline_set_v2, mline_set_v3;
 	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [IW-1:0] mline_set_p0, mline_set_p1, mline_set_p2;
+	localparam integer N_P4 = (NSETS > 32) ? (NSETS / 32) : 1;
+	localparam integer P4_BITS = (IW > 5) ? (IW - 5) : 1;
+	(* extract_reset = "no" *) reg [N_P4-1:0] mline_vld4_q0, mline_vld4_q1, mline_vld4_q2, mline_vld4_q3;
+	(* extract_reset = "no" *) reg [N_P4-1:0] mline_plru4_q0, mline_plru4_q1, mline_plru4_q2;
 	(* keep = "true", extract_reset = "no" *) reg [1:0] miss_slot;
 	reg [3:0] slot_err;
 	(* keep = "true", extract_reset = "no" *) reg [511:0] ta_addr_q;
@@ -197,11 +207,10 @@ module atg_tu_cache #(
 	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [WW-1:0] f_pw_b1_q [0:3];
 	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [WW-1:0] f_pw_b2_q [0:3];
 	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [WW-1:0] f_pw_b3_q [0:3];
-	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [1:0]    f_pby_q   [0:3];
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [1:0]    f_b0_sel_lo_q [0:3], f_b0_sel_hi_q [0:3];
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg          f_b1_sel_q [0:3], f_b1_zero_q [0:3], f_b23_zero_q [0:3];
 	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [1:0]    f_pb_q    [0:3];
-	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [1:0]    f_use_q   [0:3];
-	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [1:0]    f_b8_q    [0:3];
-	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [1:0]    f_b16_q   [0:3];
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [7:0]    f_use_q   [0:3];
 	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [31:0]   f_braw_q  [0:3];
 
 	/* Quad controls */
@@ -318,27 +327,31 @@ module atg_tu_cache #(
 	assign slot_line_arr[2] = q2_reg;
 	assign slot_line_arr[3] = q3_reg;
 
-	/* Per-slot fanout-isolated texel extraction (<= 16 loads per FF) */
-	(* keep = "true" *) wire [31:0] tex_masked [0:3];
+	/* Per-slot fanout-isolated texel extraction (<= 4 LUTs, <= 16 loads per FF) */
+	wire [31:0] tex_masked [0:3];
 	genvar gt;
 	generate
 	for (gt = 0; gt < 4; gt = gt + 1) begin : g_tex_slot
-		wire [7:0]  wd_b0 = slot_line_arr[gt][{f_pw_b0_q[gt], 5'd0}  +: 8];
-		wire [7:0]  wd_b1 = slot_line_arr[gt][{f_pw_b1_q[gt], 5'd8}  +: 8];
-		wire [7:0]  wd_b2 = slot_line_arr[gt][{f_pw_b2_q[gt], 5'd16} +: 8];
-		wire [7:0]  wd_b3 = slot_line_arr[gt][{f_pw_b3_q[gt], 5'd24} +: 8];
-		wire [15:0] wd_lo = {wd_b1, wd_b0};
-		wire [15:0] wd_hi = {wd_b3, wd_b2};
-		wire [15:0] hw_s  = f_pby_q[gt][1] ? wd_hi : wd_lo;
-		wire [7:0]  by_s  = (f_pby_q[gt] == 2'd0) ? wd_lo[7:0]  :
-		                    (f_pby_q[gt] == 2'd1) ? wd_lo[15:8] :
-		                    (f_pby_q[gt] == 2'd2) ? wd_hi[7:0]  : wd_hi[15:8];
-		(* keep = "true" *) wire [15:0] raw_lo_s = f_pb_q[gt][0] ? f_braw_q[gt][15:0]  : f_b8_q[gt][0] ? {8'd0, by_s} : f_b16_q[gt][0] ? hw_s : wd_lo;
-		(* keep = "true" *) wire [15:0] raw_hi_s = f_pb_q[gt][1] ? f_braw_q[gt][31:16] : (f_b8_q[gt][1] || f_b16_q[gt][1]) ? 16'd0 : wd_hi;
-		assign tex_masked[gt] = {
-			f_use_q[gt][1] ? raw_hi_s : 16'd0,
-			f_use_q[gt][0] ? raw_lo_s : 16'd0
-		};
+		wire [7:0] wd_b0 = slot_line_arr[gt][{f_pw_b0_q[gt], 5'd0}  +: 8];
+		wire [7:0] wd_b1 = slot_line_arr[gt][{f_pw_b1_q[gt], 5'd8}  +: 8];
+		wire [7:0] wd_b2 = slot_line_arr[gt][{f_pw_b2_q[gt], 5'd16} +: 8];
+		wire [7:0] wd_b3 = slot_line_arr[gt][{f_pw_b3_q[gt], 5'd24} +: 8];
+		wire [3:0] tx_b0_lo = (f_b0_sel_lo_q[gt] == 2'd0) ? wd_b0[3:0] :
+		                      (f_b0_sel_lo_q[gt] == 2'd1) ? wd_b1[3:0] :
+		                      (f_b0_sel_lo_q[gt] == 2'd2) ? wd_b2[3:0] : wd_b3[3:0];
+		wire [3:0] tx_b0_hi = (f_b0_sel_hi_q[gt] == 2'd0) ? wd_b0[7:4] :
+		                      (f_b0_sel_hi_q[gt] == 2'd1) ? wd_b1[7:4] :
+		                      (f_b0_sel_hi_q[gt] == 2'd2) ? wd_b2[7:4] : wd_b3[7:4];
+		wire [7:0] tx_b0 = {tx_b0_hi, tx_b0_lo};
+		wire [7:0] tx_b1 = f_b1_sel_q[gt] ? wd_b3 : wd_b1;
+		assign tex_masked[gt][3:0]   = !f_use_q[gt][0] ? 4'd0 : f_pb_q[gt][0] ? f_braw_q[gt][3:0]   : tx_b0[3:0];
+		assign tex_masked[gt][7:4]   = !f_use_q[gt][1] ? 4'd0 : f_pb_q[gt][0] ? f_braw_q[gt][7:4]   : tx_b0[7:4];
+		assign tex_masked[gt][11:8]  = f_pb_q[gt][0] ? (f_use_q[gt][2] ? f_braw_q[gt][11:8]  : 4'd0) : f_b1_zero_q[gt]  ? 4'd0 : tx_b1[3:0];
+		assign tex_masked[gt][15:12] = f_pb_q[gt][0] ? (f_use_q[gt][3] ? f_braw_q[gt][15:12] : 4'd0) : f_b1_zero_q[gt]  ? 4'd0 : tx_b1[7:4];
+		assign tex_masked[gt][19:16] = f_pb_q[gt][1] ? (f_use_q[gt][4] ? f_braw_q[gt][19:16] : 4'd0) : f_b23_zero_q[gt] ? 4'd0 : wd_b2[3:0];
+		assign tex_masked[gt][23:20] = f_pb_q[gt][1] ? (f_use_q[gt][5] ? f_braw_q[gt][23:20] : 4'd0) : f_b23_zero_q[gt] ? 4'd0 : wd_b2[7:4];
+		assign tex_masked[gt][27:24] = f_pb_q[gt][1] ? (f_use_q[gt][6] ? f_braw_q[gt][27:24] : 4'd0) : f_b23_zero_q[gt] ? 4'd0 : wd_b3[3:0];
+		assign tex_masked[gt][31:28] = f_pb_q[gt][1] ? (f_use_q[gt][7] ? f_braw_q[gt][31:28] : 4'd0) : f_b23_zero_q[gt] ? 4'd0 : wd_b3[7:4];
 	end
 	endgenerate
 
@@ -382,17 +395,13 @@ module atg_tu_cache #(
 		end
 	endfunction
 
-	wire [1:0] nxt_lane;
-	wire nxt_lane_co_unused;
-	am_add #(.W(2)) u_inc_lane (.a(lane), .b(2'd1), .ci(1'b0), .s(nxt_lane), .co(nxt_lane_co_unused));
+	wire [1:0] nxt_lane = {lane[1] ^ lane[0], ~lane[0]};
+	(* keep = "true", equivalent_register_removal = "no" *) reg [6:0] no_more_lanes_q;
+	wire no_more_next = (lane == 2'd0) ? (tc_mask[3:2] == 2'b00) :
+	                    (lane == 2'd1) ? !tc_mask[3] : 1'b1;
 
-	wire no_more_lanes = (lane == 2'd0 && tc_mask[3:1] == 3'b000) ||
-	                     (lane == 2'd1 && tc_mask[3:2] == 2'b00)  ||
-	                     (lane == 2'd2 && !tc_mask[3])            ||
-	                     (lane == 2'd3);
-
-	assign ta_ready = st == IDLE;
-	assign tc_valid = st == OUT;
+	assign ta_ready = st[IDLE];
+	assign tc_valid = tc_valid_r;
 	assign req_valid = req_valid_r;
 	assign req_write = 1'b0;
 	assign req_line = mline;
@@ -401,8 +410,39 @@ module atg_tu_cache #(
 	assign req_tag = 8'd0;
 
 	wire [IW-1:0] mline_set = mline[IW-1:0];
-	wire [3:0] mline_vld_cur  = {vld[mline_set_v3][3], vld[mline_set_v2][2], vld[mline_set_v1][1], vld[mline_set_v0][0]};
-	wire [2:0] mline_plru_cur = {plru[mline_set_p2][2], plru[mline_set_p1][1], plru[mline_set_p0][0]};
+	wire [3:0] mline_vld_cur;
+	wire [2:0] mline_plru_cur;
+	generate
+		if (IW > 5) begin : g_p4_hi
+			wire [P4_BITS-1:0] mline_hi_v0 = mline_set_v0[IW-1:5];
+			wire [P4_BITS-1:0] mline_hi_v1 = mline_set_v1[IW-1:5];
+			wire [P4_BITS-1:0] mline_hi_v2 = mline_set_v2[IW-1:5];
+			wire [P4_BITS-1:0] mline_hi_v3 = mline_set_v3[IW-1:5];
+			wire [P4_BITS-1:0] mline_hi_p0 = mline_set_p0[IW-1:5];
+			wire [P4_BITS-1:0] mline_hi_p1 = mline_set_p1[IW-1:5];
+			wire [P4_BITS-1:0] mline_hi_p2 = mline_set_p2[IW-1:5];
+			assign mline_vld_cur  = {mline_vld4_q3[mline_hi_v3], mline_vld4_q2[mline_hi_v2],
+			                         mline_vld4_q1[mline_hi_v1], mline_vld4_q0[mline_hi_v0]};
+			assign mline_plru_cur = {mline_plru4_q2[mline_hi_p2], mline_plru4_q1[mline_hi_p1], mline_plru4_q0[mline_hi_p0]};
+		end else begin : g_p4_1
+			assign mline_vld_cur  = {mline_vld4_q3[0], mline_vld4_q2[0], mline_vld4_q1[0], mline_vld4_q0[0]};
+			assign mline_plru_cur = {mline_plru4_q2[0], mline_plru4_q1[0], mline_plru4_q0[0]};
+		end
+	endgenerate
+	wire [WAYS-1:0] s0_vld4_cur, s1_vld4_cur, s2_vld4_cur, s3_vld4_cur;
+	generate
+		if (IW > 5) begin : g_vld4_hi
+			assign s0_vld4_cur = s0_vld4_q[s0_set[IW-1:5]];
+			assign s1_vld4_cur = s1_vld4_q[s1_set[IW-1:5]];
+			assign s2_vld4_cur = s2_vld4_q[s2_set[IW-1:5]];
+			assign s3_vld4_cur = s3_vld4_q[s3_set[IW-1:5]];
+		end else begin : g_vld4_1
+			assign s0_vld4_cur = s0_vld4_q[0];
+			assign s1_vld4_cur = s1_vld4_q[0];
+			assign s2_vld4_cur = s2_vld4_q[0];
+			assign s3_vld4_cur = s3_vld4_q[0];
+		end
+	endgenerate
 	wire [1:0] fill_way = get_victim(mline_vld_cur, mline_plru_cur);
 	wire [RAW_AW-1:0] b_waddr = {mline_set, fill_way};
 
@@ -470,70 +510,179 @@ module atg_tu_cache #(
 	endgenerate
 
 	/* Fanout-decoupled slice enables for wide registers */
-	(* keep = "true" *) wire [11:0] ta_vld_g   = {12{ta_valid}};
-	(* keep = "true" *) wire [7:0]  tex_clr_g  = {8{(st == IDLE) && ta_vld_g[8]}};
+	(* keep = "true", equivalent_register_removal = "no" *) reg [31:0] st_is_idle_g;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [19:0] cur_idle_ff;
+	wire ta_vld_b0, ta_vld_b1, ta_vld_b2, ta_vld_b3, ta_vld_b4, ta_vld_b5;
+	wire tc_rdy_b0, tc_rdy_b1, tc_rdy_b2, tc_rdy_b3, tc_rdy_b4;
+`ifdef SYNTH_KINTEX7
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvb0 (.I0(ta_valid), .O(ta_vld_b0));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvb1 (.I0(ta_valid), .O(ta_vld_b1));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvb2 (.I0(ta_valid), .O(ta_vld_b2));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvb3 (.I0(ta_valid), .O(ta_vld_b3));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvb4 (.I0(ta_valid), .O(ta_vld_b4));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvb5 (.I0(ta_valid), .O(ta_vld_b5));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_trb0 (.I0(tc_ready), .O(tc_rdy_b0));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_trb1 (.I0(tc_ready), .O(tc_rdy_b1));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_trb2 (.I0(tc_ready), .O(tc_rdy_b2));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_trb3 (.I0(tc_ready), .O(tc_rdy_b3));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_trb4 (.I0(tc_ready), .O(tc_rdy_b4));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign ta_vld_b0 = ta_valid;
+	assign ta_vld_b1 = ta_valid;
+	assign ta_vld_b2 = ta_valid;
+	assign ta_vld_b3 = ta_valid;
+	assign ta_vld_b4 = ta_valid;
+	assign ta_vld_b5 = ta_valid;
+	assign tc_rdy_b0 = tc_ready;
+	assign tc_rdy_b1 = tc_ready;
+	assign tc_rdy_b2 = tc_ready;
+	assign tc_rdy_b3 = tc_ready;
+	assign tc_rdy_b4 = tc_ready;
+`else
+	assign ta_vld_b0 = ta_valid;
+	assign ta_vld_b1 = ta_valid;
+	assign ta_vld_b2 = ta_valid;
+	assign ta_vld_b3 = ta_valid;
+	assign ta_vld_b4 = ta_valid;
+	assign ta_vld_b5 = ta_valid;
+	assign tc_rdy_b0 = tc_ready;
+	assign tc_rdy_b1 = tc_ready;
+	assign tc_rdy_b2 = tc_ready;
+	assign tc_rdy_b3 = tc_ready;
+	assign tc_rdy_b4 = tc_ready;
+`endif
+	(* keep = "true" *) wire [1:0] cur_idle_clr_ce = {st_is_idle_g[10] && ta_vld_b3, st_is_idle_g[11] && ta_vld_b3};
+	(* keep = "true" *) wire [31:0] ta_vld_g   = {{8{ta_vld_b3}}, {8{ta_vld_b2}}, {8{ta_vld_b1}}, {8{ta_vld_b0}}};
+	(* keep = "true" *) wire [7:0]  tex_clr_g  = {
+		st_is_idle_g[7] && ta_vld_g[7], st_is_idle_g[6] && ta_vld_g[6],
+		st_is_idle_g[5] && ta_vld_g[5], st_is_idle_g[4] && ta_vld_g[4],
+		st_is_idle_g[3] && ta_vld_g[3], st_is_idle_g[2] && ta_vld_g[2],
+		st_is_idle_g[1] && ta_vld_g[1], st_is_idle_g[0] && ta_vld_g[0]
+	};
 	(* keep = "true" *) wire [7:0]  tex_we_g;
 	(* keep = "true" *) wire [63:0] idle_ce_a;
-	(* keep = "true" *) wire [7:0]  idle_ce_wts;
-	(* keep = "true" *) wire [7:0]  idle_ce_val;
-	(* keep = "true" *) wire [9:0]  idle_meta_ce = {{5{(st == IDLE) && ta_vld_g[10]}}, {5{(st == IDLE) && ta_vld_g[9]}}};
+	(* dont_touch = "true" *) wire [7:0]  idle_ce_wts;
+	(* dont_touch = "true" *) wire [15:0] idle_ce_val;
+	(* dont_touch = "true" *) wire [15:0] idle_meta_ce;
 	(* keep = "true" *) wire [63:0] tex_clr_s;
 	(* keep = "true" *) wire [63:0] tex_we_s;
-	(* keep = "true" *) wire [1:0]  cur_idle_g = {2{(st == IDLE) && ta_vld_g[11]}};
-	(* keep = "true" *) wire [1:0]  cur_step_g = {2{!no_more_lanes && ((st == LANE_EXTRACT) || ((st == LANE_TAG_RD) && !cur_mask))}};
-	(* keep = "true" *) wire [15:0] cur_idle_s;
-	(* keep = "true" *) wire [15:0] cur_step_s;
-	(* keep = "true" *) wire [1:0]  nxt_lane_s [0:15];
+	wire [3:0]  cur_step_g;
+	(* keep = "true" *) wire [19:0] cur_ce_s;
+	(* keep = "true" *) wire [19:0] cur_idle_s;
+	(* dont_touch = "true" *) wire [1:0]  nxt_lane_s [0:23];
 
 	(* keep = "true", equivalent_register_removal = "no" *) reg [2:0]  lchk_en;
-	(* dont_touch = "true" *) wire [1:0]  lfetch_en = {2{st == LANE_WAIT}};
+	(* dont_touch = "true" *) wire [3:0]  lfetch_en = {4{st[LANE_WAIT]}};
 	(* keep = "true", equivalent_register_removal = "no" *) reg [28:0] lchk_ce;
 	(* keep = "true", equivalent_register_removal = "no" *) reg [3:0]  lwait_ce;
 	(* keep = "true", equivalent_register_removal = "no" *) reg [2*REPS-1:0] lfetch_ce_rd;
 	(* keep = "true", equivalent_register_removal = "no" *) reg [REPS-1:0]   lfetch_ce_grp;
-	(* keep = "true", equivalent_register_removal = "no" *) reg [3:0]        lfetch_ce_f;
-	(* dont_touch = "true" *) wire [5:0]  mreq_ce     = {6{st == MREQ}};
-	(* dont_touch = "true" *) wire        mwait_ok_st = (st == MWAIT) && rsp_valid && !rsp_error;
-	(* dont_touch = "true" *) wire        mwait_ok_we0 = (st == MWAIT) && rsp_valid && !rsp_error;
-	(* dont_touch = "true" *) wire        mwait_ok_we1 = (st == MWAIT) && rsp_valid && !rsp_error;
-	(* dont_touch = "true" *) wire        mwait_ok_we2 = (st == MWAIT) && rsp_valid && !rsp_error;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [11:0]       lfetch_ce_f;
+	(* dont_touch = "true" *) wire [5:0]  mreq_ce     = {6{st[MREQ]}};
+	(* dont_touch = "true" *) wire        mwait_ok_st = st[MWAIT] && rsp_valid && !rsp_error;
+	(* dont_touch = "true" *) wire        mwait_ok_we0 = st[MWAIT] && rsp_valid && !rsp_error;
+	(* dont_touch = "true" *) wire        mwait_ok_we1 = st[MWAIT] && rsp_valid && !rsp_error;
+	(* dont_touch = "true" *) wire        mwait_ok_we2 = st[MWAIT] && rsp_valid && !rsp_error;
 	(* dont_touch = "true" *) wire [REPS-1:0] mwait_ok_w;
 	(* dont_touch = "true" *) wire [REPS-1:0] mwait_ok_g;
-	(* dont_touch = "true" *) wire        mwait_err_a = (st == MWAIT) && rsp_valid && rsp_error;
-	(* dont_touch = "true" *) wire        mwait_err_b = (st == MWAIT) && rsp_valid && rsp_error;
+	(* dont_touch = "true" *) wire        mwait_err_a = st[MWAIT] && rsp_valid && rsp_error;
+	(* dont_touch = "true" *) wire        mwait_err_b = st[MWAIT] && rsp_valid && rsp_error;
 
-	wire [NGRPS+1:0] inv_b;
+	wire [NGRPS+6:0] inv_b;
+	(* dont_touch = "true" *) wire [3:0] ce_lw_vld4 = {4{st[LANE_TAG_RD] && cur_mask}};
 	genvar gi;
 	generate
 	for (gi = 0; gi < REPS; gi = gi + 1) begin : g_mwait_ok
-		assign mwait_ok_w[gi] = (st == MWAIT) && rsp_valid && !rsp_error;
-		assign mwait_ok_g[gi] = (st == MWAIT) && rsp_valid && !rsp_error;
+		assign mwait_ok_w[gi] = st[MWAIT] && rsp_valid && !rsp_error;
+		assign mwait_ok_g[gi] = st[MWAIT] && rsp_valid && !rsp_error;
 	end
 	for (gi = 0; gi < 8; gi = gi + 1) begin : g_slice_8
-		assign idle_ce_wts[gi] = (st == IDLE) && ta_vld_g[4];
-		assign idle_ce_val[gi] = (st == IDLE) && ta_vld_g[5];
-		assign tex_we_g[gi]    = (st == LANE_EXTRACT) && (rd_lane == gi[2:1]);
+		assign idle_ce_wts[gi] = st_is_idle_g[8] && ta_vld_g[8];
+		assign tex_we_g[gi]    = st[LANE_EXTRACT] && (rd_lane == gi[2:1]);
+	end
+	for (gi = 0; gi < 16; gi = gi + 1) begin : g_slice_16v
+		assign idle_ce_val[gi] = st_is_idle_g[12 + (gi >> 2)] && ta_vld_g[12 + (gi >> 2)];
+	end
+	for (gi = 0; gi < 16; gi = gi + 1) begin : g_idle_meta
+		assign idle_meta_ce[gi] = st_is_idle_g[16 + gi] && ta_vld_g[16 + gi];
 	end
 	for (gi = 0; gi < 64; gi = gi + 1) begin : g_slice_64
-		assign idle_ce_a[gi] = (st == IDLE) && ta_vld_g[gi / 16];
+		assign idle_ce_a[gi] = st_is_idle_g[gi / 16] && ta_vld_g[gi / 16];
 		assign tex_clr_s[gi] = tex_clr_g[gi / 8];
 		assign tex_we_s[gi]  = tex_we_g[gi / 8];
 	end
-	for (gi = 0; gi < 16; gi = gi + 1) begin : g_slice_16
-		assign cur_idle_s[gi] = cur_idle_g[gi / 8];
-		assign cur_step_s[gi] = cur_step_g[gi / 8];
-		assign nxt_lane_s[gi] = nxt_lane;
+	for (gi = 0; gi < 4; gi = gi + 1) begin : g_step_4
+`ifdef SYNTH_KINTEX7
+		(* keep = "true", dont_touch = "true" *)
+		LUT4 #(.INIT(16'h4454)) u_cur_step (
+			.I0(no_more_lanes_q[3 + gi]),
+			.I1(st[LANE_EXTRACT]),
+			.I2(st[LANE_TAG_RD]),
+			.I3(cur_mask),
+			.O(cur_step_g[gi])
+		);
+`elsif SYNTH_KINTEX_ULTRASCALE
+		(* keep = "true", dont_touch = "true" *)
+		LUT4 #(.INIT(16'h4454)) u_cur_step (
+			.I0(no_more_lanes_q[3 + gi]),
+			.I1(st[LANE_EXTRACT]),
+			.I2(st[LANE_TAG_RD]),
+			.I3(cur_mask),
+			.O(cur_step_g[gi])
+		);
+`else
+		assign cur_step_g[gi] = !no_more_lanes_q[3 + gi] && (st[LANE_EXTRACT] || (st[LANE_TAG_RD] && !cur_mask));
+`endif
 	end
-	for (gi = 0; gi < NGRPS + 2; gi = gi + 1) begin : g_inv_buf
+	for (gi = 0; gi < 20; gi = gi + 1) begin : g_slice_20
+`ifdef SYNTH_KINTEX7
+		(* keep = "true", dont_touch = "true" *)
+		LUT2 #(.INIT(4'b1000)) u_cur_idle (
+			.I0(cur_idle_ff[gi]),
+			.I1((gi < 10) ? ta_vld_b4 : ta_vld_b5),
+			.O(cur_idle_s[gi])
+		);
+		(* keep = "true", dont_touch = "true" *)
+		LUT2 #(.INIT(4'b1110)) u_cur_ce (
+			.I0(cur_idle_s[gi]),
+			.I1(cur_step_g[gi / 5]),
+			.O(cur_ce_s[gi])
+		);
+`elsif SYNTH_KINTEX_ULTRASCALE
+		(* keep = "true", dont_touch = "true" *)
+		LUT2 #(.INIT(4'b1000)) u_cur_idle (
+			.I0(cur_idle_ff[gi]),
+			.I1((gi < 10) ? ta_vld_b4 : ta_vld_b5),
+			.O(cur_idle_s[gi])
+		);
+		(* keep = "true", dont_touch = "true" *)
+		LUT2 #(.INIT(4'b1110)) u_cur_ce (
+			.I0(cur_idle_s[gi]),
+			.I1(cur_step_g[gi / 5]),
+			.O(cur_ce_s[gi])
+		);
+`else
+		assign cur_idle_s[gi] = cur_idle_ff[gi] && ((gi < 10) ? ta_vld_b4 : ta_vld_b5);
+		assign cur_ce_s[gi]   = cur_idle_s[gi] || cur_step_g[gi / 5];
+`endif
+		assign nxt_lane_s[gi] = {lane[1] ^ lane[0], ~lane[0]};
+	end
+	for (gi = 0; gi < 4; gi = gi + 1) begin : g_nl_hi
+		assign nxt_lane_s[20 + gi] = {lane_hi[1] ^ lane_hi[0], ~lane_hi[0]};
+	end
+	for (gi = 0; gi < NGRPS + 7; gi = gi + 1) begin : g_inv_buf
 `ifdef SYNTH_KINTEX7
 		(* keep = "true", dont_touch = "true" *)
 		LUT1 #(.INIT(2'b10)) u_ibuf (.I0(inv), .O(inv_b[gi]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign inv_b[gi] = inv;
 `else
 		assign inv_b[gi] = inv;
 `endif
 	end
 	endgenerate
 
+	(* dont_touch = "true" *) wire [1:0] ta_ctl2_b = {2{ta_ctl[2]}};
 	integer j, g_idx, k_idx, w_idx;
 	always @(posedge clk) begin
 		/* Unconditional pipeline registers for BRAM write data and BRAM read data */
@@ -558,8 +707,10 @@ module atg_tu_cache #(
 		for (j = 0; j < 8; j = j + 1) begin
 			if (idle_ce_wts[j])
 				tc_wts[j*16 +: 16]   <= ta_wts[j*16 +: 16];
-			if (idle_ce_val[j])
-				tc_value[j*16 +: 16] <= ta_value[j*16 +: 16];
+			if (idle_ce_val[j*2 + 0])
+				tc_value[j*16 + 0 +: 8] <= ta_value[j*16 + 0 +: 8];
+			if (idle_ce_val[j*2 + 1])
+				tc_value[j*16 + 8 +: 8] <= ta_value[j*16 + 8 +: 8];
 		end
 		for (j = 0; j < 64; j = j + 1) begin
 			if (tex_clr_s[j])
@@ -578,10 +729,13 @@ module atg_tu_cache #(
 				tc_lo[{j[3:0], 1'b0} +: 2] <= ta_addr[{j[3:0], 5'b00000} +: 2];
 		end
 		if (idle_meta_ce[3]) tc_tag <= ta_tag;
-		if (idle_meta_ce[4]) tc_ctl[15:0]  <= ta_ctl[15:0];
-		if (idle_meta_ce[5]) tc_ctl[31:16] <= ta_ctl[31:16];
-		if (idle_meta_ce[6]) tc_ctl[47:32] <= ta_ctl[47:32];
-		if (idle_meta_ce[7]) begin
+		if (idle_meta_ce[4]) tc_ctl[7:0]   <= {ta_ctl[7:3], ta_ctl2_b[1], ta_ctl[1:0]};
+		if (idle_meta_ce[5]) tc_ctl[15:8]  <= ta_ctl[15:8];
+		if (idle_meta_ce[6]) tc_ctl[23:16] <= ta_ctl[23:16];
+		if (idle_meta_ce[7]) tc_ctl[31:24] <= ta_ctl[31:24];
+		if (idle_meta_ce[10]) tc_ctl[39:32] <= ta_ctl[39:32];
+		if (idle_meta_ce[11]) tc_ctl[47:40] <= ta_ctl[47:40];
+		if (idle_meta_ce[12]) begin
 			tc_ctl[49:48] <= ta_ctl[49:48];
 			tc_mask       <= ta_mask;
 			tc_last       <= ta_last;
@@ -703,18 +857,50 @@ module atg_tu_cache #(
 			rd_set3_cmp <= s3_set;
 		end
 
-		for (j = 0; j < 4; j = j + 1) begin
-			if (cur_idle_s[0 + j]) cur_a0[j*8 +: 8] <= ta_addr[0  + j*8 +: 8];
-			else if (cur_step_s[0 + j]) cur_a0[j*8 +: 8] <= ta_addr_q[{nxt_lane_s[0 + j], 2'b00, j[1:0], 3'b000} +: 8];
+		if (cur_ce_s[0])
+			cur_a0[5:0] <= cur_idle_s[0] ? ta_addr[5:0] : ta_addr_q[{nxt_lane_s[0], 2'b00, 5'd0} +: 6];
+		if (cur_ce_s[1])
+			cur_a0[7:6] <= cur_idle_s[1] ? ta_addr[7:6] : ta_addr_q[{nxt_lane_s[1], 2'b00, 5'd6} +: 2];
+		if (cur_ce_s[5])
+			cur_a1[5:0] <= cur_idle_s[5] ? ta_addr[37:32] : ta_addr_q[{nxt_lane_s[5], 2'b01, 5'd0} +: 6];
+		if (cur_ce_s[6])
+			cur_a1[7:6] <= cur_idle_s[6] ? ta_addr[39:38] : ta_addr_q[{nxt_lane_s[6], 2'b01, 5'd6} +: 2];
+		if (cur_ce_s[10])
+			cur_a2[5:0] <= cur_idle_s[10] ? ta_addr[69:64] : ta_addr_q[{nxt_lane_s[10], 2'b10, 5'd0} +: 6];
+		if (cur_ce_s[11])
+			cur_a2[7:6] <= cur_idle_s[11] ? ta_addr[71:70] : ta_addr_q[{nxt_lane_s[11], 2'b10, 5'd6} +: 2];
+		if (cur_ce_s[15])
+			cur_a3[5:0] <= cur_idle_s[15] ? ta_addr[101:96] : ta_addr_q[{nxt_lane_s[15], 2'b11, 5'd0} +: 6];
+		if (cur_ce_s[16])
+			cur_a3[7:6] <= cur_idle_s[16] ? ta_addr[103:102] : ta_addr_q[{nxt_lane_s[16], 2'b11, 5'd6} +: 2];
+		for (j = 1; j < 3; j = j + 1) begin
+			if (cur_ce_s[1 + j])
+				cur_a0[j*8 +: 8] <= cur_idle_s[1 + j] ? ta_addr[0  + j*8 +: 8] : ta_addr_q[{nxt_lane_s[1 + j], 2'b00, j[1:0], 3'b000} +: 8];
 
-			if (cur_idle_s[4 + j]) cur_a1[j*8 +: 8] <= ta_addr[32 + j*8 +: 8];
-			else if (cur_step_s[4 + j]) cur_a1[j*8 +: 8] <= ta_addr_q[{nxt_lane_s[4 + j], 2'b01, j[1:0], 3'b000} +: 8];
+			if (cur_ce_s[6 + j])
+				cur_a1[j*8 +: 8] <= cur_idle_s[6 + j] ? ta_addr[32 + j*8 +: 8] : ta_addr_q[{nxt_lane_s[6 + j], 2'b01, j[1:0], 3'b000} +: 8];
 
-			if (cur_idle_s[8 + j]) cur_a2[j*8 +: 8] <= ta_addr[64 + j*8 +: 8];
-			else if (cur_step_s[8 + j]) cur_a2[j*8 +: 8] <= ta_addr_q[{nxt_lane_s[8 + j], 2'b10, j[1:0], 3'b000} +: 8];
+			if (cur_ce_s[11 + j])
+				cur_a2[j*8 +: 8] <= cur_idle_s[11 + j] ? ta_addr[64 + j*8 +: 8] : ta_addr_q[{nxt_lane_s[11 + j], 2'b10, j[1:0], 3'b000} +: 8];
 
-			if (cur_idle_s[12 + j]) cur_a3[j*8 +: 8] <= ta_addr[96 + j*8 +: 8];
-			else if (cur_step_s[12 + j]) cur_a3[j*8 +: 8] <= ta_addr_q[{nxt_lane_s[12 + j], 2'b11, j[1:0], 3'b000} +: 8];
+			if (cur_ce_s[16 + j])
+				cur_a3[j*8 +: 8] <= cur_idle_s[16 + j] ? ta_addr[96 + j*8 +: 8] : ta_addr_q[{nxt_lane_s[16 + j], 2'b11, j[1:0], 3'b000} +: 8];
+		end
+		if (cur_ce_s[4]) begin
+			cur_a0[27:24] <= cur_idle_s[4] ? ta_addr[27:24] : ta_addr_q[{nxt_lane_s[4],  2'b00, 5'd24} +: 4];
+			cur_a0[31:28] <= cur_idle_s[4] ? ta_addr[31:28] : ta_addr_q[{nxt_lane_s[20], 2'b00, 5'd28} +: 4];
+		end
+		if (cur_ce_s[9]) begin
+			cur_a1[27:24] <= cur_idle_s[9] ? ta_addr[59:56] : ta_addr_q[{nxt_lane_s[9],  2'b01, 5'd24} +: 4];
+			cur_a1[31:28] <= cur_idle_s[9] ? ta_addr[63:60] : ta_addr_q[{nxt_lane_s[21], 2'b01, 5'd28} +: 4];
+		end
+		if (cur_ce_s[14]) begin
+			cur_a2[27:24] <= cur_idle_s[14] ? ta_addr[91:88] : ta_addr_q[{nxt_lane_s[14], 2'b10, 5'd24} +: 4];
+			cur_a2[31:28] <= cur_idle_s[14] ? ta_addr[95:92] : ta_addr_q[{nxt_lane_s[22], 2'b10, 5'd28} +: 4];
+		end
+		if (cur_ce_s[19]) begin
+			cur_a3[27:24] <= cur_idle_s[19] ? ta_addr[123:120] : ta_addr_q[{nxt_lane_s[19], 2'b11, 5'd24} +: 4];
+			cur_a3[31:28] <= cur_idle_s[19] ? ta_addr[127:124] : ta_addr_q[{nxt_lane_s[23], 2'b11, 5'd28} +: 4];
 		end
 
 		if (lwait_ce[0]) begin
@@ -756,34 +942,70 @@ module atg_tu_cache #(
 		if (lfetch_ce_f[0]) begin
 			f_pw_b0_q[0] <= rd_pw0_lo; f_pw_b1_q[0] <= rd_pw0_lo;
 			f_pw_b2_q[0] <= rd_pw0_hi; f_pw_b3_q[0] <= rd_pw0_hi;
-			f_pby_q[0]   <= rd_pby0;   f_pb_q[0]    <= {2{rd_border0}};
-			f_use_q[0]   <= {2{rd_use0}};
-			f_b8_q[0]    <= {2{tc_ctl[24:23] == 2'd2}};
-			f_b16_q[0]   <= {2{tc_ctl[19] || (tc_ctl[24:23] == 2'd1)}};
 		end
 		if (lfetch_ce_f[1]) begin
-			f_pw_b0_q[1] <= rd_pw1_lo; f_pw_b1_q[1] <= rd_pw1_lo;
-			f_pw_b2_q[1] <= rd_pw1_hi; f_pw_b3_q[1] <= rd_pw1_hi;
-			f_pby_q[1]   <= rd_pby1;   f_pb_q[1]    <= {2{rd_border1}};
-			f_use_q[1]   <= {2{rd_use1}};
-			f_b8_q[1]    <= {2{tc_ctl[24:23] == 2'd2}};
-			f_b16_q[1]   <= {2{tc_ctl[19] || (tc_ctl[24:23] == 2'd1)}};
+			f_pb_q[0]  <= {2{rd_border0}};
+			f_use_q[0] <= {8{rd_use0}};
 		end
 		if (lfetch_ce_f[2]) begin
-			f_pw_b0_q[2] <= rd_pw2_lo; f_pw_b1_q[2] <= rd_pw2_lo;
-			f_pw_b2_q[2] <= rd_pw2_hi; f_pw_b3_q[2] <= rd_pw2_hi;
-			f_pby_q[2]   <= rd_pby2;   f_pb_q[2]    <= {2{rd_border2}};
-			f_use_q[2]   <= {2{rd_use2}};
-			f_b8_q[2]    <= {2{tc_ctl[24:23] == 2'd2}};
-			f_b16_q[2]   <= {2{tc_ctl[19] || (tc_ctl[24:23] == 2'd1)}};
+			f_b0_sel_lo_q[0] <= (tc_ctl[24:23] == 2'd2) ? rd_pby0 :
+			                    ((tc_ctl[19] || (tc_ctl[24:23] == 2'd1)) && rd_pby0[1]) ? 2'd2 : 2'd0;
+			f_b0_sel_hi_q[0] <= (tc_ctl[24:23] == 2'd2) ? rd_pby0 :
+			                    ((tc_ctl[19] || (tc_ctl[24:23] == 2'd1)) && rd_pby0[1]) ? 2'd2 : 2'd0;
+			f_b1_sel_q[0]    <= (tc_ctl[19] || (tc_ctl[24:23] == 2'd1)) && rd_pby0[1];
+			f_b1_zero_q[0]   <= !rd_use0 || (tc_ctl[24:23] == 2'd2);
+			f_b23_zero_q[0]  <= !rd_use0 || (tc_ctl[24:23] == 2'd2) || tc_ctl[19] || (tc_ctl[24:23] == 2'd1);
 		end
 		if (lfetch_ce_f[3]) begin
+			f_pw_b0_q[1] <= rd_pw1_lo; f_pw_b1_q[1] <= rd_pw1_lo;
+			f_pw_b2_q[1] <= rd_pw1_hi; f_pw_b3_q[1] <= rd_pw1_hi;
+		end
+		if (lfetch_ce_f[4]) begin
+			f_pb_q[1]  <= {2{rd_border1}};
+			f_use_q[1] <= {8{rd_use1}};
+		end
+		if (lfetch_ce_f[5]) begin
+			f_b0_sel_lo_q[1] <= (tc_ctl[24:23] == 2'd2) ? rd_pby1 :
+			                    ((tc_ctl[19] || (tc_ctl[24:23] == 2'd1)) && rd_pby1[1]) ? 2'd2 : 2'd0;
+			f_b0_sel_hi_q[1] <= (tc_ctl[24:23] == 2'd2) ? rd_pby1 :
+			                    ((tc_ctl[19] || (tc_ctl[24:23] == 2'd1)) && rd_pby1[1]) ? 2'd2 : 2'd0;
+			f_b1_sel_q[1]    <= (tc_ctl[19] || (tc_ctl[24:23] == 2'd1)) && rd_pby1[1];
+			f_b1_zero_q[1]   <= !rd_use1 || (tc_ctl[24:23] == 2'd2);
+			f_b23_zero_q[1]  <= !rd_use1 || (tc_ctl[24:23] == 2'd2) || tc_ctl[19] || (tc_ctl[24:23] == 2'd1);
+		end
+		if (lfetch_ce_f[6]) begin
+			f_pw_b0_q[2] <= rd_pw2_lo; f_pw_b1_q[2] <= rd_pw2_lo;
+			f_pw_b2_q[2] <= rd_pw2_hi; f_pw_b3_q[2] <= rd_pw2_hi;
+		end
+		if (lfetch_ce_f[7]) begin
+			f_pb_q[2]  <= {2{rd_border2}};
+			f_use_q[2] <= {8{rd_use2}};
+		end
+		if (lfetch_ce_f[8]) begin
+			f_b0_sel_lo_q[2] <= (tc_ctl[24:23] == 2'd2) ? rd_pby2 :
+			                    ((tc_ctl[19] || (tc_ctl[24:23] == 2'd1)) && rd_pby2[1]) ? 2'd2 : 2'd0;
+			f_b0_sel_hi_q[2] <= (tc_ctl[24:23] == 2'd2) ? rd_pby2 :
+			                    ((tc_ctl[19] || (tc_ctl[24:23] == 2'd1)) && rd_pby2[1]) ? 2'd2 : 2'd0;
+			f_b1_sel_q[2]    <= (tc_ctl[19] || (tc_ctl[24:23] == 2'd1)) && rd_pby2[1];
+			f_b1_zero_q[2]   <= !rd_use2 || (tc_ctl[24:23] == 2'd2);
+			f_b23_zero_q[2]  <= !rd_use2 || (tc_ctl[24:23] == 2'd2) || tc_ctl[19] || (tc_ctl[24:23] == 2'd1);
+		end
+		if (lfetch_ce_f[9]) begin
 			f_pw_b0_q[3] <= rd_pw3_lo; f_pw_b1_q[3] <= rd_pw3_lo;
 			f_pw_b2_q[3] <= rd_pw3_hi; f_pw_b3_q[3] <= rd_pw3_hi;
-			f_pby_q[3]   <= rd_pby3;   f_pb_q[3]    <= {2{rd_border3}};
-			f_use_q[3]   <= {2{rd_use3}};
-			f_b8_q[3]    <= {2{tc_ctl[24:23] == 2'd2}};
-			f_b16_q[3]   <= {2{tc_ctl[19] || (tc_ctl[24:23] == 2'd1)}};
+		end
+		if (lfetch_ce_f[10]) begin
+			f_pb_q[3]  <= {2{rd_border3}};
+			f_use_q[3] <= {8{rd_use3}};
+		end
+		if (lfetch_ce_f[11]) begin
+			f_b0_sel_lo_q[3] <= (tc_ctl[24:23] == 2'd2) ? rd_pby3 :
+			                    ((tc_ctl[19] || (tc_ctl[24:23] == 2'd1)) && rd_pby3[1]) ? 2'd2 : 2'd0;
+			f_b0_sel_hi_q[3] <= (tc_ctl[24:23] == 2'd2) ? rd_pby3 :
+			                    ((tc_ctl[19] || (tc_ctl[24:23] == 2'd1)) && rd_pby3[1]) ? 2'd2 : 2'd0;
+			f_b1_sel_q[3]    <= (tc_ctl[19] || (tc_ctl[24:23] == 2'd1)) && rd_pby3[1];
+			f_b1_zero_q[3]   <= !rd_use3 || (tc_ctl[24:23] == 2'd2);
+			f_b23_zero_q[3]  <= !rd_use3 || (tc_ctl[24:23] == 2'd2) || tc_ctl[19] || (tc_ctl[24:23] == 2'd1);
 		end
 		for (j = 1; j < 4; j = j + 1) begin
 			if (lchk_ce[17 + 2*j]) f_braw_q[j][15:0]  <= f_braw_q[0][15:0];
@@ -827,10 +1049,15 @@ module atg_tu_cache #(
 
 	always @(posedge clk or posedge rst_inv) begin
 		if (rst_inv) begin
-			st <= IDLE;
+			st <= 12'd1 << IDLE;
+			tc_valid_r <= 1'b0;
+			st_is_idle_g <= 32'hFFFFFFFF;
+			cur_idle_ff <= 20'hFFFFF;
 			req_valid_r <= 1'b0;
 			lane <= 2'd0;
+			lane_hi <= 2'd0;
 			cur_mask <= 1'b0;
+			no_more_lanes_q <= 7'd0;
 			drop <= 1'b0;
 			slot_err <= 4'd0;
 			lchk_en <= 3'd0;
@@ -838,7 +1065,7 @@ module atg_tu_cache #(
 			lwait_ce <= 4'd0;
 			lfetch_ce_rd <= {(2*REPS){1'b0}};
 			lfetch_ce_grp <= {REPS{1'b0}};
-			lfetch_ce_f <= 4'd0;
+			lfetch_ce_f <= 12'd0;
 			b0_we_q <= {NS{1'b0}};
 			b1_we_q <= {NS{1'b0}};
 			b2_we_q <= {NS{1'b0}};
@@ -882,12 +1109,12 @@ module atg_tu_cache #(
 						plru[g_idx*4 + k_idx] <= mw_plru_new[g_idx >> 2];
 				end
 			end
-			lchk_en   <= {3{st == LANE_TAG_WAIT}};
+			lchk_en   <= {3{st[LANE_TAG_WAIT]}};
 			lchk_ce   <= {{9{lchk_en[2]}}, {10{lchk_en[1]}}, {10{lchk_en[0]}}};
-			lwait_ce      <= {4{st == LANE_CHECK && !any_miss}};
+			lwait_ce      <= {4{st[LANE_CHECK] && !any_miss}};
 			lfetch_ce_rd  <= {(2*REPS){lfetch_en[0]}};
 			lfetch_ce_grp <= {REPS{lfetch_en[1]}};
-			lfetch_ce_f   <= {4{lfetch_en[1]}};
+			lfetch_ce_f   <= {{3{lfetch_en[3]}}, {3{lfetch_en[2]}}, {3{lfetch_en[1]}}, {3{lfetch_en[0]}}};
 			for (g_idx = 0; g_idx < NGRPS; g_idx = g_idx + 1) begin
 				lex_plru_grp_en0[g_idx] <= lfetch_ce_grp[g_idx >> 2] && rd_plru_en0_w && (rd_set0_grp == g_idx[GRP_W-1:0]);
 				lex_plru_grp_en1[g_idx] <= lfetch_ce_grp[g_idx >> 2] && rd_plru_en1_w && (rd_set1_grp == g_idx[GRP_W-1:0]);
@@ -907,81 +1134,96 @@ module atg_tu_cache #(
 				end
 			end
 
-			case (st)
-			IDLE: if (idle_meta_ce[9]) begin
-				lane <= 2'd0;
+			/* Flat parallel one-hot FSM transitions (<= 3 LUTs, no priority mux chain) */
+			st[IDLE]          <= (st[IDLE] && !idle_meta_ce[9]) || (st[OUT] && tc_rdy_b0);
+			st[1]             <= 1'b0;
+			st[MREQ]          <= (st[LANE_CHECK] && any_miss) || (st[MREQ] && !req_ready);
+			st[MWAIT]         <= (st[MREQ] && req_ready) || (st[MWAIT] && !mwait_err_b && !mwait_ok_st);
+			st[MW_WRITE]      <= mwait_ok_st;
+			st[LANE_WAIT]     <= st[LANE_CHECK] && !any_miss;
+			st[LANE_FETCH]    <= st[LANE_WAIT];
+			st[LANE_EXTRACT]  <= st[LANE_FETCH];
+			st[OUT]           <= (st[IDLE] && idle_meta_ce[9] && ta_ctl2_b[0]) ||
+			                     (st[LANE_TAG_RD] && !cur_mask && no_more_lanes_q[2]) ||
+			                     (st[LANE_EXTRACT] && no_more_lanes_q[2]) ||
+			                     (st[OUT] && !tc_rdy_b0);
+			st[LANE_TAG_RD]   <= (st[IDLE] && idle_meta_ce[9] && !ta_ctl2_b[0]) ||
+			                     (st[LANE_TAG_RD] && !cur_mask && !no_more_lanes_q[2]) ||
+			                     (st[LANE_EXTRACT] && !no_more_lanes_q[2]) ||
+			                     mwait_err_b || st[MW_WRITE];
+			st[LANE_CMP]      <= st[LANE_TAG_WAIT];
+			st[LANE_CHECK]    <= st[LANE_CMP];
+			st[LANE_TAG_WAIT] <= st[LANE_TAG_RD] && cur_mask;
+			tc_valid_r        <= (st[IDLE] && idle_meta_ce[9] && ta_ctl2_b[0]) ||
+			                     (st[LANE_TAG_RD] && !cur_mask && no_more_lanes_q[2]) ||
+			                     (st[LANE_EXTRACT] && no_more_lanes_q[2]) ||
+			                     (st[OUT] && !tc_rdy_b0);
+
+			if (st[IDLE] || st[LANE_EXTRACT] || (st[LANE_TAG_RD] && !cur_mask && !no_more_lanes_q[2]))
 				slot_err <= 4'd0;
+			else if (mwait_err_a)
+				slot_err <= slot_err | err_match_q;
+
+			if (st[IDLE] && idle_meta_ce[15]) begin
+				lane <= 2'd0;
+				lane_hi <= 2'd0;
 				cur_mask <= ta_mask[0];
-				st <= ta_ctl[2] ? OUT : LANE_TAG_RD;
+				no_more_lanes_q <= {7{ta_mask[3:1] == 3'b000}};
+			end else if ((st[LANE_TAG_RD] && !cur_mask && !no_more_lanes_q[2]) || (st[LANE_EXTRACT] && !no_more_lanes_q[2])) begin
+				lane <= nxt_lane;
+				lane_hi <= nxt_lane;
+				cur_mask <= tc_mask[nxt_lane];
+				no_more_lanes_q <= {7{no_more_next}};
 			end
-			LANE_TAG_RD: begin
-				if (!cur_mask) begin
-					/* Lane masked out */
-					if (no_more_lanes)
-						st <= OUT;
-					else begin
-						lane <= nxt_lane;
-						cur_mask <= tc_mask[nxt_lane];
-						slot_err <= 4'd0;
-					end
-				end else begin
-					s0_vld_q <= inv_b[NGRPS] ? {WAYS{1'b0}} : vld[s0_set];
-					s1_vld_q <= inv_b[NGRPS] ? {WAYS{1'b0}} : vld[s1_set];
-					s2_vld_q <= inv_b[NGRPS] ? {WAYS{1'b0}} : vld[s2_set];
-					s3_vld_q <= inv_b[NGRPS] ? {WAYS{1'b0}} : vld[s3_set];
-					st <= LANE_TAG_WAIT;
-				end
+
+			if (st[IDLE] && idle_meta_ce[13])
+				st_is_idle_g[15:0] <= 16'd0;
+			else if (st[OUT] && tc_rdy_b1)
+				st_is_idle_g[15:0] <= 16'hFFFF;
+
+			if (st[IDLE] && idle_meta_ce[14])
+				st_is_idle_g[31:16] <= 16'd0;
+			else if (st[OUT] && tc_rdy_b2)
+				st_is_idle_g[31:16] <= 16'hFFFF;
+
+			if (st[IDLE] && cur_idle_clr_ce[0])
+				cur_idle_ff[9:0] <= 10'd0;
+			else if (st[OUT] && tc_rdy_b3)
+				cur_idle_ff[9:0] <= 10'h3FF;
+
+			if (st[IDLE] && cur_idle_clr_ce[1])
+				cur_idle_ff[19:10] <= 10'd0;
+			else if (st[OUT] && tc_rdy_b4)
+				cur_idle_ff[19:10] <= 10'h3FF;
+
+			if (st[LANE_TAG_WAIT]) begin
+				s0_vld_q <= inv_b[NGRPS+0] ? {WAYS{1'b0}} : s0_vld4_cur;
+				s1_vld_q <= inv_b[NGRPS+1] ? {WAYS{1'b0}} : s1_vld4_cur;
+				s2_vld_q <= inv_b[NGRPS+2] ? {WAYS{1'b0}} : s2_vld4_cur;
+				s3_vld_q <= inv_b[NGRPS+3] ? {WAYS{1'b0}} : s3_vld4_cur;
 			end
-			LANE_TAG_WAIT: begin
-				st <= LANE_CMP;
-			end
-			LANE_CMP: begin
+
+			if (st[LANE_CMP]) begin
 				for (j = 0; j < WAYS; j = j + 1) begin
-					s0_hit_w_q[j] <= !inv_b[NGRPS+1] && ({s0_vld_q[j], s0_tag_w_q[j]} == {1'b1, s0_tag});
-					s1_hit_w_q[j] <= !inv_b[NGRPS+1] && ({s1_vld_q[j], s1_tag_w_q[j]} == {1'b1, s1_tag});
-					s2_hit_w_q[j] <= !inv_b[NGRPS+1] && ({s2_vld_q[j], s2_tag_w_q[j]} == {1'b1, s2_tag});
-					s3_hit_w_q[j] <= !inv_b[NGRPS+1] && ({s3_vld_q[j], s3_tag_w_q[j]} == {1'b1, s3_tag});
+					s0_hit_w_q[j] <= !inv_b[NGRPS+4] && ({s0_vld_q[j], s0_tag_w_q[j]} == {1'b1, s0_tag});
+					s1_hit_w_q[j] <= !inv_b[NGRPS+4] && ({s1_vld_q[j], s1_tag_w_q[j]} == {1'b1, s1_tag});
+					s2_hit_w_q[j] <= !inv_b[NGRPS+4] && ({s2_vld_q[j], s2_tag_w_q[j]} == {1'b1, s2_tag});
+					s3_hit_w_q[j] <= !inv_b[NGRPS+4] && ({s3_vld_q[j], s3_tag_w_q[j]} == {1'b1, s3_tag});
 				end
 				s0_need_q <= use_slot[0] && !border0 && !slot_err[0];
 				s1_need_q <= use_slot[1] && !border1 && !slot_err[1];
 				s2_need_q <= use_slot[2] && !border2 && !slot_err[2];
-				s3_need_q <= use_slot[3] && !border2 && 1'b0 ? 1'b0 : (use_slot[3] && !border3 && !slot_err[3]);
-				st <= LANE_CHECK;
+				s3_need_q <= use_slot[3] && !border3 && !slot_err[3];
 			end
-			LANE_CHECK: begin
-				if (any_miss) begin
-					drop <= inv_b[NGRPS+1];
-					st <= MREQ;
-					req_valid_r <= 1'b1;
-				end else begin
-					st <= LANE_WAIT;
-				end
+
+			if (st[LANE_CHECK] && any_miss) begin
+				drop <= inv_b[NGRPS+1];
+				req_valid_r <= 1'b1;
+			end else if (st[MREQ] && req_ready) begin
+				req_valid_r <= 1'b0;
 			end
-			LANE_WAIT: begin
-				st <= LANE_FETCH;
-			end
-			LANE_FETCH: begin
-				st <= LANE_EXTRACT;
-			end
-			LANE_EXTRACT: begin
-				slot_err <= 4'd0;
-				if (no_more_lanes)
-					st <= OUT;
-				else begin
-					lane <= nxt_lane;
-					cur_mask <= tc_mask[nxt_lane];
-					st <= LANE_TAG_RD;
-				end
-			end
-			MREQ: begin
-				if (req_ready) begin
-					req_valid_r <= 1'b0;
-					st <= MWAIT;
-				end
-			end
-			MWAIT: begin
-				if (mwait_err_a)
-					slot_err <= slot_err | err_match_q;
+
+			if (st[MWAIT]) begin
 				if (mwait_ok_we0) begin
 					b0_we_q <= {NS{1'b1}};
 					b1_we_q <= {NS{1'b1}};
@@ -996,64 +1238,128 @@ module atg_tu_cache #(
 						tag_we_s23_q[j] <= (fill_way_q == j[1:0]);
 					end
 				end
-				if (mwait_err_b) begin
-					/* Error region: texel stays 0, mark slot */
-					st <= LANE_TAG_RD;
-				end else if (mwait_ok_st) begin
-					st <= MW_WRITE;
-				end
-			end
-			MW_WRITE: begin
+			end else if (st[MW_WRITE]) begin
 				b0_we_q <= {NS{1'b0}};
 				b1_we_q <= {NS{1'b0}};
 				b2_we_q <= {NS{1'b0}};
 				b3_we_q <= {NS{1'b0}};
 				tag_we_s01_q <= {WAYS{1'b0}};
 				tag_we_s23_q <= {WAYS{1'b0}};
-				st <= LANE_TAG_RD;
 			end
-			OUT: if (tc_ready) begin
-				st <= IDLE;
-			end
-			default: st <= IDLE;
-			endcase
 
-			if (inv_b[NGRPS]) begin
-				s0_vld_q <= {WAYS{1'b0}};
-				s1_vld_q <= {WAYS{1'b0}};
-				s2_vld_q <= {WAYS{1'b0}};
-				s3_vld_q <= {WAYS{1'b0}};
-			end
-			if (inv_b[NGRPS+1]) begin
+			if (inv_b[NGRPS+0]) s0_vld_q <= {WAYS{1'b0}};
+			if (inv_b[NGRPS+1]) s1_vld_q <= {WAYS{1'b0}};
+			if (inv_b[NGRPS+2]) s2_vld_q <= {WAYS{1'b0}};
+			if (inv_b[NGRPS+3]) s3_vld_q <= {WAYS{1'b0}};
+			if (inv_b[NGRPS+4]) begin
 				s0_hit_w_q <= {WAYS{1'b0}};
 				s1_hit_w_q <= {WAYS{1'b0}};
+			end
+			if (inv_b[NGRPS+6]) begin
 				s2_hit_w_q <= {WAYS{1'b0}};
 				s3_hit_w_q <= {WAYS{1'b0}};
+			end
+			if (inv_b[NGRPS+5])
 				drop <= 1'b1;
+		end
+	end
+
+	/* Index mux outside always so IW <= 5 elaborates without [4:0] out-of-range slices */
+	wire [IW-1:0] vld4_s0_idx  [0:N_P4-1];
+	wire [IW-1:0] vld4_s1_idx  [0:N_P4-1];
+	wire [IW-1:0] vld4_s2_idx  [0:N_P4-1];
+	wire [IW-1:0] vld4_s3_idx  [0:N_P4-1];
+	wire [IW-1:0] mline_v0_idx [0:N_P4-1];
+	wire [IW-1:0] mline_v1_idx [0:N_P4-1];
+	wire [IW-1:0] mline_v2_idx [0:N_P4-1];
+	wire [IW-1:0] mline_v3_idx [0:N_P4-1];
+	wire [IW-1:0] mline_p0_idx [0:N_P4-1];
+	wire [IW-1:0] mline_p1_idx [0:N_P4-1];
+	wire [IW-1:0] mline_p2_idx [0:N_P4-1];
+
+	genvar gp;
+	generate
+		for (gp = 0; gp < N_P4; gp = gp + 1) begin : g_vld_idx
+			if (IW > 5) begin : g_hi
+				localparam [P4_BITS-1:0] GP_HI = gp;
+				assign vld4_s0_idx[gp]  = {GP_HI, s0_set[4:0]};
+				assign vld4_s1_idx[gp]  = {GP_HI, s1_set[4:0]};
+				assign vld4_s2_idx[gp]  = {GP_HI, s2_set[4:0]};
+				assign vld4_s3_idx[gp]  = {GP_HI, s3_set[4:0]};
+				assign mline_v0_idx[gp] = {GP_HI, mline_set_v0[4:0]};
+				assign mline_v1_idx[gp] = {GP_HI, mline_set_v1[4:0]};
+				assign mline_v2_idx[gp] = {GP_HI, mline_set_v2[4:0]};
+				assign mline_v3_idx[gp] = {GP_HI, mline_set_v3[4:0]};
+				assign mline_p0_idx[gp] = {GP_HI, mline_set_p0[4:0]};
+				assign mline_p1_idx[gp] = {GP_HI, mline_set_p1[4:0]};
+				assign mline_p2_idx[gp] = {GP_HI, mline_set_p2[4:0]};
+			end else begin : g_lo
+				assign vld4_s0_idx[gp]  = s0_set;
+				assign vld4_s1_idx[gp]  = s1_set;
+				assign vld4_s2_idx[gp]  = s2_set;
+				assign vld4_s3_idx[gp]  = s3_set;
+				assign mline_v0_idx[gp] = mline_set_v0;
+				assign mline_v1_idx[gp] = mline_set_v1;
+				assign mline_v2_idx[gp] = mline_set_v2;
+				assign mline_v3_idx[gp] = mline_set_v3;
+				assign mline_p0_idx[gp] = mline_set_p0;
+				assign mline_p1_idx[gp] = mline_set_p1;
+				assign mline_p2_idx[gp] = mline_set_p2;
+			end
+		end
+	endgenerate
+
+	/* Reset-free bank lookup capture registers (avoid rst_n on FF enables) */
+	always @(posedge clk) begin
+		if (ce_lw_vld4[0]) begin
+			for (g_idx = 0; g_idx < N_P4; g_idx = g_idx + 1)
+				s0_vld4_q[g_idx] <= inv_b[NGRPS+0] ? {WAYS{1'b0}} : vld[vld4_s0_idx[g_idx]];
+		end
+		if (ce_lw_vld4[1]) begin
+			for (g_idx = 0; g_idx < N_P4; g_idx = g_idx + 1)
+				s1_vld4_q[g_idx] <= inv_b[NGRPS+1] ? {WAYS{1'b0}} : vld[vld4_s1_idx[g_idx]];
+		end
+		if (ce_lw_vld4[2]) begin
+			for (g_idx = 0; g_idx < N_P4; g_idx = g_idx + 1)
+				s2_vld4_q[g_idx] <= inv_b[NGRPS+2] ? {WAYS{1'b0}} : vld[vld4_s2_idx[g_idx]];
+		end
+		if (ce_lw_vld4[3]) begin
+			for (g_idx = 0; g_idx < N_P4; g_idx = g_idx + 1)
+				s3_vld4_q[g_idx] <= inv_b[NGRPS+3] ? {WAYS{1'b0}} : vld[vld4_s3_idx[g_idx]];
+		end
+		if (st[LANE_CHECK] && any_miss) begin
+			for (g_idx = 0; g_idx < N_P4; g_idx = g_idx + 1) begin
+				mline_vld4_q0[g_idx]  <= vld[mline_v0_idx[g_idx]][0];
+				mline_vld4_q1[g_idx]  <= vld[mline_v1_idx[g_idx]][1];
+				mline_vld4_q2[g_idx]  <= vld[mline_v2_idx[g_idx]][2];
+				mline_vld4_q3[g_idx]  <= vld[mline_v3_idx[g_idx]][3];
+				mline_plru4_q0[g_idx] <= plru[mline_p0_idx[g_idx]][0];
+				mline_plru4_q1[g_idx] <= plru[mline_p1_idx[g_idx]][1];
+				mline_plru4_q2[g_idx] <= plru[mline_p2_idx[g_idx]][2];
 			end
 		end
 	end
 
 	/* Datapath border and unpack control registers: free-running without reset */
 	always @(posedge clk) begin
-		if ((st == IDLE) && idle_meta_ce[9]) begin
+		if (st[IDLE] && idle_meta_ce[8]) begin
 			cur_bord0 <= ta_bord[0];
 			cur_bord1 <= ta_bord[1];
 			cur_bord2 <= ta_bord[2];
 			cur_bord3 <= ta_bord[3];
-		end else if ((st == LANE_TAG_RD) && !cur_mask && !no_more_lanes) begin
+		end else if (st[LANE_TAG_RD] && !cur_mask && !no_more_lanes_q[1]) begin
 			cur_bord0 <= tc_bord[{nxt_lane, 2'b00}];
 			cur_bord1 <= tc_bord[{nxt_lane, 2'b01}];
 			cur_bord2 <= tc_bord[{nxt_lane, 2'b10}];
 			cur_bord3 <= tc_bord[{nxt_lane, 2'b11}];
-		end else if ((st == LANE_EXTRACT) && !no_more_lanes) begin
+		end else if (st[LANE_EXTRACT] && !no_more_lanes_q[1]) begin
 			cur_bord0 <= tc_bord[{nxt_lane, 2'b00}];
 			cur_bord1 <= tc_bord[{nxt_lane, 2'b01}];
 			cur_bord2 <= tc_bord[{nxt_lane, 2'b10}];
 			cur_bord3 <= tc_bord[{nxt_lane, 2'b11}];
 		end
 
-		if ((st == LANE_TAG_RD) && cur_mask) begin
+		if (st[LANE_TAG_RD] && cur_mask) begin
 			braw_c_lo0 <= (tc_ctl[7:6] == 2'd2) && (tc_ctl[19] || !tc_ctl[8] || !tc_ctl[1]);
 			braw_c_lo1 <= (tc_ctl[7:6] == 2'd2) && (tc_ctl[19] || !tc_ctl[8] || !tc_ctl[1]);
 			braw_c_hi0 <= (tc_ctl[7:6] == 2'd2) && !tc_ctl[19] && (!tc_ctl[8] || !tc_ctl[1]);
@@ -1065,7 +1371,7 @@ module atg_tu_cache #(
 		end
 	end
 
-	wire unused_ok = &{1'b0, rsp_write, rsp_tag, nxt_lane_co_unused, idle_meta_ce[8],
+	wire unused_ok = &{1'b0, rsp_write, rsp_tag,
 	                   miss_slot, a0[ADDR_W-1:LINE_SHIFT], lsl, (NBANKS != 0)};
 endmodule
 

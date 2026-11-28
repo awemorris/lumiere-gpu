@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -87,16 +87,52 @@ module atg_su_alu #(
 	wire [3:0] unit = x_uop[ATG_UOP_UNIT +: 4];
 	wire [4:0] op = x_uop[ATG_UOP_OP +: 5];
 	wire immb = x_uop[ATG_UOP_OP + ATG_ALU_IMMB];
-	wire [NPHYS*2-1:0] immb_buf;
+	wire [3:0] immb_g;
+	wire [NPHYS*4-1:0] immb_buf;
+	wire [NPHYS-1:0]   immb_amt_buf;
+	wire [4:0]         imm_amt_g [0:3];
 `ifdef SYNTH_KINTEX7
-	genvar g_ib;
+	genvar g_ib, g_ig;
 	generate
-		for (g_ib = 0; g_ib < NPHYS*2; g_ib = g_ib + 1) begin : g_immb_buf
-			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_ib (.I0(immb), .O(immb_buf[g_ib]));
+		for (g_ig = 0; g_ig < 4; g_ig = g_ig + 1) begin : g_immb_g
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ibg (.I0(immb), .O(immb_g[g_ig]));
+			for (g_ib = 0; g_ib < 5; g_ib = g_ib + 1) begin : g_iag
+				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_iag (.I0(imm[g_ib]), .O(imm_amt_g[g_ig][g_ib]));
+			end
+		end
+		for (g_ib = 0; g_ib < NPHYS*4; g_ib = g_ib + 1) begin : g_immb_buf
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_ib (.I0(immb_g[g_ib / NPHYS]), .O(immb_buf[g_ib]));
+		end
+		for (g_ib = 0; g_ib < NPHYS; g_ib = g_ib + 1) begin : g_immba_buf
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_iba (.I0(immb_g[(g_ib * 4) / NPHYS]), .O(immb_amt_buf[g_ib]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar g_ib, g_ig;
+	generate
+		for (g_ig = 0; g_ig < 4; g_ig = g_ig + 1) begin : g_immb_g
+			assign immb_g[g_ig] = immb;
+			for (g_ib = 0; g_ib < 5; g_ib = g_ib + 1) begin : g_iag
+				assign imm_amt_g[g_ig][g_ib] = imm[g_ib];
+			end
+		end
+		for (g_ib = 0; g_ib < NPHYS*4; g_ib = g_ib + 1) begin : g_immb_buf
+			assign immb_buf[g_ib] = immb_g[g_ib / NPHYS];
+		end
+		for (g_ib = 0; g_ib < NPHYS; g_ib = g_ib + 1) begin : g_immba_buf
+			assign immb_amt_buf[g_ib] = immb_g[(g_ib * 4) / NPHYS];
 		end
 	endgenerate
 `else
-	assign immb_buf = {(NPHYS*2){immb}};
+	assign immb_g       = {4{immb}};
+	assign immb_buf     = {(NPHYS*4){immb}};
+	assign immb_amt_buf = {NPHYS{immb}};
+	genvar g_ig;
+	generate
+		for (g_ig = 0; g_ig < 4; g_ig = g_ig + 1) begin : g_imm_g
+			assign imm_amt_g[g_ig] = imm[4:0];
+		end
+	endgenerate
 `endif
 	wire [31:0] imm = x_uop[ATG_UOP_IMM +: 32];
 	wire mine = x_valid && unit == ATG_UNIT_ALU && x_uop[ATG_UOP_WRD];
@@ -113,7 +149,6 @@ module atg_su_alu #(
 	/*
 	 * Stage 1 (EX1): Latch inputs, prepare addsub and shift
 	 */
-	localparam integer N_IMM_G = (NPHYS + 3) / 4;
 	(* shreg_extract = "no" *) reg s1_valid;
 	(* shreg_extract = "no" *) reg [WARP_W-1:0] s1_warp;
 	(* shreg_extract = "no" *) reg [GRP_W-1:0]  s1_grp;
@@ -121,15 +156,42 @@ module atg_su_alu #(
 	(* shreg_extract = "no" *) reg [NPHYS-1:0]  s1_mask;
 	(* shreg_extract = "no", max_fanout = 12 *) reg [4:0]        s1_op;
 
-	(* shreg_extract = "no", max_fanout = 12 *) reg [DW-1:0] s1_la, s1_lb;
+	(* shreg_extract = "no", max_fanout = 12 *) reg [DW-1:0] s1_la, s1_lb, s1_lb_x;
 	(* shreg_extract = "no" *) reg [DW-1:0] s1_lc;
 	(* shreg_extract = "no" *) reg [31:0] s1_movi_w;
-	(* shreg_extract = "no", keep = "true" *) reg [N_IMM_G*32-1:0] s1_imm_g;
-	(* shreg_extract = "no", keep = "true" *) reg [NPHYS*2-1:0] s1_immb;
 	(* shreg_extract = "no", dont_touch = "true" *) reg [NPHYS-1:0] s1_is_sll_lo, s1_is_sll_hi;
 	(* shreg_extract = "no", max_fanout = 12 *) reg [NPHYS-1:0] s1_sra;
 	(* shreg_extract = "no", max_fanout = 12 *) reg [NPHYS*5-1:0] s1_amt;
 	(* shreg_extract = "no", keep = "true" *) reg [NPHYS-1:0] s1_sub;
+	wire [DW-1:0] s0_lb_sel, s0_lb_x;
+	wire s0_is_sub = (op != ATG_ALU_ADD);
+	wire [NPHYS*2-1:0] s0_is_sub_b;
+	genvar gl1;
+	generate
+		for (gl1 = 0; gl1 < NPHYS; gl1 = gl1 + 1) begin : g_s0_lb
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ssub0 (.I0(s0_is_sub), .O(s0_is_sub_b[gl1*2]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ssub1 (.I0(s0_is_sub), .O(s0_is_sub_b[gl1*2+1]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign s0_is_sub_b[gl1*2] = s0_is_sub;
+			assign s0_is_sub_b[gl1*2+1] = s0_is_sub;
+`else
+			assign s0_is_sub_b[gl1*2]   = s0_is_sub;
+			assign s0_is_sub_b[gl1*2+1] = s0_is_sub;
+`endif
+			wire [15:0] b_lo = {
+				immb_buf[gl1*4+1] ? imm[15:8] : x_b[gl1*32 + 8 +: 8],
+				immb_buf[gl1*4+0] ? imm[7:0]  : x_b[gl1*32 +: 8]
+			};
+			wire [15:0] b_hi = {
+				immb_buf[gl1*4+3] ? imm[31:24] : x_b[gl1*32 + 24 +: 8],
+				immb_buf[gl1*4+2] ? imm[23:16] : x_b[gl1*32 + 16 +: 8]
+			};
+			assign s0_lb_sel[gl1*32 +: 32] = {b_hi, b_lo};
+			assign s0_lb_x[gl1*32 +: 16]      = s0_is_sub_b[gl1*2]   ? ~b_lo : b_lo;
+			assign s0_lb_x[gl1*32 + 16 +: 16] = s0_is_sub_b[gl1*2+1] ? ~b_hi : b_hi;
+		end
+	endgenerate
 
 `ifdef __ICARUS__
 	wire en_s1 = en && mine;
@@ -171,39 +233,52 @@ module atg_su_alu #(
 		if (en_s1) begin
 			s1_lc     <= x_c;
 			s1_movi_w <= imm;
-			s1_imm_g  <= {N_IMM_G{imm}};
+			s1_lb     <= s0_lb_sel;
+			s1_lb_x   <= s0_lb_x;
 			for (i1 = 0; i1 < NPHYS; i1 = i1 + 1) begin
 				s1_la[i1*32 +: 32] <= x_a[i1*32 +: 32];
-				s1_lb[i1*32 +: 32] <= x_b[i1*32 +: 32];
-				s1_immb[i1*2 +: 2] <= {2{immb}};
 				s1_is_sll_lo[i1]   <= (op == ATG_ALU_SLL);
 				s1_is_sll_hi[i1]   <= (op == ATG_ALU_SLL);
 				s1_sra[i1]         <= (op == ATG_ALU_SRA) && x_a[i1*32 + 31];
-				s1_amt[i1*5 +: 5]  <= immb_buf[i1*2]   ? imm[4:0]   : x_b[i1*32 +: 5];
+				s1_amt[i1*5 +: 5]  <= immb_amt_buf[i1] ? imm_amt_g[(i1 * 4) / NPHYS] : x_b[i1*32 +: 5];
 			end
 		end
 	end
 
 	/*
-	 * Stage 2 (EX2): 33-bit addition / subtraction and bitwise logic
+	 * Stage 2 (EX2): 16b + 17b carry-select addition / subtraction and bitwise logic
 	 */
-	wire [DW-1:0] s1_lb_eff;
 	wire [NPHYS*33-1:0] s2_d_comb;
-	wire [NPHYS-1:0] s2_co_unused;
+	wire [NPHYS*2-1:0] s2_co_unused;
 
 	genvar l2;
 	generate
 	for (l2 = 0; l2 < NPHYS; l2 = l2 + 1) begin : g_ex2_addsub
-		wire [31:0] imm_g_sl = s1_imm_g[(l2/4)*32 +: 32];
-		assign s1_lb_eff[l2*32 +: 16]      = s1_immb[l2*2]   ? imm_g_sl[15:0]  : s1_lb[l2*32 +: 16];
-		assign s1_lb_eff[l2*32 + 16 +: 16] = s1_immb[l2*2+1] ? imm_g_sl[31:16] : s1_lb[l2*32 + 16 +: 16];
-		am_addsub #(.W(33)) u_d (
-			.a({1'b0, s1_la[l2*32 +: 32]}),
-			.b({1'b0, s1_lb_eff[l2*32 +: 32]}),
-			.sub(s1_sub[l2]),
-			.s(s2_d_comb[l2*33 +: 33]),
-			.co(s2_co_unused[l2])
+		wire [15:0] d_lo;
+		wire        d_lo_co;
+		wire [16:0] d_hi0, d_hi1;
+		am_add #(.W(16)) u_d_lo (
+			.a(s1_la[l2*32 +: 16]),
+			.b(s1_lb_x[l2*32 +: 16]),
+			.ci(s1_sub[l2]),
+			.s(d_lo),
+			.co(d_lo_co)
 		);
+		am_add #(.W(17)) u_d_hi0 (
+			.a({1'b0, s1_la[l2*32 + 16 +: 16]}),
+			.b({s1_sub[l2], s1_lb_x[l2*32 + 16 +: 16]}),
+			.ci(1'b0),
+			.s(d_hi0),
+			.co(s2_co_unused[l2*2])
+		);
+		am_add #(.W(17)) u_d_hi1 (
+			.a({1'b0, s1_la[l2*32 + 16 +: 16]}),
+			.b({s1_sub[l2], s1_lb_x[l2*32 + 16 +: 16]}),
+			.ci(1'b1),
+			.s(d_hi1),
+			.co(s2_co_unused[l2*2 + 1])
+		);
+		assign s2_d_comb[l2*33 +: 33] = {d_lo_co ? d_hi1 : d_hi0, d_lo};
 	end
 	endgenerate
 
@@ -244,14 +319,14 @@ module atg_su_alu #(
 		if (en_s2) begin
 			s2_d    <= s2_d_comb;
 			s2_la   <= s1_la;
-			s2_lb   <= s1_lb_eff;
-			s2_and  <= s1_la & s1_lb_eff;
-			s2_or   <= s1_la | s1_lb_eff;
-			s2_xor  <= s1_la ^ s1_lb_eff;
-			s2_andn <= s1_la & ~s1_lb_eff;
-			s2_orn  <= s1_la | ~s1_lb_eff;
-			s2_xnor <= ~(s1_la ^ s1_lb_eff);
-			s2_sel  <= (s1_la & s1_lb_eff) | (~s1_la & s1_lc);
+			s2_lb   <= s1_lb;
+			s2_and  <= s1_la & s1_lb;
+			s2_or   <= s1_la | s1_lb;
+			s2_xor  <= s1_la ^ s1_lb;
+			s2_andn <= s1_la & ~s1_lb;
+			s2_orn  <= s1_la | ~s1_lb;
+			s2_xnor <= ~(s1_la ^ s1_lb);
+			s2_sel  <= (s1_la & s1_lb) | (~s1_la & s1_lc);
 			s2_sra  <= s1_sra;
 			s2_amt  <= s1_amt;
 			for (i2 = 0; i2 < NPHYS; i2 = i2 + 1) begin : blk_s2_sv
@@ -461,13 +536,68 @@ module atg_su_alu #(
 			s6_data  <= s5_data;
 	end
 
-	assign s_valid = s6_valid;
-	assign s_valid_rep = s6_valid_rep;
-	assign s_warp  = s6_warp;
-	assign s_grp   = s6_grp;
-	assign s_rd    = s6_rd;
-	assign s_lanes = s6_lanes;
-	assign s_data  = s6_data;
+	generate
+	if (SHORT_LAT > 6) begin : g_lat7
+		localparam integer EXTRA = SHORT_LAT - 6;
+		(* shreg_extract = "no" *) reg [EXTRA-1:0]      ex_valid;
+		(* shreg_extract = "no", keep = "true" *) reg [7:0] ex_valid_rep [0:EXTRA-1];
+		(* shreg_extract = "no" *) reg [WARP_W-1:0]     ex_warp  [0:EXTRA-1];
+		(* shreg_extract = "no" *) reg [GRP_W-1:0]      ex_grp   [0:EXTRA-1];
+		(* shreg_extract = "no" *) reg [6:0]            ex_rd    [0:EXTRA-1];
+		(* shreg_extract = "no" *) reg [NPHYS-1:0]      ex_lanes [0:EXTRA-1];
+		(* shreg_extract = "no" *) reg [DW-1:0]         ex_data  [0:EXTRA-1];
+		integer ke;
+		always @(posedge clk or posedge rst_p) begin
+			if (rst_p) begin
+				ex_valid <= {EXTRA{1'b0}};
+				for (ke = 0; ke < EXTRA; ke = ke + 1) begin
+					ex_valid_rep[ke] <= 8'd0;
+					ex_warp[ke]      <= {WARP_W{1'b0}};
+					ex_grp[ke]       <= {GRP_W{1'b0}};
+					ex_rd[ke]        <= 7'd0;
+					ex_lanes[ke]     <= {NPHYS{1'b0}};
+				end
+			end else if (en) begin
+				ex_valid[0]     <= s6_valid;
+				ex_valid_rep[0] <= s6_valid_rep;
+				ex_warp[0]      <= s6_warp;
+				ex_grp[0]       <= s6_grp;
+				ex_rd[0]        <= s6_rd;
+				ex_lanes[0]     <= s6_lanes;
+				for (ke = 1; ke < EXTRA; ke = ke + 1) begin
+					ex_valid[ke]     <= ex_valid[ke-1];
+					ex_valid_rep[ke] <= ex_valid_rep[ke-1];
+					ex_warp[ke]      <= ex_warp[ke-1];
+					ex_grp[ke]       <= ex_grp[ke-1];
+					ex_rd[ke]        <= ex_rd[ke-1];
+					ex_lanes[ke]     <= ex_lanes[ke-1];
+				end
+			end
+		end
+		always @(posedge clk) begin
+			if (en) begin
+				ex_data[0] <= s6_data;
+				for (ke = 1; ke < EXTRA; ke = ke + 1)
+					ex_data[ke] <= ex_data[ke-1];
+			end
+		end
+		assign s_valid     = ex_valid[EXTRA-1];
+		assign s_valid_rep = ex_valid_rep[EXTRA-1];
+		assign s_warp      = ex_warp[EXTRA-1];
+		assign s_grp       = ex_grp[EXTRA-1];
+		assign s_rd        = ex_rd[EXTRA-1];
+		assign s_lanes     = ex_lanes[EXTRA-1];
+		assign s_data      = ex_data[EXTRA-1];
+	end else begin : g_lat6
+		assign s_valid     = s6_valid;
+		assign s_valid_rep = s6_valid_rep;
+		assign s_warp      = s6_warp;
+		assign s_grp       = s6_grp;
+		assign s_rd        = s6_rd;
+		assign s_lanes     = s6_lanes;
+		assign s_data      = s6_data;
+	end
+	endgenerate
 	assign x_ready = 1'b1;
 
 	assign fwd_ex3_valid = s3_valid;

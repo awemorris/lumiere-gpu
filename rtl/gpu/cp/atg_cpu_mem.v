@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -74,7 +74,7 @@ module atg_cpu_mem #(
 
 	/* IMEM port B: DMA writes. */
 	always @(posedge clk) begin
-		if (x_en && x_imem && x_we)
+		if (x_imem && x_we)
 			imem[xia] <= x_wdata;
 	end
 
@@ -105,13 +105,10 @@ module atg_cpu_mem #(
 	end
 
 	always @(posedge clk) begin
-		if (x_en) begin
-			if (!x_imem) begin
-				x_word <= dmem[xda];
-				if (x_we)
-					dmem[xda] <= x_wdata;
-			end
-		end
+		if (x_en && !x_imem)
+			x_word <= dmem[xda];
+		if (!x_imem && x_we)
+			dmem[xda] <= x_wdata;
 	end
 
 	assign x_rdata = x_was_imem ? 32'd0 : x_word;

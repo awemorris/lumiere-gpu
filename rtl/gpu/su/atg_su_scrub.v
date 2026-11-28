@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -24,27 +24,37 @@ module atg_su_scrub #(
 	input wire rst_n,
 	input wire start,
 	output reg on,
-	output reg [AW-1:0] a
+	(* dont_touch = "true" *) output reg [AW-1:0] a
 );
 	wire [AW-1:0] a_next;
 	wire a_co_unused;
 	am_add #(.W(AW)) u_a (.a(a), .b({AW{1'b0}}), .ci(1'b1), .s(a_next), .co(a_co_unused));
 
+	(* dont_touch = "true" *) reg on_int;
+	reg a_last_r;
 	(* dont_touch = "true" *) wire rst_p = !rst_n;
 	always @(posedge clk or posedge rst_p) begin
 		if (rst_p) begin
 			on <= 1'b0;
+			on_int <= 1'b0;
 			a <= {AW{1'b0}};
+			a_last_r <= (DEPTH <= 1);
 		end else if (start) begin
 			on <= 1'b1;
+			on_int <= 1'b1;
 			a <= {AW{1'b0}};
-		end else if (on) begin
-			if ({{(32-AW){1'b0}}, a} == DEPTH - 1)
+			a_last_r <= (DEPTH <= 1);
+		end else if (on_int) begin
+			if (a_last_r) begin
 				on <= 1'b0;
-			else
+				on_int <= 1'b0;
+			end else begin
 				a <= a_next;
+				a_last_r <= ({{(32-AW){1'b0}}, a} == DEPTH - 2);
+			end
 		end
 	end
+	wire unused_sc_ok = &{1'b0, a_co_unused};
 endmodule
 
 `default_nettype wire

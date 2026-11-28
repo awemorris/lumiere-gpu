@@ -36,6 +36,146 @@ module am_mul #(
 	input wire [BW-1:0] b,
 	output wire [AW+BW-1:0] p
 );
+`ifdef SYNTH_KINTEX_ULTRASCALE
+	/*
+	 * Kintex UltraScale+ DSP48E2 pipelined tile multiplier:
+	 *   - Single 27x18 (26x17 unsigned) multiplies map directly into 1 DSP48E2
+	 *     with AREG/BREG + PREG pipelining.
+	 *   - Wider LAT >= 2 multiplies (e.g. 24x24, 25x25, 33x33) split into 17-bit
+	 *     independent DSP48E2 tiles registered at MREG/PREG (no PCOUT cascade chain),
+	 *     then sum the registered partial products in the next cycle.
+	 */
+	localparam integer KU_SINGLE = (SIGNED != 0) ?
+		((AW <= 27 && BW <= 18) || (AW <= 18 && BW <= 27)) :
+		((AW <= 26 && BW <= 17) || (AW <= 17 && BW <= 26));
+	localparam integer KU_NX = (AW + 16) / 17;
+	localparam integer KU_NY = (BW + 16) / 17;
+
+	generate
+	if (LAT == 0) begin : g_ku_c
+		(* use_dsp = "yes" *) wire [AW+BW-1:0] m;
+		if (SIGNED != 0) begin : g_s
+			assign m = $signed(a) * $signed(b);
+		end else begin : g_u
+			assign m = a * b;
+		end
+		assign p = m;
+	end else if (LAT == 1) begin : g_ku_lat1
+		(* use_dsp = "yes" *) wire [AW+BW-1:0] m;
+		if (SIGNED != 0) begin : g_s
+			assign m = $signed(a) * $signed(b);
+		end else begin : g_u
+			assign m = a * b;
+		end
+		reg [AW+BW-1:0] r0;
+		always @(posedge clk)
+			if (en)
+				r0 <= m;
+		assign p = r0;
+	end else if (KU_SINGLE != 0) begin : g_ku_single
+		reg [AW-1:0] ar;
+		reg [BW-1:0] br;
+		(* use_dsp = "yes" *) wire [AW+BW-1:0] m;
+		if (SIGNED != 0) begin : g_s
+			assign m = $signed(ar) * $signed(br);
+		end else begin : g_u
+			assign m = ar * br;
+		end
+		reg [AW+BW-1:0] r [0:LAT-2];
+		integer i;
+		always @(posedge clk)
+			if (en) begin
+				ar <= a;
+				br <= b;
+				r[0] <= m;
+				for (i = 1; i < LAT - 1; i = i + 1)
+					r[i] <= r[i-1];
+			end
+		assign p = r[LAT-2];
+	end else begin : g_ku_tile
+		wire [AW-1:0] x_src;
+		wire [BW-1:0] y_src;
+		if (LAT >= 3) begin : g_in_reg
+			reg [AW-1:0] ar;
+			reg [BW-1:0] br;
+			always @(posedge clk)
+				if (en) begin
+					ar <= a;
+					br <= b;
+				end
+			assign x_src = ar;
+			assign y_src = br;
+		end else begin : g_in_dir
+			assign x_src = a;
+			assign y_src = b;
+		end
+
+		wire signed [17:0] x_sl [0:KU_NX-1];
+		wire signed [17:0] y_sl [0:KU_NY-1];
+		genvar gki, gkj;
+		for (gki = 0; gki < KU_NX; gki = gki + 1) begin : g_x_sl
+			if (gki < KU_NX - 1) begin : g_lo
+				assign x_sl[gki] = $signed({1'b0, x_src[17*gki +: 17]});
+			end else begin : g_hi
+				localparam integer XT = AW - 17 * (KU_NX - 1);
+				wire [XT-1:0] x_top = x_src[AW-1 : 17*(KU_NX-1)];
+				assign x_sl[gki] = $signed({{(18 - XT){SIGNED ? x_top[XT-1] : 1'b0}}, x_top});
+			end
+		end
+		for (gkj = 0; gkj < KU_NY; gkj = gkj + 1) begin : g_y_sl
+			if (gkj < KU_NY - 1) begin : g_lo
+				assign y_sl[gkj] = $signed({1'b0, y_src[17*gkj +: 17]});
+			end else begin : g_hi
+				localparam integer YT = BW - 17 * (KU_NY - 1);
+				wire [YT-1:0] y_top = y_src[BW-1 : 17*(KU_NY-1)];
+				assign y_sl[gkj] = $signed({{(18 - YT){SIGNED ? y_top[YT-1] : 1'b0}}, y_top});
+			end
+		end
+
+		wire [AW+BW-1:0] pp_term [0:KU_NX*KU_NY-1];
+		for (gki = 0; gki < KU_NX; gki = gki + 1) begin : g_pp_i
+			for (gkj = 0; gkj < KU_NY; gkj = gkj + 1) begin : g_pp_j
+				localparam integer SH = 17 * (gki + gkj);
+				(* use_dsp = "yes" *) reg signed [35:0] pp_r;
+				always @(posedge clk)
+					if (en)
+						pp_r <= x_sl[gki] * y_sl[gkj];
+				if (SH >= AW + BW) begin : g_zero_sh
+					assign pp_term[gki*KU_NY + gkj] = {(AW+BW){1'b0}};
+				end else if (AW + BW > 36) begin : g_sh_wide
+					wire [AW+BW-1:0] ext_pp = {{(AW+BW-36){pp_r[35]}}, pp_r};
+					assign pp_term[gki*KU_NY + gkj] = ext_pp << SH;
+				end else begin : g_sh_nar
+					wire [AW+BW-1:0] ext_pp = pp_r[AW+BW-1:0];
+					assign pp_term[gki*KU_NY + gkj] = ext_pp << SH;
+				end
+			end
+		end
+
+		/* verilator lint_off UNOPTFLAT */
+		wire [(KU_NX*KU_NY+1)*(AW+BW)-1:0] pp_acc;
+		assign pp_acc[0 +: (AW+BW)] = {(AW+BW){1'b0}};
+		for (gki = 0; gki < KU_NX * KU_NY; gki = gki + 1) begin : g_pp_sum
+			assign pp_acc[(gki + 1)*(AW+BW) +: (AW+BW)] = pp_acc[gki*(AW+BW) +: (AW+BW)] + pp_term[gki];
+		end
+		/* verilator lint_on UNOPTFLAT */
+		wire [AW+BW-1:0] pp_sum = pp_acc[(KU_NX*KU_NY)*(AW+BW) +: (AW+BW)];
+
+		localparam integer OUT_ST = (LAT >= 3) ? (LAT - 2) : 1;
+		reg [AW+BW-1:0] r [0:OUT_ST-1];
+		integer i;
+		always @(posedge clk)
+			if (en) begin
+				r[0] <= pp_sum;
+				for (i = 1; i < OUT_ST; i = i + 1)
+					r[i] <= r[i-1];
+			end
+		assign p = r[OUT_ST-1];
+	end
+	endgenerate
+
+	wire unused_ok = &{1'b0, clk, en};
+`else
 `ifndef SYNTH_KINTEX7
 	/* Constant helper: remaining vector count after `st` 3:2 CSA reduction stages. */
 	function integer csa_cnt;
@@ -609,6 +749,7 @@ module am_mul #(
 		assign p = r[LAT-4];
 	end
 	endgenerate
+`endif
 `endif
 endmodule
 

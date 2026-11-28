@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -29,6 +29,8 @@
 
 module atg_dc #(
 `ifdef SYNTH_KINTEX7
+	parameter REG_RDATA = 1,
+`elsif SYNTH_KINTEX_ULTRASCALE
 	parameter REG_RDATA = 1,
 `else
 	parameter REG_RDATA = 0,
@@ -117,31 +119,68 @@ module atg_dc #(
 	genvar gwb;
 	generate
 		for (gwb = 0; gwb < 32; gwb = gwb + 1) begin : g_wdata_buf
-			LUT1 #(.INIT(2'b10)) u_buf_d0 (.I0(d_wdata[gwb]), .O(d_wdata_b0[gwb]));
-			LUT1 #(.INIT(2'b10)) u_buf_d1 (.I0(d_wdata[gwb]), .O(d_wdata_b1[gwb]));
-			LUT1 #(.INIT(2'b10)) u_buf_m0 (.I0(d_wmask[gwb]), .O(d_wmask_b0[gwb]));
-			LUT1 #(.INIT(2'b10)) u_buf_m1 (.I0(d_wmask[gwb]), .O(d_wmask_b1[gwb]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_d0 (.I0(d_wdata[gwb]), .O(d_wdata_b0[gwb]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_d1 (.I0(d_wdata[gwb]), .O(d_wdata_b1[gwb]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_m0 (.I0(d_wmask[gwb]), .O(d_wmask_b0[gwb]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_m1 (.I0(d_wmask[gwb]), .O(d_wmask_b1[gwb]));
 		end
 	endgenerate
-	wire flip_valid_b0, flip_valid_b1;
-	LUT1 #(.INIT(2'b10)) u_buf_fv0 (.I0(flip_valid), .O(flip_valid_b0));
-	LUT1 #(.INIT(2'b10)) u_buf_fv1 (.I0(flip_valid), .O(flip_valid_b1));
+	wire flip_valid_b0 = flip_valid;
+	wire flip_valid_b1;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fv1 (.I0(flip_valid), .O(flip_valid_b1));
 	wire flip_plane_b0, flip_plane_b1;
-	LUT1 #(.INIT(2'b10)) u_buf_fp0 (.I0(flip_plane), .O(flip_plane_b0));
-	LUT1 #(.INIT(2'b10)) u_buf_fp1 (.I0(flip_plane), .O(flip_plane_b1));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fp0 (.I0(flip_plane), .O(flip_plane_b0));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fp1 (.I0(flip_plane), .O(flip_plane_b1));
 	wire rsp_error_b0, rsp_error_b1;
-	LUT1 #(.INIT(2'b10)) u_buf_re0 (.I0(rsp_error), .O(rsp_error_b0));
-	LUT1 #(.INIT(2'b10)) u_buf_re1 (.I0(rsp_error), .O(rsp_error_b1));
-	wire d_we_b0 = d_we, d_we_b1 = d_we;
-	wire [5:0] d_idx_b0, d_idx_b1;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_re0 (.I0(rsp_error), .O(rsp_error_b0));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_re1 (.I0(rsp_error), .O(rsp_error_b1));
+	wire d_we_b0 = d_we;
+	wire d_we_b1;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_we1 (.I0(d_we), .O(d_we_b1));
+	wire [5:0] d_idx_b0 = d_idx;
+	wire [5:0] d_idx_b1;
 	wire [5:0] d_ridx_b0, d_ridx_b1;
 	genvar gib;
 	generate
 		for (gib = 0; gib < 6; gib = gib + 1) begin : g_idx_buf
-			LUT1 #(.INIT(2'b10)) u_buf_i0 (.I0(d_idx[gib]), .O(d_idx_b0[gib]));
-			LUT1 #(.INIT(2'b10)) u_buf_i1 (.I0(d_idx[gib]), .O(d_idx_b1[gib]));
-			LUT1 #(.INIT(2'b10)) u_buf_ri0 (.I0(d_ridx[gib]), .O(d_ridx_b0[gib]));
-			LUT1 #(.INIT(2'b10)) u_buf_ri1 (.I0(d_ridx[gib]), .O(d_ridx_b1[gib]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_i1 (.I0(d_idx[gib]), .O(d_idx_b1[gib]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_ri0 (.I0(d_ridx[gib]), .O(d_ridx_b0[gib]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_ri1 (.I0(d_ridx[gib]), .O(d_ridx_b1[gib]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [31:0] d_wdata_b0, d_wdata_b1;
+	wire [31:0] d_wmask_b0, d_wmask_b1;
+	genvar gwb;
+	generate
+		for (gwb = 0; gwb < 32; gwb = gwb + 1) begin : g_wdata_buf
+			assign d_wdata_b0[gwb] = d_wdata[gwb];
+			assign d_wdata_b1[gwb] = d_wdata[gwb];
+			assign d_wmask_b0[gwb] = d_wmask[gwb];
+			assign d_wmask_b1[gwb] = d_wmask[gwb];
+		end
+	endgenerate
+	wire flip_valid_b0 = flip_valid;
+	wire flip_valid_b1;
+	assign flip_valid_b1 = flip_valid;
+	wire flip_plane_b0, flip_plane_b1;
+	assign flip_plane_b0 = flip_plane;
+	assign flip_plane_b1 = flip_plane;
+	wire rsp_error_b0, rsp_error_b1;
+	assign rsp_error_b0 = rsp_error;
+	assign rsp_error_b1 = rsp_error;
+	wire d_we_b0 = d_we;
+	wire d_we_b1;
+	assign d_we_b1 = d_we;
+	wire [5:0] d_idx_b0 = d_idx;
+	wire [5:0] d_idx_b1;
+	wire [5:0] d_ridx_b0, d_ridx_b1;
+	genvar gib;
+	generate
+		for (gib = 0; gib < 6; gib = gib + 1) begin : g_idx_buf
+			assign d_idx_b1[gib] = d_idx[gib];
+			assign d_ridx_b0[gib] = d_ridx[gib];
+			assign d_ridx_b1[gib] = d_ridx[gib];
 		end
 	endgenerate
 `else
@@ -161,6 +200,17 @@ module atg_dc #(
 	wire [2:0] g_toggles;
 	reg [2:0] g_toggles_q;
 `ifdef SYNTH_KINTEX7
+	(* keep = "true" *) wire dc_top_rst_high;
+	LUT1 #(.INIT(2'b01)) u_top_rst_inv (.I0(rst_n), .O(dc_top_rst_high));
+	wire rst_high = dc_top_rst_high;
+
+	(* keep = "true" *) wire dc_top_prst_high;
+	LUT1 #(.INIT(2'b01)) u_top_prst_inv (.I0(prst_n), .O(dc_top_prst_high));
+	wire prst_high = dc_top_prst_high;
+
+	(* keep = "true" *) wire dc_rst_high;
+	LUT2 #(.INIT(4'b1101)) u_top_dc_rst (.I0(rst_n), .I1(dc_reset), .O(dc_rst_high));
+`elsif SYNTH_KINTEX_ULTRASCALE
 	(* keep = "true" *) wire dc_top_rst_high;
 	LUT1 #(.INIT(2'b01)) u_top_rst_inv (.I0(rst_n), .O(dc_top_rst_high));
 	wire rst_high = dc_top_rst_high;
@@ -202,18 +252,46 @@ module atg_dc #(
 
 `ifdef SYNTH_KINTEX7
 	(* keep = "true" *) wire [1:0] format_dma, format_cursor, format_tgen;
-	LUT1 #(.INIT(2'b10)) u_buf_fmt_d0 (.I0(format[0]), .O(format_dma[0]));
-	LUT1 #(.INIT(2'b10)) u_buf_fmt_d1 (.I0(format[1]), .O(format_dma[1]));
-	LUT1 #(.INIT(2'b10)) u_buf_fmt_c0 (.I0(format[0]), .O(format_cursor[0]));
-	LUT1 #(.INIT(2'b10)) u_buf_fmt_c1 (.I0(format[1]), .O(format_cursor[1]));
-	LUT1 #(.INIT(2'b10)) u_buf_fmt_t0 (.I0(format[0]), .O(format_tgen[0]));
-	LUT1 #(.INIT(2'b10)) u_buf_fmt_t1 (.I0(format[1]), .O(format_tgen[1]));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fmt_d0 (.I0(format[0]), .O(format_dma[0]));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fmt_d1 (.I0(format[1]), .O(format_dma[1]));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fmt_c0 (.I0(format[0]), .O(format_cursor[0]));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fmt_c1 (.I0(format[1]), .O(format_cursor[1]));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fmt_t0 (.I0(format[0]), .O(format_tgen[0]));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fmt_t1 (.I0(format[1]), .O(format_tgen[1]));
 
 	(* keep = "true" *) wire connected_regs;
-	LUT1 #(.INIT(2'b10)) u_buf_conn (.I0(connected), .O(connected_regs));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_conn (.I0(connected), .O(connected_regs));
+
+	wire [15:0] fb_size_cur_w;
+	genvar gfb;
+	generate
+		for (gfb = 0; gfb < 16; gfb = gfb + 1) begin : g_fb_cur_buf
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fbc (.I0(fb_size[gfb]), .O(fb_size_cur_w[gfb]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true" *) wire [1:0] format_dma, format_cursor, format_tgen;
+	assign format_dma[0] = format[0];
+	assign format_dma[1] = format[1];
+	assign format_cursor[0] = format[0];
+	assign format_cursor[1] = format[1];
+	assign format_tgen[0] = format[0];
+	assign format_tgen[1] = format[1];
+
+	(* keep = "true" *) wire connected_regs;
+	assign connected_regs = connected;
+
+	wire [15:0] fb_size_cur_w;
+	genvar gfb;
+	generate
+		for (gfb = 0; gfb < 16; gfb = gfb + 1) begin : g_fb_cur_buf
+			assign fb_size_cur_w[gfb] = fb_size[gfb];
+		end
+	endgenerate
 `else
 	wire [1:0] format_dma = format, format_cursor = format, format_tgen = format;
 	wire connected_regs = connected;
+	wire [15:0] fb_size_cur_w = fb_size[15:0];
 `endif
 
 	(* max_fanout = 16 *) wire p_hdr_en, p_vrr_en, p_flip_ready, p_plane2_en;
@@ -238,7 +316,7 @@ module atg_dc #(
 	(* keep = "true", equivalent_register_removal = "no" *) reg [2:0] g_ev_dma;
 	(* keep = "true", equivalent_register_removal = "no" *) reg [2:0] g_ev_cursor;
 	always @(posedge clk_g) begin
-		if (rst_high) begin
+		if (dc_rst_high) begin
 			g_ev <= 3'd0;
 			g_ev_regs <= 2'd0;
 			g_ev_dma <= 3'd0;
@@ -338,7 +416,7 @@ module atg_dc #(
 
 		atg_dc_cursor #(.ADDR_W(ADDR_W), .LINE_BYTES(LINE_BYTES), .LINE_SHIFT(LINE_SHIFT)) cursor (
 			.clk(clk_g), .rst_n(rst_n_net), .dc_reset(dc_reset), .enable(enable_b), .format(format_cursor),
-			.frame_start(g_ev_cursor[0]), .dma_done(dma_done), .fb_width(fb_size[15:0]),
+			.frame_start(g_ev_cursor[0]), .dma_done(dma_done), .fb_width(fb_size_cur_w),
 			.i_valid(dma_px_valid), .i_ready(dma_px_ready), .i_data(dma_px_data),
 			.o_valid(px_w_valid), .o_ready(px_w_ready), .o_data(px_w_data),
 			.pos(cur_pos), .show(cur_show),
@@ -352,49 +430,51 @@ module atg_dc #(
 			.rsp_rdata(mux_rsp_rdata), .rsp_error(mux_rsp_error)
 		);
 
-		/* Low-fanout 2-way AMB read multiplexer between DMA (0) and Cursor (1) */
-		reg lock;
-		reg lock_k;
-		wire pick = !m_req_valid && c_req_valid;
-		wire any = m_req_valid || c_req_valid;
-		wire k = lock ? lock_k : pick;
-
-		always @(posedge clk_g) begin
-			if (!rst_n_net) begin
-				lock <= 1'b0;
-				lock_k <= 1'b0;
-			end else begin
-				lock <= req_valid && !req_ready;
-				lock_k <= k;
-			end
-		end
-
+		/* Registered AMB arbiter output slice between DMA (0) and Cursor (1).
+		 * Isolates c_req_valid -> dma and external req_ready -> dma/cursor. */
+		localparam integer DC_AW = ADDR_W - LINE_SHIFT;
 `ifdef SYNTH_KINTEX7
-		wire k_line, k_tag;
-		LUT1 #(.INIT(2'b10)) u_buf_kl (.I0(k), .O(k_line));
-		LUT1 #(.INIT(2'b10)) u_buf_kt (.I0(k), .O(k_tag));
+		wire m_req_v_l0, m_req_v_l1, m_req_v_l2, m_req_v_tag, m_req_v_ctl;
+		(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_mrv_l0  (.I0(m_req_valid), .O(m_req_v_l0));
+		(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_mrv_l1  (.I0(m_req_valid), .O(m_req_v_l1));
+		(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_mrv_l2  (.I0(m_req_valid), .O(m_req_v_l2));
+		(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_mrv_tag (.I0(m_req_valid), .O(m_req_v_tag));
+		(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_mrv_ctl (.I0(m_req_valid), .O(m_req_v_ctl));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		wire m_req_v_l0, m_req_v_l1, m_req_v_l2, m_req_v_tag, m_req_v_ctl;
+		assign m_req_v_l0 = m_req_valid;
+		assign m_req_v_l1 = m_req_valid;
+		assign m_req_v_l2 = m_req_valid;
+		assign m_req_v_tag = m_req_valid;
+		assign m_req_v_ctl = m_req_valid;
 `else
-		wire k_line = k;
-		wire k_tag = k;
+		wire m_req_v_l0 = m_req_valid, m_req_v_l1 = m_req_valid, m_req_v_l2 = m_req_valid;
+		wire m_req_v_tag = m_req_valid, m_req_v_ctl = m_req_valid;
 `endif
-
-		assign req_valid = lock ? 1'b1 : any;
+		wire arb_in_valid = m_req_v_ctl || c_req_valid;
+		wire [DC_AW-1:0] arb_in_line = {
+			m_req_v_l2 ? m_req_line[DC_AW-1:18] : c_req_line[DC_AW-1:18],
+			m_req_v_l1 ? m_req_line[17:9]       : c_req_line[17:9],
+			m_req_v_l0 ? m_req_line[8:0]        : c_req_line[8:0]
+		};
+		wire [7:0] arb_in_tag = m_req_v_tag ? {1'b0, m_req_tag[6:0]} : {1'b1, c_req_tag[6:0]};
+		wire arb_in_ready;
+		wire [DC_AW+8-1:0] arb_out_data;
+		am_skid #(.WIDTH(DC_AW + 8), .RST_DATA(1)) u_req_skid (
+			.clk(clk_g), .rst_n(rst_n_net),
+			.in_valid(arb_in_valid), .in_ready(arb_in_ready),
+			.in_data({arb_in_tag, arb_in_line}),
+			.out_valid(req_valid), .out_ready(req_ready),
+			.out_data(arb_out_data)
+		);
 		assign req_write = 1'b0;
-`ifdef SYNTH_KINTEX7
-		wire k_line_lo, k_line_hi;
-		LUT1 #(.INIT(2'b10)) u_buf_kl_lo (.I0(k_line), .O(k_line_lo));
-		LUT1 #(.INIT(2'b10)) u_buf_kl_hi (.I0(k_line), .O(k_line_hi));
-		assign req_line[13:0] = k_line_lo ? c_req_line[13:0] : m_req_line[13:0];
-		assign req_line[ADDR_W-LINE_SHIFT-1:14] = k_line_hi ? c_req_line[ADDR_W-LINE_SHIFT-1:14] : m_req_line[ADDR_W-LINE_SHIFT-1:14];
-`else
-		assign req_line = k_line ? c_req_line : m_req_line;
-`endif
+		assign req_line = arb_out_data[DC_AW-1:0];
 		assign req_be = {LINE_BYTES{1'b0}};
 		assign req_wdata = {(LINE_BYTES*8){1'b0}};
-		assign req_tag = {k_tag, k_tag ? c_req_tag[6:0] : m_req_tag[6:0]};
+		assign req_tag = arb_out_data[DC_AW +: 8];
 
-		assign m_req_ready = req_valid && req_ready && (k == 1'b0);
-		assign c_req_ready = req_valid && req_ready && (k == 1'b1);
+		assign m_req_ready = arb_in_ready;
+		assign c_req_ready = arb_in_ready && !m_req_v_ctl;
 
 		assign m_rsp_valid = rsp_valid && (rsp_tag[7] == 1'b0);
 		assign c_rsp_valid = rsp_valid && (rsp_tag[7] == 1'b1);
@@ -403,6 +483,8 @@ module atg_dc #(
 		assign mux_rsp_rdata = rsp_rdata;
 		assign mux_rsp_error = rsp_error_b1;
 		assign idle = dma_idle && cur_idle;
+		wire unused_arb_bits = &{1'b0, m_req_write, m_req_be, m_req_wdata, m_req_tag[7],
+			c_req_write, c_req_be, c_req_wdata, c_req_tag[7]};
 	end else begin : g_no_cursor
 		/* Register slice with sync flush on frame abort/disable isolates DMA from pixel FIFO (Rule 3/4). */
 		wire px_skid_clr = g_ev_dma[0] || !enable_b;
@@ -565,11 +647,42 @@ module atg_dc #(
 	assign final_rgb[15:8]  = p_hdr_en_g ? hdr_out_g[9:2] : (p_plane2_en_g ? p2_rgb[15:8]  : tgen_rgb[15:8]);
 	assign final_rgb[7:0]   = p_hdr_en_b ? hdr_out_b[9:2] : (p_plane2_en_b ? p2_rgb[7:0]   : tgen_rgb[7:0]);
 
-	wire [23:0] final_rgb_tmds = final_rgb;
-	wire [23:0] final_rgb_px = final_rgb;
+	(* equivalent_register_removal = "no" *) reg [23:0] final_rgb_tmds_r, final_rgb_px_r;
+	(* equivalent_register_removal = "no" *) reg de_tmds_r, hs_tmds_r, vs_tmds_r;
+	(* equivalent_register_removal = "no" *) reg de_px_r, hs_px_r, vs_px_r;
+	always @(posedge p_clk or negedge prst_n) begin
+		if (!prst_n) begin
+			final_rgb_tmds_r <= 24'd0;
+			final_rgb_px_r   <= 24'd0;
+			de_tmds_r        <= 1'b0;
+			hs_tmds_r        <= 1'b0;
+			vs_tmds_r        <= 1'b0;
+			de_px_r          <= 1'b0;
+			hs_px_r          <= 1'b0;
+			vs_px_r          <= 1'b0;
+		end else if (p_dc_reset) begin
+			final_rgb_tmds_r <= 24'd0;
+			final_rgb_px_r   <= 24'd0;
+			de_tmds_r        <= 1'b0;
+			hs_tmds_r        <= 1'b0;
+			vs_tmds_r        <= 1'b0;
+			de_px_r          <= 1'b0;
+			hs_px_r          <= 1'b0;
+			vs_px_r          <= 1'b0;
+		end else begin
+			final_rgb_tmds_r <= final_rgb;
+			final_rgb_px_r   <= final_rgb;
+			de_tmds_r        <= de;
+			hs_tmds_r        <= hs;
+			vs_tmds_r        <= vs;
+			de_px_r          <= de;
+			hs_px_r          <= hs;
+			vs_px_r          <= vs;
+		end
+	end
 
 	atg_dc_tmds tmds_enc (
-		.clk(p_clk), .rst_n(p_rst_n), .rgb(final_rgb_tmds), .de(de), .hs(hs), .vs(vs), .tmds(tmds)
+		.clk(p_clk), .rst_n(p_rst_n), .rgb(final_rgb_tmds_r), .de(de_tmds_r), .hs(hs_tmds_r), .vs(vs_tmds_r), .tmds(tmds)
 	);
 
 	/* The parallel output (KC705 ADV7511). */
@@ -578,15 +691,15 @@ module atg_dc #(
 		wire [15:0] ycc;
 
 		atg_dc_ycc ycc_enc (
-			.clk(p_clk), .rst_n(p_rst_n), .rgb(final_rgb_px), .de(de), .hs(hs), .vs(vs),
+			.clk(p_clk), .rst_n(p_rst_n), .rgb(final_rgb_px_r), .de(de_px_r), .hs(hs_px_r), .vs(vs_px_r),
 			.ycc(ycc), .ycc_de(px_de), .ycc_hs(px_hs), .ycc_vs(px_vs)
 		);
 		assign px_rgb = {8'd0, ycc};
 	end else begin : g_rgb
-		assign px_rgb = final_rgb_px;
-		assign px_de = de;
-		assign px_hs = hs;
-		assign px_vs = vs;
+		assign px_rgb = final_rgb_px_r;
+		assign px_de = de_px_r;
+		assign px_hs = hs_px_r;
+		assign px_vs = vs_px_r;
 	end
 	endgenerate
 

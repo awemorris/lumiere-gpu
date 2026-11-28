@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -111,6 +111,7 @@ module atg_tu_addr #(
 	                 LB2E         = 6'd41,
 	                 LB2F         = 6'd42,
 	                 LA2D         = 6'd43,
+	                 LA2C2        = 6'd50,
 	                 LB3          = 6'd17,
 	                 OUT          = 6'd18,
 	                 LOAD_DESC    = 6'd23,
@@ -121,11 +122,30 @@ module atg_tu_addr #(
 
 	wire rst_inv = !rst_n;
 
-	(* max_fanout = 12 *) reg [5:0] st;
+	(* max_fanout = 12 *) reg [50:0] st;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [7:0] st_is_idle_crd;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [3:0] st_is_idle_wd1;
 	(* max_fanout = 12 *) reg [3:0] pas;	/* {column, row, level, slice} */
 	(* max_fanout = 12 *) reg [7:0] opr;
+	(* keep = "true", equivalent_register_removal = "no" *) reg r_op_texb, r_op_texl, r_gather_ctl, r_qlod_ctl, r_nlevq, r_dszq, r_smpq, r_nofetch, r_nofetch_a_op, r_n_lane_op;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [6:0] r_qlod;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [4:0] r_op_texsz, r_op_b1, r_miplin;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [9:0] r_op_texf;
+	(* keep = "true", equivalent_register_removal = "no" *) reg r_cmp, r_filt, r_f32;
+	reg [3:0] r_nlev_pre;
+	reg [1:0] r_gwi_src;
+	reg       r_gwi_const;
+	reg [3:0] r_cw2_gt0, r_cw2_neg;
+	reg [3:0] r_lfetch_const [0:3];
+	reg       r_cnt_zero;
+	reg [2:0] r_jnext;
+	reg [1:0] r_jlane;
 	(* max_fanout = 12 *) reg [4:0] slot;
 	(* max_fanout = 12 *) reg [4:0] samp_slot;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [4:0] slot_bram0, slot_bram1;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [4:0] samp_slot_bram;
+	(* keep = "true", equivalent_register_removal = "no" *) reg ta_valid_r;
+	reg [4:0] r_nxt;
 	(* extract_reset = "no" *) reg [639:0] crd;
 	(* extract_reset = "no" *) reg [31:0] r_tcrd_w0 [0:3];
 	(* extract_reset = "no" *) reg [31:0] r_tcrd_w1 [0:3];
@@ -139,7 +159,7 @@ module atg_tu_addr #(
 	(* extract_reset = "no" *) reg [31:0] r_foot_y [0:3];
 	(* extract_reset = "no" *) reg [31:0] r_foot_z [0:3];
 	(* extract_reset = "no" *) reg [1:0]  r_foot_smp [0:3];
-	(* extract_reset = "no" *) reg [11:0] r_foot_off [0:3];
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [11:0] r_foot_off [0:3];
 	(* max_fanout = 12 *) reg [11:0] offs;
 	(* max_fanout = 12 *) reg linq, depf, mipf;
 	reg cb_lod, cb_lane;	/* a cube quad: the LOD projections, the lanes' own */
@@ -153,8 +173,11 @@ module atg_tu_addr #(
 	(* max_fanout = 12, extract_reset = "no" *) reg signed [16:0] r_lam_u, r_lam_v, r_lam_w;
 	(* max_fanout = 12, extract_reset = "no" *) reg signed [16:0] r_lam_uv, r_lam_w_d;
 	(* extract_reset = "no" *) reg r_uv_ge_v, r_uv_ge_w_lo, r_uv_ge_w_hi;
-	(* extract_reset = "no" *) reg signed [16:0] r_lam_quad [0:3];
-	(* max_fanout = 12, extract_reset = "no" *) reg [31:0] r_lfx [0:3];
+	/* Extract reset attributes and anti-merge replication on wide control/lane registers */
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg signed [16:0] r_lam_quad [0:3];
+	(* max_fanout = 12, extract_reset = "no" *) reg [16:0] r_lfx [0:3];
+	(* extract_reset = "no" *) reg [16:0] r_lfx_hi [0:3];
+	(* extract_reset = "no" *) reg [3:0] r_lfx_ov_pos, r_lfx_ov_neg;
 	(* max_fanout = 12, extract_reset = "no" *) reg signed [16:0] r_lam1 [0:3];
 	(* max_fanout = 12, extract_reset = "no" *) reg [32:0] r_lsum [0:3];
 	(* max_fanout = 12, extract_reset = "no" *) reg signed [16:0] r_lraw [0:3];
@@ -182,26 +205,28 @@ module atg_tu_addr #(
 	(* max_fanout = 12, extract_reset = "no" *) reg [15:0] r_dq [0:3];
 
 	/* Lane stages A -> B registers (4 lanes parallel) */
-	(* extract_reset = "no" *) reg r_lin [0:3];
-	(* extract_reset = "no" *) reg [3:0] r_lin_wts;
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [3:0] r_lin, r_lin_wts;
 	(* max_fanout = 12, extract_reset = "no" *) reg [7:0] r_fl [0:3];
 	(* max_fanout = 12, extract_reset = "no" *) reg [15:0] r_wl [0:3], r_hl [0:3], r_dl [0:3], r_hl1 [0:3];
 	(* max_fanout = 12, extract_reset = "no" *) reg [31:0] r_lbase [0:3], r_plane [0:3], r_val [0:3];
 
 	/* Quad slot descriptor snapshot registers (latched on quad start) */
 	(* max_fanout = 12, extract_reset = "no" *) reg [31:0] r_base, r_stride;
-	(* extract_reset = "no" *) reg [15:0] r_w0_a, r_w0_b, r_h0_a, r_h0_b;
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [15:0] r_w0_a, r_w0_b, r_w0_u, r_w0_v, r_w0_w, r_h0_a, r_h0_b, r_h0_u, r_h0_v, r_h0_w;
 	(* max_fanout = 12, extract_reset = "no" *) reg [15:0] r_cnt;
 	(* max_fanout = 12, extract_reset = "no" *) reg [3:0]  r_nlev, r_maxl;
 	(* max_fanout = 12, extract_reset = "no" *) reg [12:0] r_fc;
-	(* max_fanout = 12, extract_reset = "no" *) reg        r_legacy, r_depth, r_blk, r_f565, r_ms, r_tiled, r_unn, r_is3dr, r_arr, r_cube;
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg        r_legacy, r_depth, r_blk, r_f565, r_tiled, r_is3dr, r_cube;
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg        r_ms_ctl, r_nofetch_ctl;
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [3:0]  r_ms_b, r_unn_tcrd, r_unn_lamp, r_unn_lam;
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [3:0]  r_arr_b;
 	(* extract_reset = "no" *) reg [2:0] r_is3d_lod, r_cube_lod;
 	(* extract_reset = "no" *) reg [3:0] r_is3d_foot, r_is3d_dsz;
 	(* extract_reset = "no" *) reg [3:0] r_cube_hl, r_cube_tcrd, r_cube_lay, r_cube_foot;
-	(* extract_reset = "no" *) reg [3:0] r_qlod_lraw, r_not_texb_lraw;
-	(* extract_reset = "no" *) reg [3:0] r_val_dsz_b0, r_val_dsz_b1, r_val_texsz_lo_b0, r_val_texsz_lo_b1, r_val_texsz_hi, r_val_qlod_lo, r_val_qlod_hi, r_val_cmp_lo, r_val_cmp_hi;
-	(* extract_reset = "no" *) reg [31:0] r_nofetch_a;
-	(* extract_reset = "no" *) reg [3:0]  r_nofetch_bord;
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [3:0] r_qlod_lraw, r_not_texb_lraw;
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [3:0] r_val_dsz_b0, r_val_dsz_b1, r_val_texsz_lo_b0, r_val_texsz_lo_b1, r_val_texsz_hi, r_val_qlod_lo, r_val_qlod_hi, r_val_cmp_lo, r_val_cmp_hi;
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [31:0] r_nofetch_a;
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [15:0] r_nofetch_bord;
 	(* max_fanout = 12, extract_reset = "no" *) reg [2:0]  r_psl;
 	(* max_fanout = 12, extract_reset = "no" *) reg signed [16:0] r_minlod, r_maxlod, r_sbias;
 	(* max_fanout = 12, extract_reset = "no" *) reg        r_max_lt_min;
@@ -210,7 +235,7 @@ module atg_tu_addr #(
 	(* max_fanout = 12, extract_reset = "no" *) reg [2:0]  r_cmp_op;
 	(* max_fanout = 12, extract_reset = "no" *) reg [1:0]  r_bcls;
 	(* max_fanout = 12, extract_reset = "no" *) reg [1:0]  r_rowa;
-	(* max_fanout = 12, extract_reset = "no" *) reg [20:0] r_tfmt;
+	(* keep = "true", max_fanout = 12 *) reg [20:0] r_tfmt;
 	(* max_fanout = 12, extract_reset = "no" *) reg [1:0]  r_gwi;
 	(* max_fanout = 12, extract_reset = "no" *) reg [31:0] r_dsize_raw, r_image_raw, r_samp_raw, r_dlod_raw;
 	(* max_fanout = 12, extract_reset = "no" *) reg [1:0]  r_row_raw;
@@ -223,11 +248,16 @@ module atg_tu_addr #(
 	wire [20:0] tfmt;
 	wire [1:0] rowa;	/* the slot's raw TEX_ROW */
 
+`ifndef SYNTH_ASIC
 	(* keep_hierarchy = "yes" *)
+`endif
 	atg_tu_desc desc (
 		.clk(clk), .rst_n(rst_n), .st_we(st_we), .st_idx(st_idx), .st_wdata(st_wdata),
 		.busy(desc_busy), .rd_slot(slot),
+		.rd_slot_bram0(slot_bram0),
+		.rd_slot_bram1(slot_bram1),
 		.rd_samp_slot(samp_slot),
+		.rd_samp_slot_bram(samp_slot_bram),
 		.rd_level(r_lvl[0]), .rd_level1(r_lvl[1]), .rd_level2(r_lvl[2]), .rd_level3(r_lvl[3]),
 		.rd_base(base), .rd_size(dsize), .rd_image(image), .rd_stride(stride), .rd_samp(samp),
 		.rd_lod(dlod), .rd_fmt(tfmt), .rd_row(rowa),
@@ -238,15 +268,27 @@ module atg_tu_addr #(
 	);
 
 	/* Pipelined decode of registered descriptor outputs (used in DECODE_DESC & DECODE_DESC2) */
-	wire w0_zero_a = (r_dsize_raw[15:0]  == 16'd0);
-	wire w0_zero_b = (r_dsize_raw[15:0]  == 16'd0);
-	wire h0_zero_a = (r_dsize_raw[31:16] == 16'd0);
-	wire h0_zero_b = (r_dsize_raw[31:16] == 16'd0);
+	(* dont_touch = "true" *) wire w0_zero_a = (r_dsize_raw[15:0]  == 16'd0);
+	(* dont_touch = "true" *) wire w0_zero_b = (r_dsize_raw[15:0]  == 16'd0);
+	(* dont_touch = "true" *) wire w0_zero_u = (r_dsize_raw[15:0]  == 16'd0);
+	(* dont_touch = "true" *) wire w0_zero_v = (r_dsize_raw[15:0]  == 16'd0);
+	(* dont_touch = "true" *) wire w0_zero_w = (r_dsize_raw[15:0]  == 16'd0);
+	(* dont_touch = "true" *) wire h0_zero_a = (r_dsize_raw[31:16] == 16'd0);
+	(* dont_touch = "true" *) wire h0_zero_b = (r_dsize_raw[31:16] == 16'd0);
+	(* dont_touch = "true" *) wire h0_zero_u = (r_dsize_raw[31:16] == 16'd0);
+	(* dont_touch = "true" *) wire h0_zero_v = (r_dsize_raw[31:16] == 16'd0);
+	(* dont_touch = "true" *) wire h0_zero_w = (r_dsize_raw[31:16] == 16'd0);
 	wire [15:0] w0_a = w0_zero_a ? 16'd1 : r_dsize_raw[15:0];
 	wire [15:0] w0_b = w0_zero_b ? 16'd1 : r_dsize_raw[15:0];
+	wire [15:0] w0_u = w0_zero_u ? 16'd1 : r_dsize_raw[15:0];
+	wire [15:0] w0_v = w0_zero_v ? 16'd1 : r_dsize_raw[15:0];
+	wire [15:0] w0_w = w0_zero_w ? 16'd1 : r_dsize_raw[15:0];
 	wire [15:0] h0_a = h0_zero_a ? 16'd1 : r_dsize_raw[31:16];
 	wire [15:0] h0_b = h0_zero_b ? 16'd1 : r_dsize_raw[31:16];
-	wire [3:0] nlev = r_image_raw[3:0] == 4'd0 ? 4'd1 : r_image_raw[3:0] > 4'd13 ? 4'd13 : r_image_raw[3:0];
+	wire [15:0] h0_u = h0_zero_u ? 16'd1 : r_dsize_raw[31:16];
+	wire [15:0] h0_v = h0_zero_v ? 16'd1 : r_dsize_raw[31:16];
+	wire [15:0] h0_w = h0_zero_w ? 16'd1 : r_dsize_raw[31:16];
+	wire [3:0] nlev = r_nlev_pre;
 	wire [3:0] maxl;
 	wire maxl_bo_unused;
 	am_sub #(.W(4)) u_maxl (.a(nlev), .b(4'd1), .bi(1'b0), .d(maxl), .bo(maxl_bo_unused));
@@ -260,7 +302,7 @@ module atg_tu_addr #(
 	wire arr = ENABLE_ARRAY ? (!unn && traw == 3'd1) : 1'b0;
 	wire is3d = ENABLE_3D_CUBE ? (!unn && is3dr) : 1'b0;
 	wire cube = ENABLE_3D_CUBE ? (!unn && traw == 3'd3) : 1'b0;
-	wire [15:0] cnt = r_image_raw[GHCI_IMG_COUNT +: 16] == 16'd0 ? 16'd1 : r_image_raw[GHCI_IMG_COUNT +: 16];
+	wire [15:0] cnt = r_cnt_zero ? 16'd1 : r_image_raw[GHCI_IMG_COUNT +: 16];
 	wire signed [16:0] minlod = $signed({5'd0, r_dlod_raw[GHCI_TEX_MIN_LOD +: 12]});
 	wire signed [16:0] maxlod = $signed({5'd0, ~r_dlod_raw[GHCI_TEX_MAX_LOD +: 12]});
 	wire signed [16:0] sbias = $signed({{4{r_samp_raw[31]}}, r_samp_raw[GHCI_SAMP_LOD_BIAS +: 13]});
@@ -284,36 +326,63 @@ module atg_tu_addr #(
 	wire [2:0] psl_d2 = r_fc[2:0];
 	wire f565_d2 = legacy_d2 && (r_image_raw[GHCI_IMG_FMT +: 4] == 4'd4);
 	wire tiled_d2 = r_image_raw[GHCI_IMG_TILED] && (legacy_d2 || psl_d2 == 3'd2);
-	wire [1:0] rowa_d2 = (tiled_d2 || blk_d2 || r_ms) ? 2'd0 : r_row_raw;
-	wire [1:0] gwi_d2 = tu_gwi(r_tfmt, opr[5:4]);
+	wire [1:0] rowa_d2 = (tiled_d2 || blk_d2 || r_ms_ctl) ? 2'd0 : r_row_raw;
+	wire [2:0] tg_s_w = (opr[5:4] == 2'd0) ? r_tfmt[GHCI_TFMT_SWIZZLE +: 3] :
+	                    (opr[5:4] == 2'd1) ? r_tfmt[GHCI_TFMT_SWIZZLE + 3 +: 3] :
+	                    (opr[5:4] == 2'd2) ? r_tfmt[GHCI_TFMT_SWIZZLE + 6 +: 3] :
+	                                         r_tfmt[GHCI_TFMT_SWIZZLE + 9 +: 3];
+	wire [1:0] tg_src_w = (tg_s_w == 3'd0 || tg_s_w == 3'd7) ? opr[5:4] :
+	                      (tg_s_w == 3'd3) ? 2'd0 : (tg_s_w == 3'd4) ? 2'd1 :
+	                      (tg_s_w == 3'd5) ? 2'd2 : (tg_s_w == 3'd6) ? 2'd3 :
+	                      (tg_s_w == 3'd1) ? 2'd2 : 2'd3;
+	wire tg_const_w = (tg_s_w == 3'd1 || tg_s_w == 3'd2);
+	/* verilator lint_off UNUSEDSIGNAL */
+	wire [67:0] tg_i_w = atg_fmt_info(r_tfmt[7:0]);
+	/* verilator lint_on UNUSEDSIGNAL */
+	wire [6:0] tg_pos_w = (r_gwi_src == 2'd0) ? tg_i_w[16 +: 7] :
+	                      (r_gwi_src == 2'd1) ? tg_i_w[29 +: 7] :
+	                      (r_gwi_src == 2'd2) ? tg_i_w[42 +: 7] : tg_i_w[55 +: 7];
+	wire [1:0] gwi_d2 = (r_gwi_const || ({1'b0, r_gwi_src} >= tg_i_w[8:6])) ? 2'd0 : tg_pos_w[6:5];
 	wire [11:0] max_lt_min_d;
 	wire        max_lt_min_bo;
 	am_sub #(.W(12)) u_max_lt_min (.a(r_maxlod[11:0]), .b(r_minlod[11:0]), .bi(1'b0), .d(max_lt_min_d), .bo(max_lt_min_bo));
 
 	/* Active quad operations (derived from registered opr and registered descriptor) */
 	wire [1:0] op = opr[1:0];
-	wire [3:0] gather_foot = {4{op == OP_TEXL && opr[3]}};
-	wire [3:0] gather_lane = {4{op == OP_TEXL && opr[3]}};
-	wire       gather_ctl  = (op == OP_TEXL && opr[3]);
-	wire qlod = op == OP_TEXB && opr[6];
-	wire nlevq = op == OP_TEXSZ && opr[6] && !opr[3];
-	wire dszq = op == OP_TEXSZ && opr[3] && !opr[6];
-	wire smpq = op == OP_TEXSZ && opr[6] && opr[3];	/* texsz.s */
-	wire nofetch      = op == OP_TEXSZ || qlod;
-	wire nofetch_ctl  = op == OP_TEXSZ || qlod;
-	wire nofetch_bord = op == OP_TEXSZ || qlod;
-	wire nofetch_a_lo = op == OP_TEXSZ || qlod;
-	wire nofetch_a_hi = op == OP_TEXSZ || qlod;
-
-	wire cmp = r_depth && r_samp_cmp && !op[1] && !qlod;
-	wire filt = r_legacy ? !r_depth || cmp : r_fc[6] || cmp;
-	wire f32 = !r_legacy && !nofetch && !(r_fc[5] || cmp);	/* the fp32 path */
+	wire [3:0] gather_foot = {4{r_gather_ctl}};
+	wire [3:0] gather_lane = {4{r_gather_ctl}};
+	wire       gather_ctl  = r_gather_ctl;
+	wire nlevq = r_nlevq;
+	wire dszq = r_dszq;
+	wire smpq = r_smpq;	/* texsz.s */
+	wire nofetch_ctl  = r_nofetch;
+	wire nofetch_bord, nofetch_a_lo, nofetch_a_hi;
+`ifdef SYNTH_KINTEX7
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_nfb (.I0(r_nofetch), .O(nofetch_bord));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_nflo (.I0(r_nofetch), .O(nofetch_a_lo));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_nfhi (.I0(r_nofetch), .O(nofetch_a_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign nofetch_bord = r_nofetch;
+	assign nofetch_a_lo = r_nofetch;
+	assign nofetch_a_hi = r_nofetch;
+`else
+	assign nofetch_bord = r_nofetch;
+	assign nofetch_a_lo = r_nofetch;
+	assign nofetch_a_hi = r_nofetch;
+`endif
+	wire cmp_d2    = depth_d2 && r_samp_cmp && !r_op_b1[4] && !r_qlod[4];
+	wire filt_d2   = legacy_d2 ? (!depth_d2 || cmp_d2) : (r_fc[6] || cmp_d2);
+	wire f32_d2    = !legacy_d2 && !r_nofetch && !(r_fc[5] || cmp_d2);
+	wire miplin_d2 = ENABLE_TRILINEAR ? (filt_d2 && !r_gather_ctl && !r_unn_tcrd[0] && r_samp_miplin) : 1'b0;
+	wire cmp = r_cmp;
+	wire filt = r_filt;
+	wire f32 = r_f32;	/* the fp32 path */
 	wire [1:0] gwi = f32 && gather_ctl ? r_gwi : 2'd0;
-	wire miplin = ENABLE_TRILINEAR ? (filt && !gather_ctl && !r_unn && r_samp_miplin) : 1'b0;
+	wire miplin = r_miplin[4];
 
 	/* Cube Projections */
-	wire n_lod = r_cube && op == OP_TEXB;
-	wire n_lane = r_cube && !opr[1] && !opr[6];
+	wire n_lod = r_cube && r_op_texb;
+	wire n_lane = r_cube && r_n_lane_op;
 	wire [1:0] jm2;
 	wire [2:0] job1;
 	wire [1:0] carry_unused;
@@ -346,11 +415,13 @@ module atg_tu_addr #(
 	wire signed [26:0] c_s, c_t;
 	generate
 	if (ENABLE_3D_CUBE) begin : g_cubeu
+`ifndef SYNTH_ASIC
 		(* keep_hierarchy = "yes" *)
+`endif
 		atg_tu_cube #(
 			.ENABLE_3D_CUBE(ENABLE_3D_CUBE)
 		) cubeu (
-			.clk(clk), .rst_n(rst_n), .go(st == CUBE),
+			.clk(clk), .rst_n(rst_n), .go(st[CUBE]),
 			.x(jcrd_x), .y(jcrd_y), .z(jcrd_z), .fix(jfix), .fface(cf[0]),
 			.bsy(c_bsy), .face(c_face), .s(c_s), .t(c_t)
 		);
@@ -364,23 +435,27 @@ module atg_tu_addr #(
 
 	/* Parallel Quad LOD Evaluation across u, v, w axes (LAT=5 -> 11 cycles) */
 	wire signed [16:0] lam_u, lam_v;
+`ifndef SYNTH_ASIC
 	(* keep_hierarchy = "yes" *)
+`endif
 	atg_tu_lod #(.LAT(5)) lodu_u (
 		.clk(clk), .rst_n(rst_n), .en(1'b1),
 		.u({crd[320 +: 32], crd[160 +: 32], crd[0 +: 32]}),
 		.v({crd[352 +: 32], crd[192 +: 32], crd[32 +: 32]}),
 		.w({crd[448 +: 32], crd[288 +: 32], crd[128 +: 32]}),
 		.cs({ls2, ls1, cs[0]}), .ct({lt2, lt1, ct[0]}), .is3d(r_is3d_lod[0]), .cube(r_cube_lod[0]),
-		.w0(r_w0_a), .h0(r_h0_a), .d0(r_cnt), .ax(2'd0), .lam(lam_u)
+		.w0(r_w0_u), .h0(r_h0_u), .d0(r_cnt), .ax(2'd0), .lam(lam_u)
 	);
+`ifndef SYNTH_ASIC
 	(* keep_hierarchy = "yes" *)
+`endif
 	atg_tu_lod #(.LAT(5)) lodu_v (
 		.clk(clk), .rst_n(rst_n), .en(1'b1),
 		.u({crd[320 +: 32], crd[160 +: 32], crd[0 +: 32]}),
 		.v({crd[352 +: 32], crd[192 +: 32], crd[32 +: 32]}),
 		.w({crd[448 +: 32], crd[288 +: 32], crd[128 +: 32]}),
 		.cs({ls2, ls1, cs[0]}), .ct({lt2, lt1, ct[0]}), .is3d(r_is3d_lod[1]), .cube(r_cube_lod[1]),
-		.w0(r_w0_a), .h0(r_h0_a), .d0(r_cnt), .ax(2'd1), .lam(lam_v)
+		.w0(r_w0_v), .h0(r_h0_v), .d0(r_cnt), .ax(2'd1), .lam(lam_v)
 	);
 	wire [16:0] uv_cmp_d;
 	wire        uv_cmp_bo;
@@ -395,14 +470,16 @@ module atg_tu_addr #(
 	wire signed [16:0] lam_quad;
 	generate
 	if (ENABLE_3D_CUBE) begin : g_lodu_w
+`ifndef SYNTH_ASIC
 		(* keep_hierarchy = "yes" *)
+`endif
 		atg_tu_lod #(.LAT(5)) lodu_w (
 			.clk(clk), .rst_n(rst_n), .en(1'b1),
 			.u({crd[320 +: 32], crd[160 +: 32], crd[0 +: 32]}),
 			.v({crd[352 +: 32], crd[192 +: 32], crd[32 +: 32]}),
 			.w({crd[448 +: 32], crd[288 +: 32], crd[128 +: 32]}),
 			.cs({ls2, ls1, cs[0]}), .ct({lt2, lt1, ct[0]}), .is3d(r_is3d_lod[2]), .cube(r_cube_lod[2]),
-			.w0(r_w0_a), .h0(r_h0_a), .d0(r_cnt), .ax(2'd2), .lam(lam_w)
+			.w0(r_w0_w), .h0(r_h0_w), .d0(r_cnt), .ax(2'd2), .lam(lam_w)
 		);
 		am_sub #(.W(17)) u_uvw_cmp (.a({~r_lam_uv[16], r_lam_uv[15:0]}), .b({~r_lam_w_d[16], r_lam_w_d[15:0]}), .bi(1'b0), .d(uvw_cmp_d), .bo(uvw_cmp_bo));
 		assign lam_quad = $signed({r_uv_ge_w_hi ? r_lam_uv[16:9] : r_lam_w_d[16:9], r_uv_ge_w_lo ? r_lam_uv[8:0] : r_lam_w_d[8:0]});
@@ -469,15 +546,17 @@ module atg_tu_addr #(
 
 		/* Stage A0: FP32 to Fix32 for cw2 (LAT=2) */
 		wire [31:0] lfx_w;
+`ifndef SYNTH_ASIC
 		(* keep_hierarchy = "yes" *)
+`endif
 		atg_tu_fx32 #(.LAT(2)) u_lfx (.clk(clk), .rst_n(rst_n), .en(1'b1), .f(cw2), .sh(5'd8), .q(lfx_w));
 		assign lfx_w_l[gl] = lfx_w;
-		wire signed [16:0] lam1_sat = tu_sat16({r_lfx[gl][31], r_lfx[gl]});
+		wire signed [16:0] lam1_sat = r_lfx_ov_pos[gl] ? 17'sd32767 : r_lfx_ov_neg[gl] ? -17'sd32768 : $signed(r_lfx[gl]);
 		assign lam1_l[gl] = lam1_sat;
 
 		/* Stage A0B: LOD Raw Selection (using r_lam_quad[gl] and r_lam1[gl]) */
-		wire lq_s_lo   = r_lam_quad[gl][16];
-		wire lq_s_hi   = r_lam_quad[gl][16];
+		(* dont_touch = "true" *) wire lq_s_lo   = r_lam_quad[gl][16];
+		(* dont_touch = "true" *) wire lq_s_hi   = r_lam_quad[gl][16];
 		wire lam1_s_lo = r_lam1[gl][16];
 		wire lam1_s_hi = r_lam1[gl][16];
 		wire [32:0] lsum;
@@ -505,8 +584,8 @@ module atg_tu_addr #(
 			.ci(1'b0), .s(bsum), .co(lsum_carry_unused[gl*2 + 1])
 		);
 		assign bsum_l[gl] = bsum;
-		wire lamp_unn_lo = r_unn;
-		wire lamp_unn_hi = r_unn;
+		(* dont_touch = "true" *) wire lamp_unn_lo = r_unn_lamp[gl];
+		(* dont_touch = "true" *) wire lamp_unn_hi = r_unn_lamp[gl];
 		wire signed [16:0] bsum_sat = tu_sat16(r_bsum[gl]);
 		assign lamp_l[gl] = $signed({
 			lamp_unn_hi ? 8'd0 : bsum_sat[16:9],
@@ -521,8 +600,8 @@ module atg_tu_addr #(
 		assign lt_minlod_l[gl] = minlod_cmp_bo;
 		wire gt_max_lo = r_gt_maxlod[gl];
 		wire gt_max_hi = r_gt_maxlod[gl];
-		wire lam_unn_lo = r_unn;
-		wire lam_unn_hi = r_unn;
+		(* dont_touch = "true" *) wire lam_unn_lo = r_unn_lam[gl];
+		(* dont_touch = "true" *) wire lam_unn_hi = r_unn_lam[gl];
 		wire use_min_lo = r_lt_minlod[gl] || r_max_lt_min;
 		wire use_min_hi = r_lt_minlod[gl] || r_max_lt_min;
 		wire [8:0] lamc_lo = gt_max_lo ? r_maxlod[8:0]  : r_lamp[gl][8:0];
@@ -539,9 +618,8 @@ module atg_tu_addr #(
 		am_add #(.W(4)) u_lnx (.a(r_lam[gl][11:8]), .b(4'd0), .ci(pas[1]), .s(lnx), .co(lvl_carry_unused[gl*2 + 1]));
 		assign lrnd_l[gl]   = lrnd;
 		assign lnx_l[gl]    = lnx;
-		wire [3:0] lfetch_w = cw2[31] ? 4'd0 : (cw2[30:4] != 27'd0 || cw2[3:0] > r_maxl) ? r_maxl : cw2[3:0];
 		wire [3:0] lsize_w  = cw0[31:4] != 28'd0 ? 4'd15 : cw0[3:0];
-		assign lfetch_l[gl] = lfetch_w;
+		assign lfetch_l[gl] = r_lfetch_const[gl];
 		assign mag_l[gl]    = r_lam[gl][16] || (r_lam[gl][15:0] == 16'd0);
 		assign lend_l[gl]   = (r_lam[gl][15:12] != 4'd0 || r_lam[gl][11:8] >= r_maxl);
 		assign lsize_l[gl]  = lsize_w;
@@ -555,14 +633,14 @@ module atg_tu_addr #(
 		wire [3:0] lmin = (r_lrnd[gl][15:12] != 4'd0 || r_lrnd[gl][11:8] > r_maxl) ? r_maxl : r_lrnd[gl][11:8];
 		wire lend = r_lend[gl];
 		wire [3:0] llin = lend ? r_maxl : r_lnx[gl];
-		wire miplin_fl  = !mag && miplin && !lend && !op[1] && !qlod;
-		wire miplin_lvl = miplin;
+		wire miplin_fl  = !mag && r_miplin[gl] && !lend && !r_op_b1[gl] && !r_qlod[gl];
+		wire miplin_lvl = r_miplin[gl];
 		assign fl_l[gl] = miplin_fl ? r_lam[gl][7:0] : 8'd0;
 		wire [3:0] lsize = r_lsize[gl];
-		wire [3:0] lvl_w = op == OP_TEXSZ ? lsize : op == OP_TEXF ? (r_ms ? 4'd0 : r_lfetch[gl]) : gather_lane[gl] || mag ? 4'd0 :
+		wire [3:0] lvl_w = r_op_texsz[gl] ? lsize : r_op_texf[4 + gl] ? (r_ms_b[gl] ? 4'd0 : r_lfetch[gl]) : gather_lane[gl] || mag ? 4'd0 :
 			miplin_lvl ? llin : lmin;
 		wire lin_filt = ENABLE_BILINEAR ? (filt && (mag ? r_samp_mag_lin : r_samp_min_lin)) : 1'b0;
-		wire lin_w = op[1] || qlod ? 1'b0 : gather_lane[gl] ? 1'b1 : lin_filt;
+		wire lin_w = r_op_b1[gl] || r_qlod[gl] ? 1'b0 : gather_lane[gl] ? 1'b1 : lin_filt;
 		assign lvl_l[gl] = lvl_w;
 		assign lin_l[gl] = lin_w;
 		assign lrnd_unused[gl] = {r_lrnd[gl][16], r_lrnd[gl][7:0]};
@@ -587,7 +665,9 @@ module atg_tu_addr #(
 		assign dl_l[gl] = dl_nxt;
 		assign hl1_l[gl] = hl1_nxt;
 
+`ifndef SYNTH_ASIC
 		(* keep_hierarchy = "yes" *)
+`endif
 		atg_tu_tcrd #(
 			.LAT(2),
 			.ENABLE_3D_CUBE(ENABLE_3D_CUBE)
@@ -597,7 +677,7 @@ module atg_tu_addr #(
 			.cw0_un(r_tcrd_un0[gl]), .cw1_un(r_tcrd_un1[gl]),
 			.mu(r_mu), .mv(r_mv), .mw(r_mw),
 			.wl(r_wl[gl]), .hl(r_hl[gl]), .dl(r_dl[gl]),
-			.fcs(cs[gl]), .fct(ct[gl]), .cube(r_cube_tcrd[gl]), .unn(r_unn),
+			.fcs(cs[gl]), .fct(ct[gl]), .cube(r_cube_tcrd[gl]), .unn(r_unn_tcrd[gl]),
 			.cu(cu_l[gl]), .cv(cv_l[gl]), .cw(cwz_l[gl])
 		);
 
@@ -606,16 +686,18 @@ module atg_tu_addr #(
 		wire        sfl_cmp_bo;
 		wire [31:0] lb1_w;
 		if (ENABLE_ARRAY || ENABLE_3D_CUBE) begin : g_lyr_str
+`ifndef SYNTH_ASIC
 			(* keep_hierarchy = "yes" *)
+`endif
 			atg_tu_layer #(.LAT(3)) u_lyr (.clk(clk), .rst_n(rst_n), .en(1'b1), .f(r_lyr_w4[gl]), .cnt(r_cnt), .l(lyr));
 			am_sub #(.W(16)) u_cnt1 (.a(r_cnt), .b(16'd0), .bi(1'b1), .d(cnt1), .bo(cnt1_bo_unused[gl]));
 			am_sub #(.W(16)) u_sfl_cmp (.a(sfl[15:0]), .b(r_cnt), .bi(1'b0), .d(sfl_cmp_d), .bo(sfl_cmp_bo));
 			assign cnt1_l[gl]       = cnt1;
 			assign sfl_ge_cnt_l[gl] = (sfl[31:16] != 16'd0) || !sfl_cmp_bo;
 			assign sfl_gt5_l[gl]    = (sfl[31:3] != 29'd0) || (sfl[2:1] == 2'b11);
-			wire lay_texf_arr  = (op == OP_TEXF) && r_arr;
-			wire lay_texf_cube = (op == OP_TEXF) && !r_arr && r_cube_lay[gl];
-			wire lay_norm_arr  = (op != OP_TEXF) && r_arr;
+			wire lay_texf_arr  = r_op_texf[4 + gl] && r_arr_b[gl];
+			wire lay_texf_cube = r_op_texf[4 + gl] && !r_arr_b[gl] && r_cube_lay[gl];
+			wire lay_norm_arr  = !r_op_texf[4 + gl] && r_arr_b[gl];
 			wire [15:0] lay = lay_texf_arr  ? (r_sfl_ge_cnt[gl] ? r_cnt1[gl] : sfl[15:0]) :
 			                  lay_texf_cube ? (r_sfl_gt5[gl]    ? 16'd5      : sfl[15:0]) :
 			                  lay_norm_arr  ? lyr : 16'd0;
@@ -641,10 +723,10 @@ module atg_tu_addr #(
 		am_add #(.W(32)) u_lbase (.a(r_lb1[gl]), .b(loff_l[gl]), .ci(1'b0), .s(lbase_n_l[gl]),
 			.co(lbase_co_unused[gl]));
 
-		wire dsz_arr  = r_arr;
-		wire dsz_is3d = !r_arr && r_is3d_dsz[gl];
+		wire dsz_arr  = r_arr_b[gl];
+		wire dsz_is3d = !r_arr_b[gl] && r_is3d_dsz[gl];
 		wire [15:0] dsz = dsz_arr ? r_cnt : dsz_is3d ? r_dl[gl] : 16'd1;
-		wire [15:0] val_lo_s0 = smpq ? (r_ms ? 16'd4 : 16'd1) : nlevq ? {12'd0, r_nlev} : 16'd0;
+		wire [15:0] val_lo_s0 = smpq ? (r_ms_ctl ? 16'd4 : 16'd1) : nlevq ? {12'd0, r_nlev} : 16'd0;
 		wire [15:0] val_lo = {
 			r_val_dsz_b1[gl]      ? dsz[15:8]       :
 			r_val_texsz_lo_b1[gl] ? r_wl[gl][15:8]  :
@@ -661,7 +743,9 @@ module atg_tu_addr #(
 		assign val_l[gl] = {val_hi, val_lo};
 
 		/* Stage B: Footprint and address expansion (LAT=5) */
+`ifndef SYNTH_ASIC
 		(* keep_hierarchy = "yes" *)
+`endif
 		atg_tu_foot #(
 			.LAT(5),
 			.ENABLE_BILINEAR(ENABLE_BILINEAR),
@@ -671,8 +755,8 @@ module atg_tu_addr #(
 			.ENABLE_MSAA(ENABLE_MSAA)
 		) u_foot (
 			.clk(clk), .rst_n(rst_n), .en(1'b1),
-			.op(op), .gather(gather_foot[gl]), .cube(r_cube_foot[gl]), .is3d(r_is3d_foot[gl]), .tiled(r_tiled), .lin(r_lin[gl]),
-			.ms(r_ms), .smp(r_foot_smp[gl]), .psl(r_psl), .ra(r_rowa), .blk(r_blk),
+			.op({r_op_texf[gl], 1'b0}), .gather(gather_foot[gl]), .cube(r_cube_foot[gl]), .is3d(r_is3d_foot[gl]), .tiled(r_tiled), .lin(r_lin[gl]),
+			.ms(r_ms_b[gl]), .smp(r_foot_smp[gl]), .psl(r_psl), .ra(r_rowa), .blk(r_blk),
 			.row(pas[2]), .col(pas[3]), .gwi(gwi), .p0(pas[0]),
 			.mu(r_mu), .mv(r_mv), .mw(r_mw), .off(r_foot_off[gl]),
 			.x(r_foot_x[gl]), .y(r_foot_y[gl]), .z(r_foot_z[gl]),
@@ -687,102 +771,132 @@ module atg_tu_addr #(
 	end
 	endgenerate
 
-	/* Multi-pass calculation */
+	/* Multi-pass calculation (nxb/nxt evaluated in LB3 -> r_nxt) */
 	wire split = f32 && r_psl == 3'd3 && linq && (r_blk || !gather_ctl);
 	wire quad = f32 && r_psl == 3'd4 && r_blk && linq;	/* 16-byte blocks: 4 passes */
-	wire [2:0] nxb = pas[1:0] == 2'd0 ? (depf ? 3'd1 : mipf ? 3'd2 : 3'd4) :
-		pas[1:0] == 2'd1 ? (mipf ? 3'd2 : 3'd4) : pas[1:0] == 2'd2 ? (depf ? 3'd3 : 3'd4) : 3'd4;
-	wire [4:0] nxt = quad && !pas[3] ? {2'b01, pas[2:0]} : quad && !pas[2] ? {3'b001, pas[1:0]} :
-		split && !pas[2] ? {3'b001, pas[1:0]} : {nxb[2], 2'b00, nxb[1:0]};
 
-	wire [4:0] desc_busy_b = {5{desc_busy}};
-	assign tx_ready = (st == IDLE) && !desc_busy_b[0];
-	assign ta_valid = st == OUT;
+	wire [7:0] desc_busy_b = {8{desc_busy}};
+	assign tx_ready = st[IDLE] && !desc_busy_b[0];
+	assign ta_valid = ta_valid_r;
 
 	wire [1:0] tsz = r_legacy ? 2'd0 : r_psl == 3'd0 ? 2'd2 : r_psl == 3'd1 ? 2'd1 : 2'd0;
 	wire [1:0] nsl = r_psl == 3'd3 ? 2'd1 : r_psl == 3'd4 ? 2'd2 : 2'd0;
 	wire [7:0] vkf = r_legacy || r_fc[4] ? 8'd0 : r_tfmt[7:0];
-	wire [49:0] ta_ctl_w = {quad, pas[3], r_tfmt[20:9], r_fc[8], vkf, nsl, tsz, pas[2], split, f32, r_f565,
-		pas[1:0], qlod, gather_ctl ? opr[5:4] : 2'd0, gather_ctl, r_cmp_op, cmp, r_depth, r_bcls, pas != 4'd0,
-		!nxt[4],
-		op == OP_TEXF, nofetch_ctl, r_fc[9], linq};
+	(* dont_touch = "true" *) wire qlod_ctl = r_qlod_ctl;
+	(* dont_touch = "true" *) wire [49:0] ta_ctl_w = {quad, pas[3], r_tfmt[20:9], r_fc[8], vkf, nsl, tsz, pas[2], split, f32, r_f565,
+		pas[1:0], qlod_ctl, gather_ctl ? opr[5:4] : 2'd0, gather_ctl, r_cmp_op, cmp, r_depth, r_bcls, pas != 4'd0,
+		!r_nxt[4],
+		r_op_texf[8], r_nofetch_ctl, r_fc[9], linq};
 	assign ta_ctl = ta_ctl_w;
 
 	/* Fanout-decoupled slice enables for wide registers crd (640b) and ta_addr/ta_wts/ta_value */
-	wire [7:0]  idle_ce_g;
-	wire [79:0] idle_ce_s;
-	wire [7:0]  idle_meta_ce = {8{(st == IDLE) && tx_valid && !desc_busy_b[0]}};
-	wire [2:0]  wdesc1_en = {3{(st == IDLE) && tx_valid && !desc_busy_b[0]}};
-	wire [4:0]  wdesc2_en = {5{st == WAIT_DESC1}};
-	wire [1:0]  ld_desc_en = {2{st == WAIT_DESC2}};
-	wire [1:0]  dec_desc_en = {2{st == LOAD_DESC}};
-	wire [1:0]  la1_en = {2{st == LA1A}};
-	wire [1:0]  la1b_en = {2{st == LA1BA}};
-	wire [1:0]  la2d_en = {2{st == LA2C}};
-	wire [3:0]  lb3_en = {4{st == LB2F}};
-	reg [32:0] wdesc1_ce;
-	reg [52:0] wdesc2_ce;
-	reg [31:0] lb3_ce_a;
-	reg [7:0]  lb3_ce_wts;
-	reg [7:0]  lb3_ce_val;
-	reg        lb3_ce_bord;
+	(* dont_touch = "true" *) wire [7:0]  idle_ce_g;
+	(* dont_touch = "true" *) wire [79:0] idle_ce_s;
+	(* dont_touch = "true" *) wire [8:0]  idle_meta_ce = {9{st[IDLE] && tx_valid && !desc_busy_b[5]}};
+	(* dont_touch = "true" *) wire [3:0]  wdesc1_en;
+	assign wdesc1_en[0] = st_is_idle_wd1[0] && tx_valid && !desc_busy_b[6];
+	assign wdesc1_en[1] = st_is_idle_wd1[1] && tx_valid && !desc_busy_b[6];
+	assign wdesc1_en[2] = st_is_idle_wd1[2] && tx_valid && !desc_busy_b[6];
+	assign wdesc1_en[3] = st_is_idle_wd1[3] && tx_valid && !desc_busy_b[7];
+	(* dont_touch = "true" *) wire [6:0]  wdesc2_en = {7{st[WAIT_DESC1]}};
+	(* dont_touch = "true" *) wire [1:0]  ld_desc_en = {2{st[WAIT_DESC2]}};
+	(* dont_touch = "true" *) wire [1:0]  dec_desc_en = {2{st[LOAD_DESC]}};
+	(* dont_touch = "true" *) wire [1:0]  la1_en = {2{st[LA1A]}};
+	(* dont_touch = "true" *) wire [1:0]  la1b_en = {2{st[LA1BA]}};
+	(* dont_touch = "true" *) wire [1:0]  la2d_en = {2{st[LA2C2]}};
+	(* dont_touch = "true" *) wire [3:0]  lb3_en = {4{st[LB2F]}};
+	(* dont_touch = "true" *) wire [2:0]  out_rdy_g = {3{st[OUT] && ta_ready}};
+	(* keep = "true", equivalent_register_removal = "no" *) reg [32:0] wdesc1_ce;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [52:0] wdesc2_ce;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [31:0] lb3_ce_a;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [7:0]  lb3_ce_wts;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [7:0]  lb3_ce_val;
+	(* keep = "true", equivalent_register_removal = "no" *) reg        lb3_ce_bord;
 	genvar gs;
 	generate
 	for (gs = 0; gs < 8; gs = gs + 1) begin : g_ce_grp
-		assign idle_ce_g[gs] = (st == IDLE) && tx_valid && !desc_busy_b[1 + (gs >> 1)];
+		assign idle_ce_g[gs] = st_is_idle_crd[gs] && tx_valid && !desc_busy_b[1 + (gs >> 1)];
 	end
 	for (gs = 0; gs < 80; gs = gs + 1) begin : g_idle_ce
+`ifdef SYNTH_KINTEX7
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_idle_ce_b (.I0(idle_ce_g[gs / 10]), .O(idle_ce_s[gs]));
+`elsif SYNTH_KINTEX_ULTRASCALE
 		assign idle_ce_s[gs] = idle_ce_g[gs / 10];
+`else
+		assign idle_ce_s[gs] = idle_ce_g[gs / 10];
+`endif
 	end
 	endgenerate
 
 	/* Fanout-decoupled state enables (<= 16 FFs per enable flip-flop) */
-	reg [15:0] ld_desc_ce;
-	reg [22:0] dec_desc_ce;
-	reg [9:0]  dec_desc2_ce;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [15:0] ld_desc_ce;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [28:0] dec_desc_ce;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [15:0] dec_desc2_ce;
 
-	wire [3:0]  cwait_rdy = {4{(st == CWAIT) && !c_bsy}};
-	wire [3:0]  cwait_j1_ce = {4{cwait_rdy[0] && (job == 3'd1)}};
-	wire [3:0]  cwait_j2_ce = {4{cwait_rdy[0] && (job == 3'd2)}};
-	wire [3:0]  cwait_l0_ce = {4{cwait_rdy[0] && (job != 3'd1) && (job != 3'd2) && (jlane == 2'd0)}};
-	wire [3:0]  cwait_l1_ce = {4{cwait_rdy[1] && (job != 3'd1) && (job != 3'd2) && (jlane == 2'd1)}};
-	wire [3:0]  cwait_l2_ce = {4{cwait_rdy[2] && (job != 3'd1) && (job != 3'd2) && (jlane == 2'd2)}};
-	wire [3:0]  cwait_l3_ce = {4{cwait_rdy[3] && (job != 3'd1) && (job != 3'd2) && (jlane == 2'd3)}};
+	(* dont_touch = "true" *) wire [3:0]  cwait_rdy = {4{st[CWAIT] && !c_bsy}};
+	(* dont_touch = "true" *) wire [3:0]  cwait_j1_ce = {4{cwait_rdy[0] && (job == 3'd1)}};
+	(* dont_touch = "true" *) wire [3:0]  cwait_j2_ce = {4{cwait_rdy[0] && (job == 3'd2)}};
+	(* dont_touch = "true" *) wire [3:0]  cwait_l0_ce = {4{cwait_rdy[0] && (job != 3'd1) && (job != 3'd2) && (r_jlane == 2'd0)}};
+	(* dont_touch = "true" *) wire [3:0]  cwait_l1_ce = {4{cwait_rdy[1] && (job != 3'd1) && (job != 3'd2) && (r_jlane == 2'd1)}};
+	(* dont_touch = "true" *) wire [3:0]  cwait_l2_ce = {4{cwait_rdy[2] && (job != 3'd1) && (job != 3'd2) && (r_jlane == 2'd2)}};
+	(* dont_touch = "true" *) wire [3:0]  cwait_l3_ce = {4{cwait_rdy[3] && (job != 3'd1) && (job != 3'd2) && (r_jlane == 2'd3)}};
 
-	wire [4:0]  la0_ce    = {5{st == LA0}};
-	wire [7:0]  la0bb_ce  = {8{st == LA0BB}};
-	wire [1:0]  la0bc_g   = {2{st == LA0BC}};
-	wire [11:0] la0bc_ce  = {{6{la0bc_g[1]}}, {6{la0bc_g[0]}}};
-	wire [7:0]  la0bf_ce  = {8{st == LA0BF}};
-	wire [7:0]  la0bg_ce  = {8{st == LA0BG}};
-	wire [5:0]  la0bh_ce  = {6{st == LA0BH}};
-	wire [1:0]  la0bi_ce  = {2{st == LA0BI}};
-	wire [1:0]  la0bj_ce  = {2{st == LA0BJ}};
-	wire        la0bk_ce  = (st == LA0BK);
-	wire [7:0]  la0c_ce   = {8{st == LA0C}};
-	wire [1:0]  la0c2_g   = {2{st == LA0C2}};
-	wire [11:0] la0c2_ce  = {{6{la0c2_g[1]}}, {6{la0c2_g[0]}}};
-	wire [7:0]  la0d_ce   = {8{st == LA0D}};
-	wire [1:0]  la0e_g    = {2{st == LA0E}};
-	wire [11:0] la0e_ce   = {{6{la0e_g[1]}}, {6{la0e_g[0]}}};
-	wire [7:0]  la0e2_ce  = {8{st == LA0E2}};
-	wire        la0f_ce   = (st == LA0F);
-	wire [7:0]  la0g_ce   = {8{st == LA0G}};
-	wire [1:0]  la1a_g    = {2{st == LA1A}};
-	wire [11:0] la1a_ce   = {{6{la1a_g[1]}}, {6{la1a_g[0]}}};
-	reg [15:0] la1_ce;
-	wire [1:0]  la1ba_g   = {2{st == LA1BA}};
-	wire [11:0] la1ba_ce  = {{6{la1ba_g[1]}}, {6{la1ba_g[0]}}};
-	reg [17:0] la1b_ce;
-	reg [23:0] la2d_ce;
+	(* dont_touch = "true" *) wire [4:0]  la0_ce    = {5{st[LA0]}};
+	(* dont_touch = "true" *) wire [1:0]  la0bc_en  = {2{st[LA0BB]}};
+	(* dont_touch = "true" *) wire [7:0]  la0bf_ce  = {8{st[LA0BF]}};
+	(* dont_touch = "true" *) wire [7:0]  la0bg_ce  = {8{st[LA0BG]}};
+	(* dont_touch = "true" *) wire [5:0]  la0bh_ce  = {6{st[LA0BH]}};
+	(* dont_touch = "true" *) wire [1:0]  la0bi_ce  = {2{st[LA0BI]}};
+	(* dont_touch = "true" *) wire [1:0]  la0bj_ce  = {2{st[LA0BJ]}};
+	(* dont_touch = "true" *) wire        la0bk_ce  = st[LA0BK];
+	(* dont_touch = "true" *) wire [7:0]  la0c_ce   = {8{st[LA0C]}};
+	(* dont_touch = "true" *) wire [1:0]  la0c2_g   = {2{st[LA0C2]}};
+	(* dont_touch = "true" *) wire [11:0] la0c2_ce  = {{6{la0c2_g[1]}}, {6{la0c2_g[0]}}};
+	(* dont_touch = "true" *) wire [7:0]  la0d_ce   = {8{st[LA0D]}};
+	(* dont_touch = "true" *) wire [1:0]  la0e_g    = {2{st[LA0E]}};
+	(* dont_touch = "true" *) wire [11:0] la0e_ce   = {{6{la0e_g[1]}}, {6{la0e_g[0]}}};
+	(* dont_touch = "true" *) wire [7:0]  la0e2_ce  = {8{st[LA0E2]}};
+	(* dont_touch = "true" *) wire        la0f_ce   = st[LA0F];
+	(* dont_touch = "true" *) wire [7:0]  la0g_ce   = {8{st[LA0G]}};
+	(* keep = "true", equivalent_register_removal = "no" *) reg [7:0]  la0b_hi_ce;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [15:0] la0bb_ce;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [11:0] la0bc_ce;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [11:0] la1a_ce;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [15:0] la1_ce;
+	(* dont_touch = "true" *) wire [1:0]  la1ba_g   = {2{st[LA1BA]}};
+	(* dont_touch = "true" *) wire [11:0] la1ba_ce  = {{6{la1ba_g[1]}}, {6{la1ba_g[0]}}};
+	(* keep = "true", equivalent_register_removal = "no" *) reg [17:0] la1b_ce;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [23:0] la2d_ce;
 
 	integer k, si;
 	always @(posedge clk or posedge rst_inv) begin
 		if (rst_inv) begin
-			st <= IDLE;
+			st <= 51'd1 << IDLE;
+			st_is_idle_crd <= 8'hFF;
+			st_is_idle_wd1 <= 4'hF;
 			opr <= 8'd0;
+			r_op_texb <= 1'b0; r_op_texf <= 10'd0; r_op_texsz <= 5'd0; r_op_texl <= 1'b0; r_op_b1 <= 5'd0;
+			r_gather_ctl <= 1'b0; r_qlod <= 7'd0; r_qlod_ctl <= 1'b0; r_nlevq <= 1'b0; r_dszq <= 1'b0; r_smpq <= 1'b0;
+			r_nofetch <= 1'b0; r_nofetch_a_op <= 1'b0; r_n_lane_op <= 1'b0;
+			r_cmp <= 1'b0; r_filt <= 1'b0; r_f32 <= 1'b0; r_miplin <= 5'd0;
+			r_nlev_pre <= 4'd1;
+			r_gwi_src <= 2'd0;
+			r_gwi_const <= 1'b0;
+			r_cw2_gt0 <= 4'd0;
+			r_cw2_neg <= 4'd0;
+			for (k = 0; k < 4; k = k + 1)
+				r_lfetch_const[k] <= 4'd0;
+			r_cnt_zero <= 1'b0;
+			r_jnext <= 3'd0;
+			r_jlane <= 2'd0;
+			r_tfmt <= 21'd0;
 			slot <= 5'd0;
+			slot_bram0 <= 5'd0;
+			slot_bram1 <= 5'd0;
 			samp_slot <= 5'd0;
+			samp_slot_bram <= 5'd0;
+			ta_valid_r <= 1'b0;
+			r_nxt <= 5'h14;
 			offs <= 12'd0;
 			ta_mask <= 4'd0;
 			ta_tag <= 16'd0;
@@ -798,8 +912,12 @@ module atg_tu_addr #(
 			wdesc1_ce    <= 33'd0;
 			wdesc2_ce    <= 53'd0;
 			ld_desc_ce   <= 16'd0;
-			dec_desc_ce  <= 23'd0;
-			dec_desc2_ce <= 10'd0;
+			dec_desc_ce  <= 29'd0;
+			dec_desc2_ce <= 16'd0;
+			la0b_hi_ce   <= 8'd0;
+			la0bb_ce     <= 16'd0;
+			la0bc_ce     <= 12'd0;
+			la1a_ce      <= 12'd0;
 			la1_ce       <= 16'd0;
 			la1b_ce      <= 18'd0;
 			la2d_ce      <= 24'd0;
@@ -811,9 +929,14 @@ module atg_tu_addr #(
 			if (idle_meta_ce[0]) opr[2:0]  <= tx_op[2:0];
 			if (idle_meta_ce[1]) opr[5:3]  <= tx_op[5:3];
 			if (idle_meta_ce[2]) opr[7:6]  <= tx_op[7:6];
-			if (idle_meta_ce[3]) slot      <= {tx_vs, tx_slot};
+			if (idle_meta_ce[3]) begin
+				slot       <= {tx_vs, tx_slot};
+				slot_bram0 <= {tx_vs, tx_slot};
+				slot_bram1 <= {tx_vs, tx_slot};
+			end
 			if (idle_meta_ce[4]) begin
 				samp_slot <= {tx_vs, tx_samp_slot};
+				samp_slot_bram <= {tx_vs, tx_samp_slot};
 				ta_mask   <= tx_mask;
 				ta_last   <= tx_last;
 			end
@@ -830,15 +953,78 @@ module atg_tu_addr #(
 			end
 
 			if (lb3_ce_bord) begin
-				for (k = 0; k < 4; k = k + 1)
-					ta_bord[k*4 +: 4] <= r_nofetch_bord[k] ? 4'd0 : f_bord_l[k];
+				for (k = 0; k < 4; k = k + 1) begin
+					ta_bord[k*4 + 0] <= r_nofetch_bord[k*4 + 0] ? 1'b0 : f_bord_l[k][0];
+					ta_bord[k*4 + 1] <= r_nofetch_bord[k*4 + 1] ? 1'b0 : f_bord_l[k][1];
+					ta_bord[k*4 + 2] <= r_nofetch_bord[k*4 + 2] ? 1'b0 : f_bord_l[k][2];
+					ta_bord[k*4 + 3] <= r_nofetch_bord[k*4 + 3] ? 1'b0 : f_bord_l[k][3];
+				end
 			end
 
-			wdesc1_ce    <= {{11{wdesc1_en[2]}}, {11{wdesc1_en[1]}}, {11{wdesc1_en[0]}}};
+			if (ld_desc_ce[12]) r_tfmt[3:0]        <= tfmt[3:0];
+			if (ld_desc_ce[15]) r_tfmt[7:4]        <= tfmt[7:4];
+			if (ld_desc_ce[13]) r_tfmt[15:8]       <= tfmt[15:8];
+			if (ld_desc_ce[14]) r_tfmt[20:16]      <= tfmt[20:16];
+			if (ld_desc_ce[6])  r_nlev_pre         <= (image[3:0] == 4'd0) ? 4'd1 : (image[3:0] > 4'd13) ? 4'd13 : image[3:0];
+			if (ld_desc_ce[7])  r_cnt_zero         <= (image[31:16] == 16'd0);
+
+			if (wdesc2_en[5]) begin
+				r_op_texb    <= (opr[1:0] == OP_TEXB);
+				r_op_texsz   <= {5{opr[1:0] == OP_TEXSZ}};
+				r_op_texl    <= (opr[1:0] == OP_TEXL);
+				r_op_b1      <= {5{opr[1]}};
+				r_gather_ctl <= (opr[1:0] == OP_TEXL) && opr[3];
+				r_qlod       <= {7{(opr[1:0] == OP_TEXB) && opr[6]}};
+				r_qlod_ctl   <= (opr[1:0] == OP_TEXB) && opr[6];
+				r_nlevq      <= (opr[1:0] == OP_TEXSZ) && opr[6] && !opr[3];
+			end
+			if (wdesc2_en[6]) begin
+				r_op_texf    <= {10{opr[1:0] == OP_TEXF}};
+				r_dszq       <= (opr[1:0] == OP_TEXSZ) && opr[3] && !opr[6];
+				r_smpq       <= (opr[1:0] == OP_TEXSZ) && opr[6] && opr[3];
+				r_nofetch    <= (opr[1:0] == OP_TEXSZ) || ((opr[1:0] == OP_TEXB) && opr[6]);
+				r_nofetch_a_op <= (opr[1:0] == OP_TEXSZ) || ((opr[1:0] == OP_TEXB) && opr[6]);
+				r_n_lane_op  <= !opr[1] && !opr[6];
+				for (k = 0; k < 4; k = k + 1) begin
+					r_cw2_gt0[k] <= (crd[160*k + 68 +: 27] != 27'd0);
+					r_cw2_neg[k] <= crd[160*k + 95];
+				end
+			end
+
+			if (st[DECODE_DESC]) begin
+				r_gwi_src   <= tg_src_w;
+				r_gwi_const <= tg_const_w;
+			end
+
+			if (dec_desc2_ce[6]) begin
+				r_cmp    <= cmp_d2;
+				r_filt   <= filt_d2;
+				r_f32    <= f32_d2;
+				r_miplin <= {5{miplin_d2}};
+			end
+			if (dec_desc2_ce[14]) begin
+				r_lfetch_const[0] <= r_cw2_neg[0] ? 4'd0 : (r_cw2_gt0[0] || (crd[64 +: 4]  > r_maxl)) ? r_maxl : crd[64 +: 4];
+				r_lfetch_const[1] <= r_cw2_neg[1] ? 4'd0 : (r_cw2_gt0[1] || (crd[224 +: 4] > r_maxl)) ? r_maxl : crd[224 +: 4];
+			end
+			if (dec_desc2_ce[15]) begin
+				r_lfetch_const[2] <= r_cw2_neg[2] ? 4'd0 : (r_cw2_gt0[2] || (crd[384 +: 4] > r_maxl)) ? r_maxl : crd[384 +: 4];
+				r_lfetch_const[3] <= r_cw2_neg[3] ? 4'd0 : (r_cw2_gt0[3] || (crd[544 +: 4] > r_maxl)) ? r_maxl : crd[544 +: 4];
+			end
+
+			if (st[CUBE]) begin
+				r_jnext <= jnext;
+				r_jlane <= jlane;
+			end
+
+			wdesc1_ce    <= {{9{wdesc1_en[3]}}, {8{wdesc1_en[2]}}, {8{wdesc1_en[1]}}, {8{wdesc1_en[0]}}};
 			wdesc2_ce    <= {{11{wdesc2_en[4]}}, {11{wdesc2_en[3]}}, {10{wdesc2_en[2]}}, {10{wdesc2_en[1]}}, {11{wdesc2_en[0]}}};
 			ld_desc_ce   <= {{8{ld_desc_en[1]}}, {8{ld_desc_en[0]}}};
-			dec_desc_ce  <= {{12{dec_desc_en[1]}}, {11{dec_desc_en[0]}}};
-			dec_desc2_ce <= {10{st == DECODE_DESC}};
+			dec_desc_ce  <= {{15{dec_desc_en[1]}}, {14{dec_desc_en[0]}}};
+			dec_desc2_ce <= {16{st[DECODE_DESC]}};
+			la0b_hi_ce   <= {8{st[LA0]}};
+			la0bb_ce     <= {16{st[LA0B]}};
+			la0bc_ce     <= {{6{la0bc_en[1]}}, {6{la0bc_en[0]}}};
+			la1a_ce      <= {12{st[LA0G] || (out_rdy_g[0] && !r_nxt[4])}};
 			la1_ce       <= {{8{la1_en[1]}}, {8{la1_en[0]}}};
 			la1b_ce      <= {{9{la1b_en[1]}}, {9{la1b_en[0]}}};
 			la2d_ce      <= {{12{la2d_en[1]}}, {12{la2d_en[0]}}};
@@ -847,186 +1033,108 @@ module atg_tu_addr #(
 			lb3_ce_val   <= {8{lb3_en[3]}};
 			lb3_ce_bord  <= lb3_en[2];
 
-			case (st)
-			IDLE: if (idle_meta_ce[7]) begin
-				pas <= 4'd0;
+			/* Flat parallel one-hot FSM transitions (no priority mux chain) */
+			st[IDLE]         <= (st[IDLE] && !idle_meta_ce[7]) || (out_rdy_g[1] && r_nxt[4]);
+			st[WAIT_DESC1]   <= idle_meta_ce[7];
+			st[WAIT_DESC2]   <= st[WAIT_DESC1];
+			st[LOAD_DESC]    <= st[WAIT_DESC2];
+			st[DECODE_DESC]  <= st[LOAD_DESC];
+			st[DECODE_DESC2] <= st[DECODE_DESC];
+			st[CUBE]         <= (st[DECODE_DESC2] && (n_lod || n_lane)) || (st[CWAIT] && cwait_rdy[3] && (r_jnext != 3'd6));
+			st[CWAIT]        <= st[CUBE] || (st[CWAIT] && !cwait_rdy[3]);
+			st[LA0]          <= (st[DECODE_DESC2] && !(n_lod || n_lane)) || (st[CWAIT] && cwait_rdy[3] && (r_jnext == 3'd6));
+			st[LA0B]         <= st[LA0];
+			st[LA0BB]        <= st[LA0B];
+			st[LA0BC]        <= st[LA0BB];
+			st[LA0BD]        <= st[LA0BC];
+			st[LA0BE]        <= st[LA0BD];
+			st[LA0BF]        <= st[LA0BE];
+			st[LA0BG]        <= st[LA0BF];
+			st[LA0BH0]       <= st[LA0BG] && r_op_texb;
+			st[LA0BH1]       <= st[LA0BH0];
+			st[LA0BH2]       <= st[LA0BH1];
+			st[LA0BH]        <= st[LA0BH2];
+			st[LA0BI]        <= st[LA0BH];
+			st[LA0BJ]        <= st[LA0BI];
+			st[LA0BK]        <= st[LA0BJ];
+			st[LA0C]         <= st[LA0BK];
+			st[LA0C2]        <= st[LA0C];
+			st[LA0D]         <= (st[LA0BG] && !r_op_texb) || st[LA0C2];
+			st[LA0E]         <= st[LA0D];
+			st[LA0E2]        <= st[LA0E];
+			st[LA0F]         <= st[LA0E2];
+			st[LA0G]         <= st[LA0F];
+			st[LA1A]         <= st[LA0G] || (out_rdy_g[1] && !r_nxt[4]);
+			st[LA1]          <= st[LA1A];
+			st[LA1BA]        <= st[LA1];
+			st[LA1B]         <= st[LA1BA];
+			st[LA2]          <= st[LA1B];
+			st[LA2B]         <= st[LA2];
+			st[LA2C]         <= st[LA2B];
+			st[LA2C2]        <= st[LA2C];
+			st[LA2D]         <= st[LA2C2];
+			st[LB0]          <= st[LA2D];
+			st[LB0B]         <= st[LB0];
+			st[LB0C]         <= st[LB0B];
+			st[LB1]          <= st[LB0C];
+			st[LB2]          <= st[LB1];
+			st[LB2B]         <= st[LB2];
+			st[LB2C]         <= st[LB2B];
+			st[LB2D]         <= st[LB2C];
+			st[LB2E]         <= st[LB2D];
+			st[LB2F]         <= st[LB2E];
+			st[LB3]          <= st[LB2F];
+			st[OUT]          <= st[LB3] || (st[OUT] && !ta_ready);
+
+			if (idle_meta_ce[8]) begin
+				st_is_idle_crd <= 8'd0;
+				st_is_idle_wd1 <= 4'd0;
+			end else if (out_rdy_g[2] && r_nxt[4]) begin
+				st_is_idle_crd <= 8'hFF;
+				st_is_idle_wd1 <= 4'hF;
+			end
+
+			if (idle_meta_ce[7]) begin
+				pas  <= 4'd0;
 				linq <= 1'b0;
 				depf <= 1'b0;
 				mipf <= 1'b0;
-				job <= 3'd0;
-				st <= WAIT_DESC1;
+				job  <= 3'd0;
+			end else begin
+				if (st[CWAIT] && cwait_rdy[3])
+					job <= r_jnext;
+				if (st[LB3]) begin
+					linq <= (r_lin[0] && ta_mask[0]) || (r_lin[1] && ta_mask[1]) ||
+					        (r_lin[2] && ta_mask[2]) || (r_lin[3] && ta_mask[3]);
+					depf <= (f_fw_l[0] != 8'd0 && ta_mask[0]) || (f_fw_l[1] != 8'd0 && ta_mask[1]) ||
+					        (f_fw_l[2] != 8'd0 && ta_mask[2]) || (f_fw_l[3] != 8'd0 && ta_mask[3]);
+					mipf <= (r_fl[0] != 8'd0 && ta_mask[0]) || (r_fl[1] != 8'd0 && ta_mask[1]) ||
+					        (r_fl[2] != 8'd0 && ta_mask[2]) || (r_fl[3] != 8'd0 && ta_mask[3]);
+					begin : b_lb3_nxt
+						reg lin_n, dep_n, mip_n, split_n, quad_n;
+						reg [2:0] nxb_n;
+						lin_n   = (r_lin[0] && ta_mask[0]) || (r_lin[1] && ta_mask[1]) || (r_lin[2] && ta_mask[2]) || (r_lin[3] && ta_mask[3]);
+						dep_n   = (f_fw_l[0] != 8'd0 && ta_mask[0]) || (f_fw_l[1] != 8'd0 && ta_mask[1]) || (f_fw_l[2] != 8'd0 && ta_mask[2]) || (f_fw_l[3] != 8'd0 && ta_mask[3]);
+						mip_n   = (r_fl[0] != 8'd0 && ta_mask[0]) || (r_fl[1] != 8'd0 && ta_mask[1]) || (r_fl[2] != 8'd0 && ta_mask[2]) || (r_fl[3] != 8'd0 && ta_mask[3]);
+						split_n = f32 && (r_psl == 3'd3) && lin_n && (r_blk || !gather_ctl);
+						quad_n  = f32 && (r_psl == 3'd4) && r_blk && lin_n;
+						nxb_n   = (pas[1:0] == 2'd0) ? (dep_n ? 3'd1 : mip_n ? 3'd2 : 3'd4) :
+						          (pas[1:0] == 2'd1) ? (mip_n ? 3'd2 : 3'd4) :
+						          (pas[1:0] == 2'd2) ? (dep_n ? 3'd3 : 3'd4) : 3'd4;
+						r_nxt  <= (quad_n && !pas[3]) ? {2'b01, pas[2:0]} :
+						          (quad_n && !pas[2]) ? {3'b001, pas[1:0]} :
+						          (split_n && !pas[2]) ? {3'b001, pas[1:0]} : {nxb_n[2], 2'b00, nxb_n[1:0]};
+					end
+					ta_valid_r <= 1'b1;
+				end else if (out_rdy_g[0]) begin
+					linq <= 1'b0;
+					depf <= 1'b0;
+					mipf <= 1'b0;
+					ta_valid_r <= 1'b0;
+					if (!r_nxt[4])
+						pas <= r_nxt[3:0];
+				end
 			end
-			WAIT_DESC1: begin
-				st <= WAIT_DESC2;
-			end
-			WAIT_DESC2: begin
-				st <= LOAD_DESC;
-			end
-			LOAD_DESC: begin
-				st <= DECODE_DESC;
-			end
-			DECODE_DESC: begin
-				st <= DECODE_DESC2;
-			end
-			DECODE_DESC2: begin
-				st <= n_lod || n_lane ? CUBE : LA0;
-			end
-			CUBE: st <= CWAIT;
-			CWAIT: if (cwait_rdy[3]) begin
-				job <= jnext;
-				st <= jnext != 3'd6 ? CUBE : LA0;
-			end
-			LA0: begin
-				st <= LA0B;
-			end
-			LA0B: begin
-				st <= LA0BB;
-			end
-			LA0BB: begin
-				st <= LA0BC;
-			end
-			LA0BC: begin
-				st <= LA0BD;
-			end
-			LA0BD: begin
-				st <= LA0BE;
-			end
-			LA0BE: begin
-				st <= LA0BF;
-			end
-			LA0BF: begin
-				st <= LA0BG;
-			end
-			LA0BG: begin
-				st <= (op == OP_TEXB) ? LA0BH0 : LA0D;
-			end
-			LA0BH0: begin
-				st <= LA0BH1;
-			end
-			LA0BH1: begin
-				st <= LA0BH2;
-			end
-			LA0BH2: begin
-				st <= LA0BH;
-			end
-			LA0BH: begin
-				st <= LA0BI;
-			end
-			LA0BI: begin
-				st <= LA0BJ;
-			end
-			LA0BJ: begin
-				st <= LA0BK;
-			end
-			LA0BK: begin
-				st <= LA0C;
-			end
-			LA0C: begin
-				st <= LA0C2;
-			end
-			LA0C2: begin
-				st <= LA0D;
-			end
-			LA0D: begin
-				st <= LA0E;
-			end
-			LA0E: begin
-				st <= LA0E2;
-			end
-			LA0E2: begin
-				st <= LA0F;
-			end
-			LA0F: begin
-				st <= LA0G;
-			end
-			LA0G: begin
-				st <= LA1A;
-			end
-			LA1A: begin
-				st <= LA1;
-			end
-			LA1: begin
-				st <= LA1BA;
-			end
-			LA1BA: begin
-				st <= LA1B;
-			end
-			LA1B: begin
-				st <= LA2;
-			end
-			LA2: begin
-				st <= LA2B;
-			end
-			LA2B: begin
-				st <= LA2C;
-			end
-			LA2C: begin
-				st <= LA2D;
-			end
-			LA2D: begin
-				st <= LB0;
-			end
-			LB0: begin
-				/* u_foot Stage 0A registers at posedge clk */
-				st <= LB0B;
-			end
-			LB0B: begin
-				/* u_foot Stage 0B1 registers at posedge clk */
-				st <= LB0C;
-			end
-			LB0C: begin
-				/* u_foot Stage 0B2 registers at posedge clk */
-				st <= LB1;
-			end
-			LB1: begin
-				/* u_foot Stage 0B3 -> Stage 1 registers at posedge clk */
-				st <= LB2;
-			end
-			LB2: begin
-				/* u_foot Stage 1A DSP stage 1 registers at posedge clk */
-				st <= LB2B;
-			end
-			LB2B: begin
-				/* u_foot Stage 1A DSP stage 2 registers at posedge clk */
-				st <= LB2C;
-			end
-			LB2C: begin
-				/* u_foot Stage 1C post-DSP registers at posedge clk */
-				st <= LB2D;
-			end
-			LB2D: begin
-				/* u_foot Stage 1D registers at posedge clk */
-				st <= LB2E;
-			end
-			LB2E: begin
-				/* u_foot Stage 2A registers at posedge clk */
-				st <= LB2F;
-			end
-			LB2F: begin
-				/* u_foot Stage 2B registers at posedge clk */
-				st <= LB3;
-			end
-			LB3: begin
-				linq <= (r_lin[0] && ta_mask[0]) || (r_lin[1] && ta_mask[1]) ||
-				        (r_lin[2] && ta_mask[2]) || (r_lin[3] && ta_mask[3]);
-				depf <= (f_fw_l[0] != 8'd0 && ta_mask[0]) || (f_fw_l[1] != 8'd0 && ta_mask[1]) ||
-				        (f_fw_l[2] != 8'd0 && ta_mask[2]) || (f_fw_l[3] != 8'd0 && ta_mask[3]);
-				mipf <= (r_fl[0] != 8'd0 && ta_mask[0]) || (r_fl[1] != 8'd0 && ta_mask[1]) ||
-				        (r_fl[2] != 8'd0 && ta_mask[2]) || (r_fl[3] != 8'd0 && ta_mask[3]);
-				st <= OUT;
-			end
-			OUT: if (ta_ready) begin
-				linq <= 1'b0;
-				depf <= 1'b0;
-				mipf <= 1'b0;
-				if (!nxt[4]) begin
-					pas <= nxt[3:0];
-					st <= LA1A;
-				end else
-					st <= IDLE;
-			end
-			default: st <= IDLE;
-			endcase
 		end
 	end
 
@@ -1091,17 +1199,17 @@ module atg_tu_addr #(
 		if (ld_desc_ce[9])  r_samp_raw[31:16]  <= samp[31:16];
 		if (ld_desc_ce[10]) r_dlod_raw[15:0]   <= dlod[15:0];
 		if (ld_desc_ce[11]) r_dlod_raw[31:16]  <= dlod[31:16];
-		if (ld_desc_ce[12]) r_tfmt[3:0]        <= tfmt[3:0];
-		if (ld_desc_ce[15]) r_tfmt[7:4]        <= tfmt[7:4];
-		if (ld_desc_ce[13]) r_tfmt[15:8]       <= tfmt[15:8];
-		if (ld_desc_ce[14]) begin
-			r_tfmt[20:16] <= tfmt[20:16];
-			r_row_raw     <= rowa;
-		end
+		if (ld_desc_ce[14]) r_row_raw          <= rowa;
 
 		if (dec_desc_ce[0])  r_w0_a <= w0_a;
+		if (dec_desc_ce[23]) r_w0_u <= w0_u;
+		if (dec_desc_ce[24]) r_w0_v <= w0_v;
+		if (dec_desc_ce[25]) r_w0_w <= w0_w;
 		if (dec_desc_ce[22]) r_w0_b <= w0_b;
 		if (dec_desc_ce[1])  r_h0_a <= h0_a;
+		if (dec_desc_ce[26]) r_h0_u <= h0_u;
+		if (dec_desc_ce[27]) r_h0_v <= h0_v;
+		if (dec_desc_ce[28]) r_h0_w <= h0_w;
 		if (dec_desc_ce[21]) r_h0_b <= h0_b;
 		if (dec_desc_ce[2])  r_cnt  <= cnt;
 		if (dec_desc_ce[3]) begin
@@ -1109,12 +1217,15 @@ module atg_tu_addr #(
 			r_maxl <= maxl;
 		end
 		if (dec_desc_ce[4]) begin
-			r_ms    <= ms;
-			r_unn   <= unn;
-			r_is3dr <= is3dr;
+			r_ms_b      <= {4{ms}};
+			r_ms_ctl    <= ms;
+			r_unn_tcrd  <= {4{unn}};
+			r_unn_lamp  <= {4{unn}};
+			r_unn_lam   <= {4{unn}};
+			r_is3dr     <= is3dr;
 		end
 		if (dec_desc_ce[5]) begin
-			r_arr       <= arr;
+			r_arr_b     <= {4{arr}};
 			r_cube      <= cube;
 			r_is3d_lod  <= {3{is3d}};
 			r_is3d_foot <= {4{is3d}};
@@ -1169,35 +1280,33 @@ module atg_tu_addr #(
 			r_max_lt_min    <= max_lt_min_bo;
 		end
 		if (dec_desc2_ce[1]) begin
-			r_qlod_lraw     <= {4{qlod}};
-			r_not_texb_lraw <= {4{op != OP_TEXB}};
-			r_nofetch_bord  <= {4{nofetch_bord}};
+			r_qlod_lraw     <= r_qlod[3:0];
+			r_not_texb_lraw <= {4{!r_op_texb}};
+			r_nofetch_bord[7:0] <= {8{nofetch_bord}};
 		end
+		if (dec_desc2_ce[12]) r_nofetch_bord[15:8] <= {8{nofetch_bord}};
 		if (dec_desc2_ce[7]) begin
 			r_val_dsz_b0      <= {4{!smpq && !nlevq && dszq}};
 			r_val_dsz_b1      <= {4{!smpq && !nlevq && dszq}};
 		end
 		if (dec_desc2_ce[9]) begin
-			r_val_texsz_lo_b0 <= {4{!smpq && !nlevq && !dszq && (op == OP_TEXSZ)}};
-			r_val_texsz_lo_b1 <= {4{!smpq && !nlevq && !dszq && (op == OP_TEXSZ)}};
-			r_val_texsz_hi    <= {4{!smpq && !nlevq && !dszq && (op == OP_TEXSZ)}};
+			r_val_texsz_lo_b0 <= {4{!smpq && !nlevq && !dszq && r_op_texsz[4]}};
+			r_val_texsz_lo_b1 <= {4{!smpq && !nlevq && !dszq && r_op_texsz[4]}};
+			r_val_texsz_hi    <= {4{!smpq && !nlevq && !dszq && r_op_texsz[4]}};
 		end
 		if (dec_desc2_ce[8]) begin
-			r_val_qlod_lo  <= {4{!smpq && !nlevq && !dszq && (op != OP_TEXSZ) && qlod}};
-			r_val_qlod_hi  <= {4{!smpq && !nlevq && !dszq && (op != OP_TEXSZ) && qlod}};
-			r_val_cmp_lo   <= {4{!smpq && !nlevq && !dszq && (op != OP_TEXSZ) && !qlod && (depth_d2 && r_samp_cmp && !op[1] && !qlod)}};
-			r_val_cmp_hi   <= {4{!smpq && !nlevq && !dszq && (op != OP_TEXSZ) && !qlod && (depth_d2 && r_samp_cmp && !op[1] && !qlod)}};
+			r_val_qlod_lo  <= {4{!smpq && !nlevq && !dszq && !r_op_texsz[4] && r_qlod[5]}};
+			r_val_qlod_hi  <= {4{!smpq && !nlevq && !dszq && !r_op_texsz[4] && r_qlod[5]}};
+			r_val_cmp_lo   <= {4{!smpq && !nlevq && !dszq && !r_op_texsz[4] && !r_qlod[4] && cmp_d2}};
+			r_val_cmp_hi   <= {4{!smpq && !nlevq && !dszq && !r_op_texsz[4] && !r_qlod[4] && cmp_d2}};
 		end
 		if (dec_desc2_ce[2]) r_nofetch_a[15:0]  <= {16{nofetch_a_lo}};
 		if (dec_desc2_ce[3]) r_nofetch_a[31:16] <= {16{nofetch_a_hi}};
-		if (dec_desc2_ce[4]) begin
-			r_foot_off[0] <= r_cube ? 12'd0 : offs;
-			r_foot_off[1] <= r_cube ? 12'd0 : offs;
-		end
-		if (dec_desc2_ce[5]) begin
-			r_foot_off[2] <= r_cube ? 12'd0 : offs;
-			r_foot_off[3] <= r_cube ? 12'd0 : offs;
-		end
+		if (dec_desc2_ce[4])  r_foot_off[0] <= r_cube ? 12'd0 : offs;
+		if (dec_desc2_ce[5])  r_foot_off[1] <= r_cube ? 12'd0 : offs;
+		if (dec_desc2_ce[10]) r_foot_off[2] <= r_cube ? 12'd0 : offs;
+		if (dec_desc2_ce[11]) r_foot_off[3] <= r_cube ? 12'd0 : offs;
+		if (dec_desc2_ce[13]) r_nofetch_ctl <= nofetch_ctl;
 
 		if (cwait_j1_ce[0]) ls1[13:0]  <= c_s[13:0];
 		if (cwait_j1_ce[1]) ls1[26:14] <= c_s[26:14];
@@ -1235,8 +1344,15 @@ module atg_tu_addr #(
 				r_sfl_ge_cnt[k] <= sfl_ge_cnt_l[k];
 				r_sfl_gt5[k]    <= sfl_gt5_l[k];
 			end
-			if (la0bb_ce[k*2 + 0]) r_lfx[k][15:0]  <= lfx_w_l[k][15:0];
-			if (la0bb_ce[k*2 + 1]) r_lfx[k][31:16] <= lfx_w_l[k][31:16];
+			if (la0b_hi_ce[k*2 + 0]) r_lfx_hi[k][7:0]  <= lfx_w_l[k][22:15];
+			if (la0b_hi_ce[k*2 + 1]) r_lfx_hi[k][16:8] <= lfx_w_l[k][31:23];
+			if (la0bb_ce[k*4 + 0]) r_lfx[k][7:0]   <= lfx_w_l[k][7:0];
+			if (la0bb_ce[k*4 + 1]) r_lfx[k][15:8]  <= lfx_w_l[k][15:8];
+			if (la0bb_ce[k*4 + 2]) begin
+				r_lfx[k][16]    <= lfx_w_l[k][16];
+				r_lfx_ov_pos[k] <= !r_lfx_hi[k][16] && (r_lfx_hi[k][15:0] != 16'd0);
+			end
+			if (la0bb_ce[k*4 + 3]) r_lfx_ov_neg[k] <= r_lfx_hi[k][16] && (r_lfx_hi[k][15:0] != 16'hFFFF);
 			if (la0bc_ce[k*2 + 0]) r_lam1[k][8:0]  <= lam1_l[k][8:0];
 			if (la0bc_ce[k*2 + 1]) r_lam1[k][16:9] <= lam1_l[k][16:9];
 			if (la0bc_ce[8 + k])   r_lay[k]        <= lay_w[k];
@@ -1358,7 +1474,7 @@ module atg_tu_addr #(
 		lamp_l[0][16], lamp_l[1][16], lamp_l[2][16], lamp_l[3][16],
 		r_lamp[0][16], r_lamp[1][16], r_lamp[2][16], r_lamp[3][16],
 		lstr_l[0][47:32], lstr_l[1][47:32], lstr_l[2][47:32], lstr_l[3][47:32],
-		cube_edge_fout, cube_edge_uout, cube_edge_vout, unused_cube_signals};
+		cube_edge_fout, cube_edge_uout, cube_edge_vout, unused_cube_signals, r_op_texf[9], r_qlod[6]};
 endmodule
 
 `default_nettype wire

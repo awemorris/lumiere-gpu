@@ -74,65 +74,106 @@ module atg_ex_rt #(
 				c_ex_aux[gk*155 +: 155],
 				c_ex_last[gk]
 			};
-			am_skid #(.WIDTH(EX_W), .RST_DATA(0)) u_ex_sk (
+			atg_ex_rt_skid #(.WIDTH(EX_W), .SL_S(10)) u_ex_sk (
 				.clk(clk), .rst_n(rst_n),
 				.in_valid(c_ex_valid[gk]), .in_ready(c_ex_ready[gk]),
 				.in_data(in_vec),
 				.out_valid(sk_v[gk]), .out_ready(sk_r[gk]),
 				.out_data(sk_d_flat[gk*EX_W +: EX_W])
 			);
-			assign sk_match_next[gk] = sk_v[gk] && (sk_d_flat[gk*EX_W + EX_W - 1 -: 16] == c_ex_next);
+			/* 16-bit equality as 4x 4-bit AND-reduced groups (<= 6 cmos3) */
+			wire [15:0] sk_seq = sk_d_flat[gk*EX_W + EX_W - 1 -: 16];
+			wire [3:0] eq_nib;
+			assign eq_nib[0] = (sk_seq[3:0]   == c_ex_next[3:0]);
+			assign eq_nib[1] = (sk_seq[7:4]   == c_ex_next[7:4]);
+			assign eq_nib[2] = (sk_seq[11:8]  == c_ex_next[11:8]);
+			assign eq_nib[3] = (sk_seq[15:12] == c_ex_next[15:12]);
+			assign sk_match_next[gk] = sk_v[gk] && (&eq_nib);
 			assign sk_last[gk]       = sk_d_flat[gk*EX_W];
 		end
 	endgenerate
 
-	/* Only forward quads matching p_ex_next to prevent head-of-line stalling atg_rop_order. */
+	/* Registered grant stage: breaks c_ex_next == seq -> RR -> mux -> am_skid (25 cmos3 -> <= 11 cmos3). */
 	wire [K-1:0] cand = sk_match_next;
+	reg          grant_v_r;
+	reg [K-1:0]  grant_oh_r;
+	reg [K-1:0]  rr_ge_r;
 
-	reg          lock;
-	reg [KW-1:0] owner, last_won;
-	reg [KW-1:0] rr_pick;
-	integer      st, ii;
-
-	always @(*) begin
-		rr_pick = {KW{1'b0}};
-		for (st = K - 1; st >= 0; st = st - 1) begin
-			for (ii = 0; ii < K; ii = ii + 1) begin
-				if (last_won == ii[KW-1:0] && cand[(ii + 1 + st) % K])
-					rr_pick = ((ii + 1 + st) % K);
-			end
+	wire [K-1:0] cand_hi = cand & rr_ge_r;
+	wire [K-1:0] win_lo_1h, win_hi_1h;
+	assign win_lo_1h[0] = cand[0];
+	assign win_hi_1h[0] = cand_hi[0];
+	generate
+		for (gk = 1; gk < K; gk = gk + 1) begin : g_ex_pe
+			assign win_lo_1h[gk] = cand[gk] && !(|cand[gk-1:0]);
+			assign win_hi_1h[gk] = cand_hi[gk] && !(|cand_hi[gk-1:0]);
 		end
-	end
+	endgenerate
+	wire         any_cand      = |cand;
+	wire         any_hi        = |cand_hi;
+	wire [K-1:0] next_grant_oh = any_hi ? win_hi_1h : win_lo_1h;
 
-	wire [KW-1:0] pick = lock ? owner : rr_pick;
-	wire pick_valid = lock ? sk_v[owner] : (|sk_match_next);
-	wire pick_last  = sk_last[pick];
+	wire [K-1:0] next_rr_ge;
+	assign next_rr_ge[0] = next_grant_oh[K - 1];
+	generate
+		for (gk = 1; gk < K; gk = gk + 1) begin : g_ex_nrr
+			assign next_rr_ge[gk] = next_grant_oh[K - 1] || (|next_grant_oh[gk-1:0]);
+		end
+	endgenerate
+
+	wire pick_valid = grant_v_r && (|(grant_oh_r & sk_v));
+	wire pick_last  = |(grant_oh_r & sk_last);
 
 	wire out_in_ready;
 	wire fire = pick_valid && out_in_ready;
 
 	generate
 		for (gk = 0; gk < K; gk = gk + 1) begin : g_ex_rdy
-			assign sk_r[gk] = out_in_ready && pick_valid && (pick == gk[KW-1:0]);
+			assign sk_r[gk] = out_in_ready && grant_v_r && grant_oh_r[gk];
 		end
 	endgenerate
 
-	localparam integer SL_W = 64;
+	localparam integer SL_W = 8;
 	localparam integer N_SL = (EX_W + SL_W - 1) / SL_W;
+	localparam integer N_M1 = (N_SL + 11) / 12;
+	wire [N_M1*K-1:0] sel_m1;
+	genvar gm1, gmk;
+	generate
+		for (gm1 = 0; gm1 < N_M1; gm1 = gm1 + 1) begin : g_ex_m1
+			for (gmk = 0; gmk < K; gmk = gmk + 1) begin : g_m1_k
+`ifdef SYNTH_KINTEX7
+				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_m1 (.I0(grant_oh_r[gmk]), .O(sel_m1[gm1*K + gmk]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				assign sel_m1[gm1*K + gmk] = grant_oh_r[gmk];
+`else
+				assign sel_m1[gm1*K + gmk] = grant_oh_r[gmk];
+`endif
+			end
+		end
+	endgenerate
 	wire [EX_W-1:0] mux_ex;
 	genvar gs;
 	generate
 		for (gs = 0; gs < N_SL; gs = gs + 1) begin : g_ex_mux
 			localparam integer B0 = gs * SL_W;
 			localparam integer BW = (B0 + SL_W <= EX_W) ? SL_W : (EX_W - B0);
-			(* max_fanout = 16 *) wire [KW-1:0] sel_sl = pick;
+			(* keep = "true" *) wire [K-1:0] sel_oh_sl;
+			for (gk = 0; gk < K; gk = gk + 1) begin : g_sel_buf
+`ifdef SYNTH_KINTEX7
+				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_sel (.I0(sel_m1[(gs / 12)*K + gk]), .O(sel_oh_sl[gk]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				assign sel_oh_sl[gk] = sel_m1[(gs / 12)*K + gk];
+`else
+				assign sel_oh_sl[gk] = sel_m1[(gs / 12)*K + gk];
+`endif
+			end
 			reg [BW-1:0] sl_v;
 			integer mi;
 			always @(*) begin
-				sl_v = sk_d_flat[B0 +: BW];
-				for (mi = 1; mi < K; mi = mi + 1)
-					if (sel_sl == mi[KW-1:0])
-						sl_v = sk_d_flat[mi*EX_W + B0 +: BW];
+				sl_v = {BW{1'b0}};
+				for (mi = 0; mi < K; mi = mi + 1)
+					if (sel_oh_sl[mi])
+						sl_v = sl_v | sk_d_flat[mi*EX_W + B0 +: BW];
 			end
 			assign mux_ex[B0 +: BW] = sl_v;
 		end
@@ -140,26 +181,26 @@ module atg_ex_rt #(
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
-			lock      <= 1'b0;
-			owner     <= {KW{1'b0}};
-			last_won  <= {KW{1'b0}};
-			c_ex_next <= 16'd0;
+			grant_v_r  <= 1'b0;
+			grant_oh_r <= {K{1'b0}};
+			rr_ge_r    <= {K{1'b1}};
+			c_ex_next  <= 16'd0;
 		end else begin
 			c_ex_next <= p_ex_next;
-			if (fire) begin
-				if (!lock)
-					last_won <= pick;
-				if (pick_last) begin
-					lock <= 1'b0;
-				end else begin
-					lock  <= 1'b1;
-					owner <= pick;
+			if (!grant_v_r) begin
+				if (any_cand) begin
+					grant_v_r  <= 1'b1;
+					grant_oh_r <= next_grant_oh;
+					rr_ge_r    <= next_rr_ge;
 				end
+			end else if (fire && pick_last) begin
+				grant_v_r  <= 1'b0;
+				grant_oh_r <= {K{1'b0}};
 			end
 		end
 	end
 
-	am_skid #(.WIDTH(EX_W), .RST_DATA(0)) u_ex_out_sk (
+	atg_ex_rt_skid #(.WIDTH(EX_W), .SL_S(7)) u_ex_out_sk (
 		.clk(clk), .rst_n(rst_n),
 		.in_valid(pick_valid), .in_ready(out_in_ready),
 		.in_data(mux_ex),
@@ -167,6 +208,129 @@ module atg_ex_rt #(
 		.out_data({p_ex_seq, p_ex_xy, p_ex_mask, p_ex_color, p_ex_color1,
 		           p_ex_has_src1, p_ex_depth, p_ex_aux, p_ex_last})
 	);
+	wire unused_ex_kw = (KW != 0);
+endmodule
+
+/* Fanout-bounded wide skid slice (SL_S <= 10 keeps Vivado FO <= 20). */
+module atg_ex_rt_skid #(
+	parameter WIDTH = 32,
+	parameter SL_S = 7
+) (
+	input wire clk,
+	input wire rst_n,
+	input wire in_valid,
+	(* keep = "true" *) output reg in_ready,
+	input wire [WIDTH-1:0] in_data,
+	(* keep = "true" *) output reg out_valid,
+	input wire out_ready,
+	output wire [WIDTH-1:0] out_data
+);
+	localparam N_SL = (WIDTH + SL_S - 1) / SL_S;
+	localparam N_G1 = (N_SL + 11) / 12;
+	localparam N_G0 = (N_G1 + 11) / 12;
+	wire [N_G0-1:0] ordy_g0, ival_g0;
+	wire [N_G1-1:0] ordy_g1, ival_g1;
+	wire [N_SL-1:0] out_ready_g;
+	wire [N_SL-1:0] in_valid_g;
+	wire rst_p = !rst_n;
+
+	genvar gg0, gg1, gs;
+	generate
+		for (gg0 = 0; gg0 < N_G0; gg0 = gg0 + 1) begin : g_sk_g0
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_g0_rdy (.I0(out_ready), .O(ordy_g0[gg0]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_g0_val (.I0(in_valid),  .O(ival_g0[gg0]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign ordy_g0[gg0] = out_ready;
+			assign ival_g0[gg0] = in_valid;
+`else
+			assign ordy_g0[gg0] = out_ready;
+			assign ival_g0[gg0] = in_valid;
+`endif
+		end
+		for (gg1 = 0; gg1 < N_G1; gg1 = gg1 + 1) begin : g_sk_g1
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_g1_rdy (.I0(ordy_g0[gg1 / 12]), .O(ordy_g1[gg1]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_g1_val (.I0(ival_g0[gg1 / 12]), .O(ival_g1[gg1]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign ordy_g1[gg1] = ordy_g0[gg1 / 12];
+			assign ival_g1[gg1] = ival_g0[gg1 / 12];
+`else
+			assign ordy_g1[gg1] = ordy_g0[gg1 / 12];
+			assign ival_g1[gg1] = ival_g0[gg1 / 12];
+`endif
+		end
+		for (gs = 0; gs < N_SL; gs = gs + 1) begin : g_sk_sl
+			localparam SL_B = gs * SL_S;
+			localparam SL_W = (SL_B + SL_S <= WIDTH) ? SL_S : (WIDTH - SL_B);
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_ordy (.I0(ordy_g1[gs / 12]), .O(out_ready_g[gs]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_ival (.I0(ival_g1[gs / 12]), .O(in_valid_g[gs]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign out_ready_g[gs] = ordy_g1[gs / 12];
+			assign in_valid_g[gs] = ival_g1[gs / 12];
+`else
+			assign out_ready_g[gs] = ordy_g1[gs / 12];
+			assign in_valid_g[gs]  = ival_g1[gs / 12];
+`endif
+			(* shreg_extract = "no" *) reg [SL_W-1:0] out_d_sl;
+			(* shreg_extract = "no" *) reg [SL_W-1:0] skid_d_sl;
+			reg out_v_sl, skid_v_sl, in_r_sl;
+			wire load_out_s  = skid_v_sl ? out_ready_g[gs] : (in_valid_g[gs] && (out_ready_g[gs] || !out_v_sl));
+			wire skid_load_s = in_valid_g[gs] && in_r_sl;
+			wire [SL_W-1:0] next_out_s = skid_v_sl ? skid_d_sl : in_data[SL_B +: SL_W];
+
+			always @(posedge clk or posedge rst_p) begin
+				if (rst_p) begin
+					out_v_sl  <= 1'b0;
+					skid_v_sl <= 1'b0;
+					in_r_sl   <= 1'b1;
+				end else begin
+					if (skid_v_sl) begin
+						if (out_ready_g[gs]) begin
+							skid_v_sl <= 1'b0;
+							in_r_sl   <= 1'b1;
+						end
+					end else if (in_valid_g[gs] && out_v_sl && !out_ready_g[gs]) begin
+						skid_v_sl <= 1'b1;
+						in_r_sl   <= 1'b0;
+					end else if (in_valid_g[gs] && !out_v_sl) begin
+						out_v_sl <= 1'b1;
+					end else if (out_ready_g[gs] && !in_valid_g[gs]) begin
+						out_v_sl <= 1'b0;
+					end
+				end
+			end
+			always @(posedge clk) begin
+				if (load_out_s)
+					out_d_sl <= next_out_s;
+				if (skid_load_s)
+					skid_d_sl <= in_data[SL_B +: SL_W];
+			end
+			assign out_data[SL_B +: SL_W] = out_d_sl;
+		end
+	endgenerate
+
+	reg skid_valid_r;
+	always @(posedge clk or posedge rst_p) begin
+		if (rst_p) begin
+			out_valid    <= 1'b0;
+			skid_valid_r <= 1'b0;
+			in_ready     <= 1'b1;
+		end else if (skid_valid_r) begin
+			if (out_ready) begin
+				skid_valid_r <= 1'b0;
+				in_ready     <= 1'b1;
+			end
+		end else if (in_valid && out_valid && !out_ready) begin
+			skid_valid_r <= 1'b1;
+			in_ready     <= 1'b0;
+		end else if (in_valid && !out_valid) begin
+			out_valid <= 1'b1;
+		end else if (out_ready && !in_valid) begin
+			out_valid <= 1'b0;
+		end
+	end
 endmodule
 
 `default_nettype wire

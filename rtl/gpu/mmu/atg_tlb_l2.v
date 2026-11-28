@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -145,8 +145,9 @@ module atg_tlb_l2 #(
 
 	/* Replacement pointer per set distributed into 16 slices */
 	wire [31:0] sl_cur_ptr_out;
-	(* max_fanout = 16 *) reg [1:0] r_cur_ptr_g0, r_cur_ptr_g1, r_cur_ptr_g2, r_cur_ptr_g3;
-	(* max_fanout = 16 *) reg [1:0] r_cur_ptr_inc;
+	(* keep = "true", equivalent_register_removal = "no", max_fanout = 16 *) reg [1:0] r_cur_ptr_g0, r_cur_ptr_g1, r_cur_ptr_g2, r_cur_ptr_g3;
+	(* keep = "true", equivalent_register_removal = "no", max_fanout = 16 *) reg [1:0] r_cur_ptr_g4, r_cur_ptr_g5, r_cur_ptr_g6, r_cur_ptr_g7;
+	(* keep = "true", equivalent_register_removal = "no", max_fanout = 16 *) reg [1:0] r_cur_ptr_inc;
 
 	/* Input register stage for refill signals to decouple port fanout */
 	(* max_fanout = 16 *) reg [3:0]          r_ref_sess;
@@ -160,17 +161,25 @@ module atg_tlb_l2 #(
 			r_cur_ptr_g1  <= 2'd0;
 			r_cur_ptr_g2  <= 2'd0;
 			r_cur_ptr_g3  <= 2'd0;
+			r_cur_ptr_g4  <= 2'd0;
+			r_cur_ptr_g5  <= 2'd0;
+			r_cur_ptr_g6  <= 2'd0;
+			r_cur_ptr_g7  <= 2'd0;
 			r_cur_ptr_inc <= 2'd0;
 			r_ref_sess    <= 4'd0;
 			r_ref_vpn     <= {REM_VPN{1'b0}};
 			r_ref_pfn     <= {PPN_BITS{1'b0}};
 			r_ref_flags   <= 6'd0;
 		end else begin
-			r_cur_ptr_g0  <= sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2];
-			r_cur_ptr_g1  <= sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2];
-			r_cur_ptr_g2  <= sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2];
-			r_cur_ptr_g3  <= sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2];
-			r_cur_ptr_inc <= sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2];
+			r_cur_ptr_g0  <= cur_ptr_g;
+			r_cur_ptr_g1  <= cur_ptr_g;
+			r_cur_ptr_g2  <= cur_ptr_g;
+			r_cur_ptr_g3  <= cur_ptr_g;
+			r_cur_ptr_g4  <= cur_ptr_g;
+			r_cur_ptr_g5  <= cur_ptr_g;
+			r_cur_ptr_g6  <= cur_ptr_g;
+			r_cur_ptr_g7  <= cur_ptr_g;
+			r_cur_ptr_inc <= cur_ptr_g;
 			r_ref_sess    <= refill_session;
 			r_ref_vpn     <= refill_vpn[VPN_BITS-1:6];
 			r_ref_pfn     <= refill_pfn;
@@ -196,7 +205,105 @@ module atg_tlb_l2 #(
 	assign next_ptr_g3 = next_ptr;
 
 
-	/* Sliced Write Enables per way and field (fanout <= 15 per WE net) */
+	/* Sliced Write Enables per way and field (2-level 4:1 LUT6 tree: 4 LUTs max) */
+	wire [1:0] cur_ptr_w0, cur_ptr_w1, cur_ptr_w2, cur_ptr_w3, cur_ptr_g;
+`ifdef SYNTH_KINTEX7
+	wire [1:0] grp_ptr [0:3];
+	genvar gcp, gcpb;
+	generate
+		for (gcp = 0; gcp < 4; gcp = gcp + 1) begin : g_ptr_grp
+			for (gcpb = 0; gcpb < 2; gcpb = gcpb + 1) begin : g_pgb
+				(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00F0F0CCCCAAAA)) u_gp (
+					.I0(sl_cur_ptr_out[(gcp*4 + 0)*2 + gcpb]),
+					.I1(sl_cur_ptr_out[(gcp*4 + 1)*2 + gcpb]),
+					.I2(sl_cur_ptr_out[(gcp*4 + 2)*2 + gcpb]),
+					.I3(sl_cur_ptr_out[(gcp*4 + 3)*2 + gcpb]),
+					.I4(refill_set_in[2]),
+					.I5(refill_set_in[3]),
+					.O(grp_ptr[gcp][gcpb])
+				);
+			end
+		end
+		for (gcpb = 0; gcpb < 2; gcpb = gcpb + 1) begin : g_pf
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00F0F0CCCCAAAA)) u_cpw0 (
+				.I0(grp_ptr[0][gcpb]), .I1(grp_ptr[1][gcpb]),
+				.I2(grp_ptr[2][gcpb]), .I3(grp_ptr[3][gcpb]),
+				.I4(refill_set_in[4]), .I5(refill_set_in[5]), .O(cur_ptr_w0[gcpb])
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00F0F0CCCCAAAA)) u_cpw1 (
+				.I0(grp_ptr[0][gcpb]), .I1(grp_ptr[1][gcpb]),
+				.I2(grp_ptr[2][gcpb]), .I3(grp_ptr[3][gcpb]),
+				.I4(refill_set_in[4]), .I5(refill_set_in[5]), .O(cur_ptr_w1[gcpb])
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00F0F0CCCCAAAA)) u_cpw2 (
+				.I0(grp_ptr[0][gcpb]), .I1(grp_ptr[1][gcpb]),
+				.I2(grp_ptr[2][gcpb]), .I3(grp_ptr[3][gcpb]),
+				.I4(refill_set_in[4]), .I5(refill_set_in[5]), .O(cur_ptr_w2[gcpb])
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00F0F0CCCCAAAA)) u_cpw3 (
+				.I0(grp_ptr[0][gcpb]), .I1(grp_ptr[1][gcpb]),
+				.I2(grp_ptr[2][gcpb]), .I3(grp_ptr[3][gcpb]),
+				.I4(refill_set_in[4]), .I5(refill_set_in[5]), .O(cur_ptr_w3[gcpb])
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00F0F0CCCCAAAA)) u_cpg (
+				.I0(grp_ptr[0][gcpb]), .I1(grp_ptr[1][gcpb]),
+				.I2(grp_ptr[2][gcpb]), .I3(grp_ptr[3][gcpb]),
+				.I4(refill_set_in[4]), .I5(refill_set_in[5]), .O(cur_ptr_g[gcpb])
+			);
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [1:0] grp_ptr [0:3];
+	genvar gcp, gcpb;
+	generate
+		for (gcp = 0; gcp < 4; gcp = gcp + 1) begin : g_ptr_grp
+			for (gcpb = 0; gcpb < 2; gcpb = gcpb + 1) begin : g_pgb
+				(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00F0F0CCCCAAAA)) u_gp (
+					.I0(sl_cur_ptr_out[(gcp*4 + 0)*2 + gcpb]),
+					.I1(sl_cur_ptr_out[(gcp*4 + 1)*2 + gcpb]),
+					.I2(sl_cur_ptr_out[(gcp*4 + 2)*2 + gcpb]),
+					.I3(sl_cur_ptr_out[(gcp*4 + 3)*2 + gcpb]),
+					.I4(refill_set_in[2]),
+					.I5(refill_set_in[3]),
+					.O(grp_ptr[gcp][gcpb])
+				);
+			end
+		end
+		for (gcpb = 0; gcpb < 2; gcpb = gcpb + 1) begin : g_pf
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00F0F0CCCCAAAA)) u_cpw0 (
+				.I0(grp_ptr[0][gcpb]), .I1(grp_ptr[1][gcpb]),
+				.I2(grp_ptr[2][gcpb]), .I3(grp_ptr[3][gcpb]),
+				.I4(refill_set_in[4]), .I5(refill_set_in[5]), .O(cur_ptr_w0[gcpb])
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00F0F0CCCCAAAA)) u_cpw1 (
+				.I0(grp_ptr[0][gcpb]), .I1(grp_ptr[1][gcpb]),
+				.I2(grp_ptr[2][gcpb]), .I3(grp_ptr[3][gcpb]),
+				.I4(refill_set_in[4]), .I5(refill_set_in[5]), .O(cur_ptr_w1[gcpb])
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00F0F0CCCCAAAA)) u_cpw2 (
+				.I0(grp_ptr[0][gcpb]), .I1(grp_ptr[1][gcpb]),
+				.I2(grp_ptr[2][gcpb]), .I3(grp_ptr[3][gcpb]),
+				.I4(refill_set_in[4]), .I5(refill_set_in[5]), .O(cur_ptr_w2[gcpb])
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00F0F0CCCCAAAA)) u_cpw3 (
+				.I0(grp_ptr[0][gcpb]), .I1(grp_ptr[1][gcpb]),
+				.I2(grp_ptr[2][gcpb]), .I3(grp_ptr[3][gcpb]),
+				.I4(refill_set_in[4]), .I5(refill_set_in[5]), .O(cur_ptr_w3[gcpb])
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00F0F0CCCCAAAA)) u_cpg (
+				.I0(grp_ptr[0][gcpb]), .I1(grp_ptr[1][gcpb]),
+				.I2(grp_ptr[2][gcpb]), .I3(grp_ptr[3][gcpb]),
+				.I4(refill_set_in[4]), .I5(refill_set_in[5]), .O(cur_ptr_g[gcpb])
+			);
+		end
+	endgenerate
+`else
+	assign cur_ptr_w0 = sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2];
+	assign cur_ptr_w1 = sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2];
+	assign cur_ptr_w2 = sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2];
+	assign cur_ptr_w3 = sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2];
+	assign cur_ptr_g  = sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2];
+`endif
 	(* keep = "true", equivalent_register_removal = "no" *) reg we0_vpn_a, we0_vpn_b, we0_vpn_c;
 	(* keep = "true", equivalent_register_removal = "no" *) reg we0_pfn_a, we0_pfn_b, we0_pfn_c, we0_pfn_d;
 	(* keep = "true", equivalent_register_removal = "no" *) reg we0_flg_a, we0_flg_b;
@@ -231,45 +338,45 @@ module atg_tlb_l2 #(
 			we3_pfn_a <= 1'b0; we3_pfn_b <= 1'b0; we3_pfn_c <= 1'b0; we3_pfn_d <= 1'b0;
 			we3_flg_a <= 1'b0; we3_flg_b <= 1'b0;
 		end else begin
-			we0_vpn_a <= refill_we_w0 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd0);
-			we0_vpn_b <= refill_we_w0 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd0);
-			we0_vpn_c <= refill_we_w0 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd0);
-			we0_pfn_a <= refill_we_w0 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd0);
-			we0_pfn_b <= refill_we_w0 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd0);
-			we0_pfn_c <= refill_we_w0 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd0);
-			we0_pfn_d <= refill_we_w0 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd0);
-			we0_flg_a <= refill_we_w0 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd0);
-			we0_flg_b <= refill_we_w0 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd0);
+			we0_vpn_a <= refill_we_w0 & (cur_ptr_w0 == 2'd0);
+			we0_vpn_b <= refill_we_w0 & (cur_ptr_w0 == 2'd0);
+			we0_vpn_c <= refill_we_w0 & (cur_ptr_w0 == 2'd0);
+			we0_pfn_a <= refill_we_w0 & (cur_ptr_w0 == 2'd0);
+			we0_pfn_b <= refill_we_w0 & (cur_ptr_w0 == 2'd0);
+			we0_pfn_c <= refill_we_w0 & (cur_ptr_w0 == 2'd0);
+			we0_pfn_d <= refill_we_w0 & (cur_ptr_w0 == 2'd0);
+			we0_flg_a <= refill_we_w0 & (cur_ptr_w0 == 2'd0);
+			we0_flg_b <= refill_we_w0 & (cur_ptr_w0 == 2'd0);
 
-			we1_vpn_a <= refill_we_w1 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd1);
-			we1_vpn_b <= refill_we_w1 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd1);
-			we1_vpn_c <= refill_we_w1 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd1);
-			we1_pfn_a <= refill_we_w1 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd1);
-			we1_pfn_b <= refill_we_w1 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd1);
-			we1_pfn_c <= refill_we_w1 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd1);
-			we1_pfn_d <= refill_we_w1 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd1);
-			we1_flg_a <= refill_we_w1 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd1);
-			we1_flg_b <= refill_we_w1 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd1);
+			we1_vpn_a <= refill_we_w1 & (cur_ptr_w1 == 2'd1);
+			we1_vpn_b <= refill_we_w1 & (cur_ptr_w1 == 2'd1);
+			we1_vpn_c <= refill_we_w1 & (cur_ptr_w1 == 2'd1);
+			we1_pfn_a <= refill_we_w1 & (cur_ptr_w1 == 2'd1);
+			we1_pfn_b <= refill_we_w1 & (cur_ptr_w1 == 2'd1);
+			we1_pfn_c <= refill_we_w1 & (cur_ptr_w1 == 2'd1);
+			we1_pfn_d <= refill_we_w1 & (cur_ptr_w1 == 2'd1);
+			we1_flg_a <= refill_we_w1 & (cur_ptr_w1 == 2'd1);
+			we1_flg_b <= refill_we_w1 & (cur_ptr_w1 == 2'd1);
 
-			we2_vpn_a <= refill_we_w2 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd2);
-			we2_vpn_b <= refill_we_w2 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd2);
-			we2_vpn_c <= refill_we_w2 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd2);
-			we2_pfn_a <= refill_we_w2 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd2);
-			we2_pfn_b <= refill_we_w2 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd2);
-			we2_pfn_c <= refill_we_w2 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd2);
-			we2_pfn_d <= refill_we_w2 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd2);
-			we2_flg_a <= refill_we_w2 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd2);
-			we2_flg_b <= refill_we_w2 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd2);
+			we2_vpn_a <= refill_we_w2 & (cur_ptr_w2 == 2'd2);
+			we2_vpn_b <= refill_we_w2 & (cur_ptr_w2 == 2'd2);
+			we2_vpn_c <= refill_we_w2 & (cur_ptr_w2 == 2'd2);
+			we2_pfn_a <= refill_we_w2 & (cur_ptr_w2 == 2'd2);
+			we2_pfn_b <= refill_we_w2 & (cur_ptr_w2 == 2'd2);
+			we2_pfn_c <= refill_we_w2 & (cur_ptr_w2 == 2'd2);
+			we2_pfn_d <= refill_we_w2 & (cur_ptr_w2 == 2'd2);
+			we2_flg_a <= refill_we_w2 & (cur_ptr_w2 == 2'd2);
+			we2_flg_b <= refill_we_w2 & (cur_ptr_w2 == 2'd2);
 
-			we3_vpn_a <= refill_we_w3 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd3);
-			we3_vpn_b <= refill_we_w3 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd3);
-			we3_vpn_c <= refill_we_w3 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd3);
-			we3_pfn_a <= refill_we_w3 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd3);
-			we3_pfn_b <= refill_we_w3 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd3);
-			we3_pfn_c <= refill_we_w3 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd3);
-			we3_pfn_d <= refill_we_w3 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd3);
-			we3_flg_a <= refill_we_w3 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd3);
-			we3_flg_b <= refill_we_w3 & (sl_cur_ptr_out[refill_set_in[5:2]*2 +: 2] == 2'd3);
+			we3_vpn_a <= refill_we_w3 & (cur_ptr_w3 == 2'd3);
+			we3_vpn_b <= refill_we_w3 & (cur_ptr_w3 == 2'd3);
+			we3_vpn_c <= refill_we_w3 & (cur_ptr_w3 == 2'd3);
+			we3_pfn_a <= refill_we_w3 & (cur_ptr_w3 == 2'd3);
+			we3_pfn_b <= refill_we_w3 & (cur_ptr_w3 == 2'd3);
+			we3_pfn_c <= refill_we_w3 & (cur_ptr_w3 == 2'd3);
+			we3_pfn_d <= refill_we_w3 & (cur_ptr_w3 == 2'd3);
+			we3_flg_a <= refill_we_w3 & (cur_ptr_w3 == 2'd3);
+			we3_flg_b <= refill_we_w3 & (cur_ptr_w3 == 2'd3);
 		end
 	end
 
@@ -339,11 +446,11 @@ module atg_tlb_l2 #(
 	atg_ram64x1d_array #(.WIDTH(3)) u_ram_w3_flg_a (.clk(clk_l2), .we(we3_flg_a), .waddr(refill_set_w3_flg_a), .din(r_ref_flags[2:0]), .raddr(lookup_set_w3_flg),    .dout(dout3_flg_a));
 	atg_ram64x1d_array #(.WIDTH(3)) u_ram_w3_flg_b (.clk(clk_l2), .we(we3_flg_b), .waddr(refill_set_w3_flg_b), .din(r_ref_flags[5:3]), .raddr(lookup_set_w3_flg),    .dout(dout3_flg_b));
 
-	/* Replicated buffer trees for slice read selects (<= 20 fanout per buffer) */
-	wire [1:0] l2_set_w0_sl_g0, l2_set_w0_sl_g1, l2_set_w0_sl_g2, l2_set_w0_sl_g3;
-	wire [1:0] l2_set_w1_sl_g0, l2_set_w1_sl_g1, l2_set_w1_sl_g2, l2_set_w1_sl_g3;
-	wire [1:0] l2_set_w2_sl_g0, l2_set_w2_sl_g1, l2_set_w2_sl_g2, l2_set_w2_sl_g3;
-	wire [1:0] l2_set_w3_sl_g0, l2_set_w3_sl_g1, l2_set_w3_sl_g2, l2_set_w3_sl_g3;
+	/* Replicated buffer trees for slice read selects (<= 10 fanout per buffer) */
+	wire [1:0] l2_set_w0_sl_g [0:7];
+	wire [1:0] l2_set_w1_sl_g [0:7];
+	wire [1:0] l2_set_w2_sl_g [0:7];
+	wire [1:0] l2_set_w3_sl_g [0:7];
 
 	/* Buffered upper set bits for 16:1 muxes (<= 12 fanout per buffer) */
 	wire [3:0] l2_set_w0_sl_hi_a, l2_set_w0_sl_hi_b;
@@ -352,48 +459,76 @@ module atg_tlb_l2 #(
 	wire [3:0] l2_set_w3_sl_hi_a, l2_set_w3_sl_hi_b;
 
 	/* Buffered refill set bits for 16 slices (<= 16 fanout per buffer) */
-	wire [1:0] ref_set_in_g0, ref_set_in_g1, ref_set_in_g2, ref_set_in_g3;
-	wire [3:0] ref_set_hi_g0, ref_set_hi_g1, ref_set_hi_g2, ref_set_hi_g3;
+	wire [1:0] ref_set_in_g [0:7];
+	wire [3:0] ref_set_hi_g [0:7];
 
-
-	assign l2_set_w0_sl_g0 = lookup_set_w0_sl[1:0];
-	assign l2_set_w0_sl_g1 = lookup_set_w0_sl[1:0];
-	assign l2_set_w0_sl_g2 = lookup_set_w0_sl[1:0];
-	assign l2_set_w0_sl_g3 = lookup_set_w0_sl[1:0];
-
-	assign l2_set_w1_sl_g0 = lookup_set_w1_sl[1:0];
-	assign l2_set_w1_sl_g1 = lookup_set_w1_sl[1:0];
-	assign l2_set_w1_sl_g2 = lookup_set_w1_sl[1:0];
-	assign l2_set_w1_sl_g3 = lookup_set_w1_sl[1:0];
-
-	assign l2_set_w2_sl_g0 = lookup_set_w2_sl[1:0];
-	assign l2_set_w2_sl_g1 = lookup_set_w2_sl[1:0];
-	assign l2_set_w2_sl_g2 = lookup_set_w2_sl[1:0];
-	assign l2_set_w2_sl_g3 = lookup_set_w2_sl[1:0];
-
-	assign l2_set_w3_sl_g0 = lookup_set_w3_sl[1:0];
-	assign l2_set_w3_sl_g1 = lookup_set_w3_sl[1:0];
-	assign l2_set_w3_sl_g2 = lookup_set_w3_sl[1:0];
-	assign l2_set_w3_sl_g3 = lookup_set_w3_sl[1:0];
-
-	assign l2_set_w0_sl_hi_a = lookup_set_w0_sl[5:2];
-	assign l2_set_w0_sl_hi_b = lookup_set_w0_sl[5:2];
-	assign l2_set_w1_sl_hi_a = lookup_set_w1_sl[5:2];
-	assign l2_set_w1_sl_hi_b = lookup_set_w1_sl[5:2];
-	assign l2_set_w2_sl_hi_a = lookup_set_w2_sl[5:2];
-	assign l2_set_w2_sl_hi_b = lookup_set_w2_sl[5:2];
-	assign l2_set_w3_sl_hi_a = lookup_set_w3_sl[5:2];
-	assign l2_set_w3_sl_hi_b = lookup_set_w3_sl[5:2];
-
-	assign ref_set_in_g0 = refill_set_in[1:0];
-	assign ref_set_in_g1 = refill_set_in[1:0];
-	assign ref_set_in_g2 = refill_set_in[1:0];
-	assign ref_set_in_g3 = refill_set_in[1:0];
-
-	assign ref_set_hi_g0 = refill_set_in[5:2];
-	assign ref_set_hi_g1 = refill_set_in[5:2];
-	assign ref_set_hi_g2 = refill_set_in[5:2];
-	assign ref_set_hi_g3 = refill_set_in[5:2];
+	genvar gsb, gsb_i;
+	generate
+`ifdef SYNTH_KINTEX7
+		for (gsb = 0; gsb < 8; gsb = gsb + 1) begin : g_sl_buf8
+			for (gsb_i = 0; gsb_i < 2; gsb_i = gsb_i + 1) begin : g_b2
+				(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_bw0s (.I0(lookup_set_w0_sl[gsb_i]), .O(l2_set_w0_sl_g[gsb][gsb_i]));
+				(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_bw1s (.I0(lookup_set_w1_sl[gsb_i]), .O(l2_set_w1_sl_g[gsb][gsb_i]));
+				(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_bw2s (.I0(lookup_set_w2_sl[gsb_i]), .O(l2_set_w2_sl_g[gsb][gsb_i]));
+				(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_bw3s (.I0(lookup_set_w3_sl[gsb_i]), .O(l2_set_w3_sl_g[gsb][gsb_i]));
+				(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_brs  (.I0(refill_set_in[gsb_i]),    .O(ref_set_in_g[gsb][gsb_i]));
+			end
+			for (gsb_i = 0; gsb_i < 4; gsb_i = gsb_i + 1) begin : g_b4
+				(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_brh  (.I0(refill_set_in[2+gsb_i]),  .O(ref_set_hi_g[gsb][gsb_i]));
+			end
+		end
+		for (gsb_i = 0; gsb_i < 4; gsb_i = gsb_i + 1) begin : g_sl_hibuf
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_bw0ha (.I0(lookup_set_w0_sl[2+gsb_i]), .O(l2_set_w0_sl_hi_a[gsb_i]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_bw0hb (.I0(lookup_set_w0_sl[2+gsb_i]), .O(l2_set_w0_sl_hi_b[gsb_i]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_bw1ha (.I0(lookup_set_w1_sl[2+gsb_i]), .O(l2_set_w1_sl_hi_a[gsb_i]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_bw1hb (.I0(lookup_set_w1_sl[2+gsb_i]), .O(l2_set_w1_sl_hi_b[gsb_i]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_bw2ha (.I0(lookup_set_w2_sl[2+gsb_i]), .O(l2_set_w2_sl_hi_a[gsb_i]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_bw2hb (.I0(lookup_set_w2_sl[2+gsb_i]), .O(l2_set_w2_sl_hi_b[gsb_i]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_bw3ha (.I0(lookup_set_w3_sl[2+gsb_i]), .O(l2_set_w3_sl_hi_a[gsb_i]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_bw3hb (.I0(lookup_set_w3_sl[2+gsb_i]), .O(l2_set_w3_sl_hi_b[gsb_i]));
+		end
+`elsif SYNTH_KINTEX_ULTRASCALE
+		for (gsb = 0; gsb < 8; gsb = gsb + 1) begin : g_sl_buf8
+			for (gsb_i = 0; gsb_i < 2; gsb_i = gsb_i + 1) begin : g_b2
+				assign l2_set_w0_sl_g[gsb][gsb_i] = lookup_set_w0_sl[gsb_i];
+				assign l2_set_w1_sl_g[gsb][gsb_i] = lookup_set_w1_sl[gsb_i];
+				assign l2_set_w2_sl_g[gsb][gsb_i] = lookup_set_w2_sl[gsb_i];
+				assign l2_set_w3_sl_g[gsb][gsb_i] = lookup_set_w3_sl[gsb_i];
+				assign ref_set_in_g[gsb][gsb_i] = refill_set_in[gsb_i];
+			end
+			for (gsb_i = 0; gsb_i < 4; gsb_i = gsb_i + 1) begin : g_b4
+				assign ref_set_hi_g[gsb][gsb_i] = refill_set_in[2+gsb_i];
+			end
+		end
+		for (gsb_i = 0; gsb_i < 4; gsb_i = gsb_i + 1) begin : g_sl_hibuf
+			assign l2_set_w0_sl_hi_a[gsb_i] = lookup_set_w0_sl[2+gsb_i];
+			assign l2_set_w0_sl_hi_b[gsb_i] = lookup_set_w0_sl[2+gsb_i];
+			assign l2_set_w1_sl_hi_a[gsb_i] = lookup_set_w1_sl[2+gsb_i];
+			assign l2_set_w1_sl_hi_b[gsb_i] = lookup_set_w1_sl[2+gsb_i];
+			assign l2_set_w2_sl_hi_a[gsb_i] = lookup_set_w2_sl[2+gsb_i];
+			assign l2_set_w2_sl_hi_b[gsb_i] = lookup_set_w2_sl[2+gsb_i];
+			assign l2_set_w3_sl_hi_a[gsb_i] = lookup_set_w3_sl[2+gsb_i];
+			assign l2_set_w3_sl_hi_b[gsb_i] = lookup_set_w3_sl[2+gsb_i];
+		end
+`else
+		for (gsb = 0; gsb < 8; gsb = gsb + 1) begin : g_sl_buf8
+			assign l2_set_w0_sl_g[gsb] = lookup_set_w0_sl[1:0];
+			assign l2_set_w1_sl_g[gsb] = lookup_set_w1_sl[1:0];
+			assign l2_set_w2_sl_g[gsb] = lookup_set_w2_sl[1:0];
+			assign l2_set_w3_sl_g[gsb] = lookup_set_w3_sl[1:0];
+			assign ref_set_in_g[gsb]   = refill_set_in[1:0];
+			assign ref_set_hi_g[gsb]   = refill_set_in[5:2];
+		end
+		assign l2_set_w0_sl_hi_a = lookup_set_w0_sl[5:2];
+		assign l2_set_w0_sl_hi_b = lookup_set_w0_sl[5:2];
+		assign l2_set_w1_sl_hi_a = lookup_set_w1_sl[5:2];
+		assign l2_set_w1_sl_hi_b = lookup_set_w1_sl[5:2];
+		assign l2_set_w2_sl_hi_a = lookup_set_w2_sl[5:2];
+		assign l2_set_w2_sl_hi_b = lookup_set_w2_sl[5:2];
+		assign l2_set_w3_sl_hi_a = lookup_set_w3_sl[5:2];
+		assign l2_set_w3_sl_hi_b = lookup_set_w3_sl[5:2];
+`endif
+	endgenerate
 
 
 	/* 16 Slices: Distributed Flush registers, Replacement pointers, and Valid/Session storage */
@@ -435,16 +570,17 @@ module atg_tlb_l2 #(
 		                         (gsl < 8)  ? next_ptr_g1 :
 		                         (gsl < 12) ? next_ptr_g2 : next_ptr_g3;
 
-		wire [1:0] sl_cur_ref_lo = (gsl < 4)  ? ref_set_in_g0 :
-		                           (gsl < 8)  ? ref_set_in_g1 :
-		                           (gsl < 12) ? ref_set_in_g2 : ref_set_in_g3;
-		wire [3:0] sl_cur_ref_hi = (gsl < 4)  ? ref_set_hi_g0 :
-		                           (gsl < 8)  ? ref_set_hi_g1 :
-		                           (gsl < 12) ? ref_set_hi_g2 : ref_set_hi_g3;
+		wire [1:0] sl_cur_ref_lo = ref_set_in_g[gsl >> 1];
+		wire [3:0] sl_cur_ref_hi = ref_set_hi_g[gsl >> 1];
 
-		wire [1:0] sl_cur_ptr_local = (gsl < 4)  ? r_cur_ptr_g0 :
-		                              (gsl < 8)  ? r_cur_ptr_g1 :
-		                              (gsl < 12) ? r_cur_ptr_g2 : r_cur_ptr_g3;
+		wire [1:0] sl_cur_ptr_local =
+			(gsl < 2)  ? r_cur_ptr_g0 :
+			(gsl < 4)  ? r_cur_ptr_g1 :
+			(gsl < 6)  ? r_cur_ptr_g2 :
+			(gsl < 8)  ? r_cur_ptr_g3 :
+			(gsl < 10) ? r_cur_ptr_g4 :
+			(gsl < 12) ? r_cur_ptr_g5 :
+			(gsl < 14) ? r_cur_ptr_g6 : r_cur_ptr_g7;
 
 		wire sl_ref_we_in = (gsl < 4)  ? refill_we_sl0 :
 		                    (gsl < 8)  ? refill_we_sl1 :
@@ -530,21 +666,13 @@ module atg_tlb_l2 #(
 			end
 		end
 
-		wire [1:0] sl_r_set0 = (gsl < 4)  ? l2_set_w0_sl_g0 :
-		                       (gsl < 8)  ? l2_set_w0_sl_g1 :
-		                       (gsl < 12) ? l2_set_w0_sl_g2 : l2_set_w0_sl_g3;
-		wire [1:0] sl_r_set1 = (gsl < 4)  ? l2_set_w1_sl_g0 :
-		                       (gsl < 8)  ? l2_set_w1_sl_g1 :
-		                       (gsl < 12) ? l2_set_w1_sl_g2 : l2_set_w1_sl_g3;
-		wire [1:0] sl_r_set2 = (gsl < 4)  ? l2_set_w2_sl_g0 :
-		                       (gsl < 8)  ? l2_set_w2_sl_g1 :
-		                       (gsl < 12) ? l2_set_w2_sl_g2 : l2_set_w2_sl_g3;
-		wire [1:0] sl_r_set3 = (gsl < 4)  ? l2_set_w3_sl_g0 :
-		                       (gsl < 8)  ? l2_set_w3_sl_g1 :
-		                       (gsl < 12) ? l2_set_w3_sl_g2 : l2_set_w3_sl_g3;
+		wire [1:0] sl_r_set0 = l2_set_w0_sl_g[gsl >> 1];
+		wire [1:0] sl_r_set1 = l2_set_w1_sl_g[gsl >> 1];
+		wire [1:0] sl_r_set2 = l2_set_w2_sl_g[gsl >> 1];
+		wire [1:0] sl_r_set3 = l2_set_w3_sl_g[gsl >> 1];
 
 		/* Read 4:1 multiplexer within slice using buffered set selects */
-		assign sl_cur_ptr_out[gsl*2 +: 2] = sl_alloc_ptr[sl_cur_ref_lo];
+		assign sl_cur_ptr_out[gsl*2 +: 2] = sl_alloc_ptr[refill_set_in[1:0]];
 		assign sl_v0_out[gsl]             = v0[sl_r_set0];
 		assign sl_v1_out[gsl]             = v1[sl_r_set1];
 		assign sl_v2_out[gsl]             = v2[sl_r_set2];
@@ -636,10 +764,60 @@ module atg_tlb_l2 #(
 		for (gl2c = 0; gl2c < N_TEQ; gl2c = gl2c + 1) begin : g_l2eq
 			localparam TB = gl2c * 3;
 			localparam TW = (TB + 3 <= TAG_W) ? 3 : (TAG_W - TB);
+`ifdef SYNTH_KINTEX7
+			if (TW == 3) begin : g_eq3
+				(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'h8040201008040201)) u_eq0 (
+					.I0(r1_tag0[TB]), .I1(r1_tag0[TB+1]), .I2(r1_tag0[TB+2]),
+					.I3(r1_lookup_tag[TB]), .I4(r1_lookup_tag[TB+1]), .I5(r1_lookup_tag[TB+2]), .O(eq0_c[gl2c])
+				);
+				(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'h8040201008040201)) u_eq1 (
+					.I0(r1_tag1[TB]), .I1(r1_tag1[TB+1]), .I2(r1_tag1[TB+2]),
+					.I3(r1_lookup_tag[TB]), .I4(r1_lookup_tag[TB+1]), .I5(r1_lookup_tag[TB+2]), .O(eq1_c[gl2c])
+				);
+				(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'h8040201008040201)) u_eq2 (
+					.I0(r1_tag2[TB]), .I1(r1_tag2[TB+1]), .I2(r1_tag2[TB+2]),
+					.I3(r1_lookup_tag[TB]), .I4(r1_lookup_tag[TB+1]), .I5(r1_lookup_tag[TB+2]), .O(eq2_c[gl2c])
+				);
+				(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'h8040201008040201)) u_eq3 (
+					.I0(r1_tag3[TB]), .I1(r1_tag3[TB+1]), .I2(r1_tag3[TB+2]),
+					.I3(r1_lookup_tag[TB]), .I4(r1_lookup_tag[TB+1]), .I5(r1_lookup_tag[TB+2]), .O(eq3_c[gl2c])
+				);
+			end else begin : g_eqs
+				assign eq0_c[gl2c] = (r1_tag0[TB +: TW] == r1_lookup_tag[TB +: TW]);
+				assign eq1_c[gl2c] = (r1_tag1[TB +: TW] == r1_lookup_tag[TB +: TW]);
+				assign eq2_c[gl2c] = (r1_tag2[TB +: TW] == r1_lookup_tag[TB +: TW]);
+				assign eq3_c[gl2c] = (r1_tag3[TB +: TW] == r1_lookup_tag[TB +: TW]);
+			end
+`elsif SYNTH_KINTEX_ULTRASCALE
+			if (TW == 3) begin : g_eq3
+				(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'h8040201008040201)) u_eq0 (
+					.I0(r1_tag0[TB]), .I1(r1_tag0[TB+1]), .I2(r1_tag0[TB+2]),
+					.I3(r1_lookup_tag[TB]), .I4(r1_lookup_tag[TB+1]), .I5(r1_lookup_tag[TB+2]), .O(eq0_c[gl2c])
+				);
+				(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'h8040201008040201)) u_eq1 (
+					.I0(r1_tag1[TB]), .I1(r1_tag1[TB+1]), .I2(r1_tag1[TB+2]),
+					.I3(r1_lookup_tag[TB]), .I4(r1_lookup_tag[TB+1]), .I5(r1_lookup_tag[TB+2]), .O(eq1_c[gl2c])
+				);
+				(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'h8040201008040201)) u_eq2 (
+					.I0(r1_tag2[TB]), .I1(r1_tag2[TB+1]), .I2(r1_tag2[TB+2]),
+					.I3(r1_lookup_tag[TB]), .I4(r1_lookup_tag[TB+1]), .I5(r1_lookup_tag[TB+2]), .O(eq2_c[gl2c])
+				);
+				(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'h8040201008040201)) u_eq3 (
+					.I0(r1_tag3[TB]), .I1(r1_tag3[TB+1]), .I2(r1_tag3[TB+2]),
+					.I3(r1_lookup_tag[TB]), .I4(r1_lookup_tag[TB+1]), .I5(r1_lookup_tag[TB+2]), .O(eq3_c[gl2c])
+				);
+			end else begin : g_eqs
+				assign eq0_c[gl2c] = (r1_tag0[TB +: TW] == r1_lookup_tag[TB +: TW]);
+				assign eq1_c[gl2c] = (r1_tag1[TB +: TW] == r1_lookup_tag[TB +: TW]);
+				assign eq2_c[gl2c] = (r1_tag2[TB +: TW] == r1_lookup_tag[TB +: TW]);
+				assign eq3_c[gl2c] = (r1_tag3[TB +: TW] == r1_lookup_tag[TB +: TW]);
+			end
+`else
 			assign eq0_c[gl2c] = (r1_tag0[TB +: TW] == r1_lookup_tag[TB +: TW]);
 			assign eq1_c[gl2c] = (r1_tag1[TB +: TW] == r1_lookup_tag[TB +: TW]);
 			assign eq2_c[gl2c] = (r1_tag2[TB +: TW] == r1_lookup_tag[TB +: TW]);
 			assign eq3_c[gl2c] = (r1_tag3[TB +: TW] == r1_lookup_tag[TB +: TW]);
+`endif
 		end
 	endgenerate
 
@@ -655,60 +833,196 @@ module atg_tlb_l2 #(
 	wire m3_lo = &eq3_c[N_TEQ_LO-1:0];
 	wire m3_hi = (&eq3_c[N_TEQ-1:N_TEQ_LO]) & r1_v3;
 
-	wire m0_pfn_lo, m0_pfn_hi, m0_flg, m0_hit;
-	wire m1_pfn_lo, m1_pfn_hi, m1_flg, m1_hit;
-	wire m2_pfn_lo, m2_pfn_hi, m2_flg, m2_hit;
-	wire m3_pfn_lo, m3_pfn_hi, m3_flg, m3_hit;
+	wire m0_hit, m1_hit, m2_hit, m3_hit;
+	wire [PPN_BITS-1:0] next_pfn;
+	wire [5:0] next_flags;
 
+`ifdef SYNTH_KINTEX7
+	wire m0_lo_a, m0_lo_b, m0_hi_a, m0_hi_b;
+	wire m1_lo_a, m1_lo_b, m1_hi_a, m1_hi_b;
+	wire m2_lo_a, m2_lo_b, m2_hi_a, m2_hi_b;
+	wire m3_lo_a, m3_lo_b, m3_hi_a, m3_hi_b;
+	generate
+	if (N_TEQ == 6) begin : g_m_lut
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m0la (.I0(eq0_c[0]), .I1(eq0_c[1]), .I2(eq0_c[2]), .O(m0_lo_a));
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m0lb (.I0(eq0_c[0]), .I1(eq0_c[1]), .I2(eq0_c[2]), .O(m0_lo_b));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m0ha (.I0(eq0_c[3]), .I1(eq0_c[4]), .I2(eq0_c[5]), .I3(r1_v0), .O(m0_hi_a));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m0hb (.I0(eq0_c[3]), .I1(eq0_c[4]), .I2(eq0_c[5]), .I3(r1_v0), .O(m0_hi_b));
 
-	assign m0_pfn_lo = m0_lo & m0_hi;
-	assign m0_pfn_hi = m0_lo & m0_hi;
-	assign m0_flg    = m0_lo & m0_hi;
-	assign m0_hit    = m0_lo & m0_hi;
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m1la (.I0(eq1_c[0]), .I1(eq1_c[1]), .I2(eq1_c[2]), .O(m1_lo_a));
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m1lb (.I0(eq1_c[0]), .I1(eq1_c[1]), .I2(eq1_c[2]), .O(m1_lo_b));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m1ha (.I0(eq1_c[3]), .I1(eq1_c[4]), .I2(eq1_c[5]), .I3(r1_v1), .O(m1_hi_a));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m1hb (.I0(eq1_c[3]), .I1(eq1_c[4]), .I2(eq1_c[5]), .I3(r1_v1), .O(m1_hi_b));
 
-	assign m1_pfn_lo = m1_lo & m1_hi;
-	assign m1_pfn_hi = m1_lo & m1_hi;
-	assign m1_flg    = m1_lo & m1_hi;
-	assign m1_hit    = m1_lo & m1_hi;
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m2la (.I0(eq2_c[0]), .I1(eq2_c[1]), .I2(eq2_c[2]), .O(m2_lo_a));
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m2lb (.I0(eq2_c[0]), .I1(eq2_c[1]), .I2(eq2_c[2]), .O(m2_lo_b));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m2ha (.I0(eq2_c[3]), .I1(eq2_c[4]), .I2(eq2_c[5]), .I3(r1_v2), .O(m2_hi_a));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m2hb (.I0(eq2_c[3]), .I1(eq2_c[4]), .I2(eq2_c[5]), .I3(r1_v2), .O(m2_hi_b));
 
-	assign m2_pfn_lo = m2_lo & m2_hi;
-	assign m2_pfn_hi = m2_lo & m2_hi;
-	assign m2_flg    = m2_lo & m2_hi;
-	assign m2_hit    = m2_lo & m2_hi;
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m3la (.I0(eq3_c[0]), .I1(eq3_c[1]), .I2(eq3_c[2]), .O(m3_lo_a));
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m3lb (.I0(eq3_c[0]), .I1(eq3_c[1]), .I2(eq3_c[2]), .O(m3_lo_b));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m3ha (.I0(eq3_c[3]), .I1(eq3_c[4]), .I2(eq3_c[5]), .I3(r1_v3), .O(m3_hi_a));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m3hb (.I0(eq3_c[3]), .I1(eq3_c[4]), .I2(eq3_c[5]), .I3(r1_v3), .O(m3_hi_b));
+	end else begin : g_m_gen
+		assign m0_lo_a = m0_lo; assign m0_lo_b = m0_lo; assign m0_hi_a = m0_hi; assign m0_hi_b = m0_hi;
+		assign m1_lo_a = m1_lo; assign m1_lo_b = m1_lo; assign m1_hi_a = m1_hi; assign m1_hi_b = m1_hi;
+		assign m2_lo_a = m2_lo; assign m2_lo_b = m2_lo; assign m2_hi_a = m2_hi; assign m2_hi_b = m2_hi;
+		assign m3_lo_a = m3_lo; assign m3_lo_b = m3_lo; assign m3_hi_a = m3_hi; assign m3_hi_b = m3_hi;
+	end
+	endgenerate
 
-	assign m3_pfn_lo = m3_lo & m3_hi;
-	assign m3_pfn_hi = m3_lo & m3_hi;
-	assign m3_flg    = m3_lo & m3_hi;
-	assign m3_hit    = m3_lo & m3_hi;
-
+	assign m0_hit = m0_lo_b & m0_hi_b;
+	assign m1_hit = m1_lo_b & m1_hi_b;
+	assign m2_hit = m2_lo_b & m2_hi_b;
+	assign m3_hit = m3_lo_b & m3_hi_b;
 
 	wire next_hit = r1_valid & (m0_hit | m1_hit | m2_hit | m3_hit);
 
-	reg [9:0] next_pfn_lo;
-	always @(*) begin
-		if (m0_pfn_lo)      next_pfn_lo = r1_pfn0[9:0];
-		else if (m1_pfn_lo) next_pfn_lo = r1_pfn1[9:0];
-		else if (m2_pfn_lo) next_pfn_lo = r1_pfn2[9:0];
-		else                next_pfn_lo = r1_pfn3[9:0];
-	end
+	genvar gpb, gfb;
+	generate
+		for (gpb = 0; gpb < PPN_BITS; gpb = gpb + 1) begin : g_l2_pfn_mux
+			wire p01, p23;
+			wire x0_lo = (gpb < 14) ? m0_lo_a : m0_lo_b;
+			wire x0_hi = (gpb < 14) ? m0_hi_a : m0_hi_b;
+			wire x1_lo = (gpb < 14) ? m1_lo_a : m1_lo_b;
+			wire x1_hi = (gpb < 14) ? m1_hi_a : m1_hi_b;
+			wire x2_lo = (gpb < 14) ? m2_lo_a : m2_lo_b;
+			wire x2_hi = (gpb < 14) ? m2_hi_a : m2_hi_b;
+			wire x3_lo = (gpb < 14) ? m3_lo_a : m3_lo_b;
+			wire x3_hi = (gpb < 14) ? m3_hi_a : m3_hi_b;
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF80808080808080)) u_p01 (
+				.I0(x0_lo), .I1(x0_hi), .I2(r1_pfn0[gpb]),
+				.I3(x1_lo), .I4(x1_hi), .I5(r1_pfn1[gpb]),
+				.O(p01)
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF80808080808080)) u_p23 (
+				.I0(x2_lo), .I1(x2_hi), .I2(r1_pfn2[gpb]),
+				.I3(x3_lo), .I4(x3_hi), .I5(r1_pfn3[gpb]),
+				.O(p23)
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT2 #(.INIT(4'hE)) u_por (.I0(p01), .I1(p23), .O(next_pfn[gpb]));
+		end
+		for (gfb = 0; gfb < 6; gfb = gfb + 1) begin : g_l2_flg_mux
+			wire f01, f23;
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF80808080808080)) u_f01 (
+				.I0(m0_lo_b), .I1(m0_hi_b), .I2(r1_flags0[gfb]),
+				.I3(m1_lo_b), .I4(m1_hi_b), .I5(r1_flags1[gfb]),
+				.O(f01)
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF80808080808080)) u_f23 (
+				.I0(m2_lo_b), .I1(m2_hi_b), .I2(r1_flags2[gfb]),
+				.I3(m3_lo_b), .I4(m3_hi_b), .I5(r1_flags3[gfb]),
+				.O(f23)
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT2 #(.INIT(4'hE)) u_for (.I0(f01), .I1(f23), .O(next_flags[gfb]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire m0_lo_a, m0_lo_b, m0_hi_a, m0_hi_b;
+	wire m1_lo_a, m1_lo_b, m1_hi_a, m1_hi_b;
+	wire m2_lo_a, m2_lo_b, m2_hi_a, m2_hi_b;
+	wire m3_lo_a, m3_lo_b, m3_hi_a, m3_hi_b;
+	generate
+	if (N_TEQ == 6) begin : g_m_lut
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m0la (.I0(eq0_c[0]), .I1(eq0_c[1]), .I2(eq0_c[2]), .O(m0_lo_a));
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m0lb (.I0(eq0_c[0]), .I1(eq0_c[1]), .I2(eq0_c[2]), .O(m0_lo_b));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m0ha (.I0(eq0_c[3]), .I1(eq0_c[4]), .I2(eq0_c[5]), .I3(r1_v0), .O(m0_hi_a));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m0hb (.I0(eq0_c[3]), .I1(eq0_c[4]), .I2(eq0_c[5]), .I3(r1_v0), .O(m0_hi_b));
 
-	reg [PPN_BITS-11:0] next_pfn_hi;
-	always @(*) begin
-		if (m0_pfn_hi)      next_pfn_hi = r1_pfn0[PPN_BITS-1:10];
-		else if (m1_pfn_hi) next_pfn_hi = r1_pfn1[PPN_BITS-1:10];
-		else if (m2_pfn_hi) next_pfn_hi = r1_pfn2[PPN_BITS-1:10];
-		else                next_pfn_hi = r1_pfn3[PPN_BITS-1:10];
-	end
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m1la (.I0(eq1_c[0]), .I1(eq1_c[1]), .I2(eq1_c[2]), .O(m1_lo_a));
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m1lb (.I0(eq1_c[0]), .I1(eq1_c[1]), .I2(eq1_c[2]), .O(m1_lo_b));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m1ha (.I0(eq1_c[3]), .I1(eq1_c[4]), .I2(eq1_c[5]), .I3(r1_v1), .O(m1_hi_a));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m1hb (.I0(eq1_c[3]), .I1(eq1_c[4]), .I2(eq1_c[5]), .I3(r1_v1), .O(m1_hi_b));
 
-	wire [PPN_BITS-1:0] next_pfn = {next_pfn_hi, next_pfn_lo};
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m2la (.I0(eq2_c[0]), .I1(eq2_c[1]), .I2(eq2_c[2]), .O(m2_lo_a));
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m2lb (.I0(eq2_c[0]), .I1(eq2_c[1]), .I2(eq2_c[2]), .O(m2_lo_b));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m2ha (.I0(eq2_c[3]), .I1(eq2_c[4]), .I2(eq2_c[5]), .I3(r1_v2), .O(m2_hi_a));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m2hb (.I0(eq2_c[3]), .I1(eq2_c[4]), .I2(eq2_c[5]), .I3(r1_v2), .O(m2_hi_b));
 
-	reg [5:0] next_flags;
-	always @(*) begin
-		if (m0_flg)      next_flags = r1_flags0;
-		else if (m1_flg) next_flags = r1_flags1;
-		else if (m2_flg) next_flags = r1_flags2;
-		else             next_flags = r1_flags3;
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m3la (.I0(eq3_c[0]), .I1(eq3_c[1]), .I2(eq3_c[2]), .O(m3_lo_a));
+		(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'h80)) u_m3lb (.I0(eq3_c[0]), .I1(eq3_c[1]), .I2(eq3_c[2]), .O(m3_lo_b));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m3ha (.I0(eq3_c[3]), .I1(eq3_c[4]), .I2(eq3_c[5]), .I3(r1_v3), .O(m3_hi_a));
+		(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h8000)) u_m3hb (.I0(eq3_c[3]), .I1(eq3_c[4]), .I2(eq3_c[5]), .I3(r1_v3), .O(m3_hi_b));
+	end else begin : g_m_gen
+		assign m0_lo_a = m0_lo; assign m0_lo_b = m0_lo; assign m0_hi_a = m0_hi; assign m0_hi_b = m0_hi;
+		assign m1_lo_a = m1_lo; assign m1_lo_b = m1_lo; assign m1_hi_a = m1_hi; assign m1_hi_b = m1_hi;
+		assign m2_lo_a = m2_lo; assign m2_lo_b = m2_lo; assign m2_hi_a = m2_hi; assign m2_hi_b = m2_hi;
+		assign m3_lo_a = m3_lo; assign m3_lo_b = m3_lo; assign m3_hi_a = m3_hi; assign m3_hi_b = m3_hi;
 	end
+	endgenerate
+
+	assign m0_hit = m0_lo_b & m0_hi_b;
+	assign m1_hit = m1_lo_b & m1_hi_b;
+	assign m2_hit = m2_lo_b & m2_hi_b;
+	assign m3_hit = m3_lo_b & m3_hi_b;
+
+	wire next_hit = r1_valid & (m0_hit | m1_hit | m2_hit | m3_hit);
+
+	genvar gpb, gfb;
+	generate
+		for (gpb = 0; gpb < PPN_BITS; gpb = gpb + 1) begin : g_l2_pfn_mux
+			wire p01, p23;
+			wire x0_lo = (gpb < 14) ? m0_lo_a : m0_lo_b;
+			wire x0_hi = (gpb < 14) ? m0_hi_a : m0_hi_b;
+			wire x1_lo = (gpb < 14) ? m1_lo_a : m1_lo_b;
+			wire x1_hi = (gpb < 14) ? m1_hi_a : m1_hi_b;
+			wire x2_lo = (gpb < 14) ? m2_lo_a : m2_lo_b;
+			wire x2_hi = (gpb < 14) ? m2_hi_a : m2_hi_b;
+			wire x3_lo = (gpb < 14) ? m3_lo_a : m3_lo_b;
+			wire x3_hi = (gpb < 14) ? m3_hi_a : m3_hi_b;
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF80808080808080)) u_p01 (
+				.I0(x0_lo), .I1(x0_hi), .I2(r1_pfn0[gpb]),
+				.I3(x1_lo), .I4(x1_hi), .I5(r1_pfn1[gpb]),
+				.O(p01)
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF80808080808080)) u_p23 (
+				.I0(x2_lo), .I1(x2_hi), .I2(r1_pfn2[gpb]),
+				.I3(x3_lo), .I4(x3_hi), .I5(r1_pfn3[gpb]),
+				.O(p23)
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT2 #(.INIT(4'hE)) u_por (.I0(p01), .I1(p23), .O(next_pfn[gpb]));
+		end
+		for (gfb = 0; gfb < 6; gfb = gfb + 1) begin : g_l2_flg_mux
+			wire f01, f23;
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF80808080808080)) u_f01 (
+				.I0(m0_lo_b), .I1(m0_hi_b), .I2(r1_flags0[gfb]),
+				.I3(m1_lo_b), .I4(m1_hi_b), .I5(r1_flags1[gfb]),
+				.O(f01)
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF80808080808080)) u_f23 (
+				.I0(m2_lo_b), .I1(m2_hi_b), .I2(r1_flags2[gfb]),
+				.I3(m3_lo_b), .I4(m3_hi_b), .I5(r1_flags3[gfb]),
+				.O(f23)
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT2 #(.INIT(4'hE)) u_for (.I0(f01), .I1(f23), .O(next_flags[gfb]));
+		end
+	endgenerate
+`else
+	assign m0_hit = m0_lo & m0_hi;
+	assign m1_hit = m1_lo & m1_hi;
+	assign m2_hit = m2_lo & m2_hi;
+	assign m3_hit = m3_lo & m3_hi;
+
+	wire next_hit = r1_valid & (m0_hit | m1_hit | m2_hit | m3_hit);
+
+	reg [PPN_BITS-1:0] next_pfn_r;
+	always @(*) begin
+		if (m0_hit)      next_pfn_r = r1_pfn0;
+		else if (m1_hit) next_pfn_r = r1_pfn1;
+		else if (m2_hit) next_pfn_r = r1_pfn2;
+		else             next_pfn_r = r1_pfn3;
+	end
+	assign next_pfn = next_pfn_r;
+
+	reg [5:0] next_flags_r;
+	always @(*) begin
+		if (m0_hit)      next_flags_r = r1_flags0;
+		else if (m1_hit) next_flags_r = r1_flags1;
+		else if (m2_hit) next_flags_r = r1_flags2;
+		else             next_flags_r = r1_flags3;
+	end
+	assign next_flags = next_flags_r;
+`endif
 
 	/* Registered Stage 2 outputs (0 logic levels on MMU hit path) */
 	always @(posedge clk_l2 or posedge rst_l2_int) begin

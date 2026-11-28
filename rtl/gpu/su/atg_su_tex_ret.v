@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -72,14 +72,31 @@ module atg_su_tex_fifo #(
 	assign out_valid = r_valid;
 
 	localparam N_TF_SL = (W + 15) / 16;
-	genvar gtf;
+	genvar gtf, gtf_b;
 	generate
 	for (gtf = 0; gtf < N_TF_SL; gtf = gtf + 1) begin : g_tf_sl
 		localparam TF_W = (gtf * 16 + 16 <= W) ? 16 : (W - gtf * 16);
 		(* ram_style = "distributed" *) reg [TF_W-1:0] mem_sl [0:(1 << DEPTH_LOG2) - 1];
-		(* dont_touch = "true" *) wire push_s = push;
-		(* dont_touch = "true" *) wire [DEPTH_LOG2-1:0] wp_s = wp[DEPTH_LOG2-1:0];
-		(* dont_touch = "true" *) wire [DEPTH_LOG2-1:0] rp_s = rp[DEPTH_LOG2-1:0];
+		wire push_s;
+		wire [DEPTH_LOG2-1:0] wp_s;
+		wire [DEPTH_LOG2-1:0] rp_s;
+`ifdef SYNTH_KINTEX7
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tpush (.I0(push), .O(push_s));
+		for (gtf_b = 0; gtf_b < DEPTH_LOG2; gtf_b = gtf_b + 1) begin : g_tp_b
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_twp (.I0(wp[gtf_b]), .O(wp_s[gtf_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_trp (.I0(rp[gtf_b]), .O(rp_s[gtf_b]));
+		end
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign push_s = push;
+		for (gtf_b = 0; gtf_b < DEPTH_LOG2; gtf_b = gtf_b + 1) begin : g_tp_b
+			assign wp_s[gtf_b] = wp[gtf_b];
+			assign rp_s[gtf_b] = rp[gtf_b];
+		end
+`else
+		assign push_s = push;
+		assign wp_s   = wp[DEPTH_LOG2-1:0];
+		assign rp_s   = rp[DEPTH_LOG2-1:0];
+`endif
 		(* dont_touch = "true" *) wire [TF_W-1:0] wd_s = in_data[gtf*16 +: TF_W];
 		always @(posedge clk)
 			if (push_s)
@@ -195,6 +212,8 @@ module atg_su_tex_ret #(
 		for (glb = 0; glb < 4; glb = glb + 1) begin : g_bwe_l
 `ifdef SYNTH_KINTEX7
 			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_lane (.I0(bufq_we_raw), .O(bufq_we_lane[glb]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign bufq_we_lane[glb] = bufq_we_raw;
 `else
 			assign bufq_we_lane[glb] = bufq_we_raw;
 `endif
@@ -209,6 +228,11 @@ module atg_su_tex_ret #(
 				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_bwe1 (.I0(bufq_we_lane[glq]), .O(bufq_we_1));
 				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_bwe2 (.I0(bufq_we_lane[glq]), .O(bufq_we_2));
 				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_bwe3 (.I0(bufq_we_lane[glq]), .O(bufq_we_3));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				assign bufq_we_0 = bufq_we_lane[glq];
+				assign bufq_we_1 = bufq_we_lane[glq];
+				assign bufq_we_2 = bufq_we_lane[glq];
+				assign bufq_we_3 = bufq_we_lane[glq];
 `else
 				assign bufq_we_0 = bufq_we_lane[glq];
 				assign bufq_we_1 = bufq_we_lane[glq];

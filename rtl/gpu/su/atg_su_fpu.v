@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -142,6 +142,7 @@ module atg_su_fpu #(
 	 * high ones from rs1 for hsel 10), or in the busy cycle the kept high
 	 * halves (those of rs1 for hsel 01); each lane's one multiplier. */
 	wire [DW-1:0] fpu_res;
+	wire [DW-1:0] s_data_lat6;
 	genvar gl;
 	generate
 	for (gl = 0; gl < NPHYS; gl = gl + 1) begin : g_lane
@@ -196,6 +197,15 @@ module atg_su_fpu #(
 				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_rm (.I0(rm[gbop]), .O(rm_l[gbop]));
 			end
 			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_sat (.I0(sat), .O(sat_l));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			genvar gbop;
+			for (gbop = 0; gbop < 5; gbop = gbop + 1) begin : g_buf_op
+				assign op_l[gbop] = op[gbop];
+			end
+			for (gbop = 0; gbop < 3; gbop = gbop + 1) begin : g_buf_rm
+				assign rm_l[gbop] = rm[gbop];
+			end
+			assign sat_l = sat;
 `else
 			assign op_l  = op;
 			assign rm_l  = rm;
@@ -208,7 +218,7 @@ module atg_su_fpu #(
 			wire [31:0] sim_b   = x_b[gl*32 +: 32];
 			wire [31:0] sim_c   = x_c[gl*32 +: 32];
 `endif
-			am_fpu_core #(.LAT(SHORT_LAT)) u_core (
+			am_fpu_core #(.LAT(SHORT_LAT > 6 ? 6 : SHORT_LAT)) u_core (
 				.clk(clk),
 				.rst_n(rst_n),
 				.en(en),
@@ -367,9 +377,9 @@ module atg_su_fpu #(
 			end
 		end
 
-		assign s_data = s6_data;
+		assign s_data_lat6 = s6_data;
 	end else begin : g_nosh_pipe
-		assign s_data = fpu_res;
+		assign s_data_lat6 = fpu_res;
 	end
 	endgenerate
 
@@ -401,12 +411,71 @@ module atg_su_fpu #(
 		end
 	end
 
-	assign s_valid = s6_valid;
-	assign s_valid_rep = s6_valid_rep;
-	assign s_warp  = s6_warp;
-	assign s_grp   = s6_grp;
-	assign s_rd    = s6_rd;
-	assign s_lanes = s6_lanes;
+	/* Optional Stage 7 output register when SHORT_LAT > 6 */
+	wire [DW-1:0] s_data_pre = s_data_lat6;
+	generate
+	if (SHORT_LAT > 6) begin : g_lat7_out
+		localparam integer EXTRA = SHORT_LAT - 6;
+		(* shreg_extract = "no" *) reg [EXTRA-1:0]      ex_valid;
+		(* shreg_extract = "no", keep = "true" *) reg [7:0] ex_valid_rep [0:EXTRA-1];
+		(* shreg_extract = "no" *) reg [WARP_W-1:0]     ex_warp  [0:EXTRA-1];
+		(* shreg_extract = "no" *) reg [GRP_W-1:0]      ex_grp   [0:EXTRA-1];
+		(* shreg_extract = "no" *) reg [6:0]            ex_rd    [0:EXTRA-1];
+		(* shreg_extract = "no" *) reg [NPHYS-1:0]      ex_lanes [0:EXTRA-1];
+		(* shreg_extract = "no" *) reg [DW-1:0]         ex_data  [0:EXTRA-1];
+		integer ke;
+		always @(posedge clk or posedge rst_p) begin
+			if (rst_p) begin
+				ex_valid <= {EXTRA{1'b0}};
+				for (ke = 0; ke < EXTRA; ke = ke + 1) begin
+					ex_valid_rep[ke] <= 8'd0;
+					ex_warp[ke]      <= {WARP_W{1'b0}};
+					ex_grp[ke]       <= {GRP_W{1'b0}};
+					ex_rd[ke]        <= 7'd0;
+					ex_lanes[ke]     <= {NPHYS{1'b0}};
+				end
+			end else if (en) begin
+				ex_valid[0]     <= s6_valid;
+				ex_valid_rep[0] <= {8{s6_valid}};
+				ex_warp[0]      <= s6_warp;
+				ex_grp[0]       <= s6_grp;
+				ex_rd[0]        <= s6_rd;
+				ex_lanes[0]     <= s6_lanes;
+				for (ke = 1; ke < EXTRA; ke = ke + 1) begin
+					ex_valid[ke]     <= ex_valid[ke-1];
+					ex_valid_rep[ke] <= {8{ex_valid[ke-1]}};
+					ex_warp[ke]      <= ex_warp[ke-1];
+					ex_grp[ke]       <= ex_grp[ke-1];
+					ex_rd[ke]        <= ex_rd[ke-1];
+					ex_lanes[ke]     <= ex_lanes[ke-1];
+				end
+			end
+		end
+		always @(posedge clk) begin
+			if (en) begin
+				ex_data[0] <= s_data_pre;
+				for (ke = 1; ke < EXTRA; ke = ke + 1)
+					ex_data[ke] <= ex_data[ke-1];
+			end
+		end
+		assign s_valid     = ex_valid[EXTRA-1];
+		assign s_valid_rep = ex_valid_rep[EXTRA-1];
+		assign s_warp      = ex_warp[EXTRA-1];
+		assign s_grp       = ex_grp[EXTRA-1];
+		assign s_rd        = ex_rd[EXTRA-1];
+		assign s_lanes     = ex_lanes[EXTRA-1];
+		assign s_data      = ex_data[EXTRA-1];
+		wire unused_s6_vrep = &{1'b0, s6_valid_rep};
+	end else begin : g_lat6_out
+		assign s_valid     = s6_valid;
+		assign s_valid_rep = s6_valid_rep;
+		assign s_warp      = s6_warp;
+		assign s_grp       = s6_grp;
+		assign s_rd        = s6_rd;
+		assign s_lanes     = s6_lanes;
+		assign s_data      = s_data_pre;
+	end
+	endgenerate
 
 	assign x_ready = !busy;
 

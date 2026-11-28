@@ -137,6 +137,7 @@ module atg_su_exec_tb;
 			endcase
 			want_pc = tk ? 16'd100 - 16'd7 : 16'd101;
 			run(i % 4, op, b, 16'd100, -32'sd7);
+			repeat (2) @(negedge clk);
 			#1;
 			if (!wc_valid || wc_warp !== i % 4 || wc_op !== 2'd0 || wc_pc !== want_pc)
 				fail("branch");
@@ -152,18 +153,22 @@ module atg_su_exec_tb;
 		init(1, 32'hFFFF0000);
 		run(1, ATG_EXEC_AND, 32'h0F0F0F0F, 0, 0);
 		q_warp = 1;
+		repeat (2) @(negedge clk);
 		#1;
 		if (q_exec !== 32'h0F0F0000)
 			fail("exec.and");
 		run(1, ATG_EXEC_OR, 32'h000000F0, 0, 0);
+		repeat (2) @(negedge clk);
 		#1;
 		if (q_exec !== 32'h0F0F00F0)
 			fail("exec.or");
 		run(1, ATG_EXEC_KILL, 32'hFFFF00FF, 0, 0);
+		repeat (2) @(negedge clk);
 		#1;
 		if (q_killed !== 32'h0F0F00F0)
 			fail("kill");
 		run(1, ATG_EXEC_KILL, 32'h00000100, 0, 0);
+		repeat (2) @(negedge clk);
 		#1;
 		if (q_killed !== 32'h0F0F00F0)
 			fail("kill outside EXEC");
@@ -184,6 +189,7 @@ module atg_su_exec_tb;
 			end
 		join
 		run(1, ATG_EXEC_SET, 32'h12345678, 0, 0);
+		repeat (2) @(negedge clk);
 		#1;
 		if (q_exec !== 32'h12345678 || q_killed !== 32'h0F0F00F0)
 			fail("exec.set");
@@ -196,10 +202,12 @@ module atg_su_exec_tb;
 		/* endbar */
 		ec = errors;
 		run(2, ATG_EXEC_BAR, 0, 16'd40, 0);
+		repeat (2) @(negedge clk);
 		#1;
 		if (!wc_valid || wc_op !== 2'd2 || wc_pc !== 16'd41 || wc_warp !== 2'd2)
 			fail("bar");
 		run(3, ATG_EXEC_END, 0, 16'd50, 0);
+		repeat (2) @(negedge clk);
 		#1;
 		if (!wc_valid || wc_op !== 2'd1 || wc_warp !== 2'd3)
 			fail("end");

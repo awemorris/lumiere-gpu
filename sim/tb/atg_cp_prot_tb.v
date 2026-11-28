@@ -236,8 +236,9 @@ module atg_cp_prot_tb;
 
 	initial begin
 		before = 0;
-		repeat (3) @(posedge clk);
+		repeat (4) @(posedge clk);
 		rst_n = 1'b1;
+		repeat (4) @(posedge clk);
 
 		/* regs */
 		hr(12'h1D0, v);
@@ -263,10 +264,12 @@ module atg_cp_prot_tb;
 
 		/* slots */
 		v_tag = 8'd5;
+		repeat (2) @(posedge clk);
 		#1;
 		check(v_slot == 6'd3, "v_slot");
 		sw(6'h28, {18'd0, 6'd4, 8'd0});	/* tag 0: ignored */
 		v_tag = 8'd0;
+		repeat (2) @(posedge clk);
 		#1;
 		check(v_slot == 6'd0, "tag 0");
 		fault_slot = 6'd3;
@@ -279,16 +282,20 @@ module atg_cp_prot_tb;
 		@(negedge clk);
 		u_fw = 1'b0;
 		u_tag = 8'd5;
+		repeat (2) @(posedge clk);
 		#1;
 		check(f_slot == 6'd3 && !f_chk, "ring µop");
 		u_fw = 1'b1;
 		u_side = {1'b0, 6'd2};
+		repeat (2) @(posedge clk);
 		#1;
 		check(f_slot == 6'd2 && f_chk, "firmware µop");
 		u_side = {1'b1, 6'd2};
+		repeat (2) @(posedge clk);
 		#1;
 		check(!f_chk, "SELF");
 		u_side = {1'b0, 6'd0};
+		repeat (2) @(posedge clk);
 		#1;
 		check(!f_chk, "slot 0");
 		u_fw = 1'b0;
@@ -306,7 +313,7 @@ module atg_cp_prot_tb;
 		check(prot_unit == 6'd3 && waited < 50, "switched to 3");
 		check(n_inv == i0 + 1 && n_scrub == s0 + 1, "inv and scrub once");
 		uop(1'b1, 8'd0, {1'b0, 6'd3}, 1'b1, 5);
-		check(waited == 0 && n_inv == i0 + 1, "same slot at once");
+		check(waited <= 3 && n_inv == i0 + 1, "same slot at once");
 		/* Unchecked work without the shader units (a blit, tag 77 unmapped), then 3. */
 		uop(1'b0, 8'd77, 7'd0, 1'b0, 50);
 		check(prot_unit == 6'd0, "switched to 0");

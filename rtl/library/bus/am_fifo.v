@@ -32,7 +32,6 @@ module am_fifo #(
 );
 	localparam [DEPTH_LOG2:0] DEPTH = 1 << DEPTH_LOG2;
 
-	reg [W-1:0] mem [0:(1 << DEPTH_LOG2) - 1];
 	reg [DEPTH_LOG2:0] wp;
 	reg [DEPTH_LOG2:0] rp;
 
@@ -57,30 +56,84 @@ module am_fifo #(
 	);
 
 	reg r_valid;
+	reg r_not_full;
 	wire will_empty = (rp_next == wp);
 	assign count = used;
-	assign in_ready = (wp[DEPTH_LOG2-1:0] != rp[DEPTH_LOG2-1:0]) || (wp[DEPTH_LOG2] == rp[DEPTH_LOG2]);
+	assign in_ready = r_not_full;
 	assign out_valid = r_valid;
-	assign out_data = mem[rp[DEPTH_LOG2-1:0]];
 
-	always @(posedge clk) begin
-		if (push)
-			mem[wp[DEPTH_LOG2-1:0]] <= in_data;
-	end
+	localparam integer N_SL = (W > 16) ? ((W + 15) / 16) : 1;
+	genvar gsl;
+	generate
+		if (N_SL == 1) begin : g_single
+			reg [W-1:0] mem [0:(1 << DEPTH_LOG2) - 1];
+			always @(posedge clk) begin
+				if (push)
+					mem[wp[DEPTH_LOG2-1:0]] <= in_data;
+			end
+			assign out_data = mem[rp[DEPTH_LOG2-1:0]];
+		end else begin : g_sliced
+			(* equivalent_register_removal = "no" *) reg [DEPTH_LOG2-1:0] wp_sl [0:N_SL-1];
+			(* equivalent_register_removal = "no" *) reg [DEPTH_LOG2-1:0] rp_sl [0:N_SL-1];
+			wire push_sl [0:N_SL-1];
+			wire pop_sl  [0:N_SL-1];
+			for (gsl = 0; gsl < N_SL; gsl = gsl + 1) begin : g_sl
+				localparam integer LO = gsl * 16;
+				localparam integer HI = ((gsl + 1) * 16 > W) ? (W - 1) : ((gsl + 1) * 16 - 1);
+				localparam integer SW = HI - LO + 1;
+				(* ram_style = "distributed" *) reg [SW-1:0] sl_mem [0:(1 << DEPTH_LOG2) - 1];
+`ifdef SYNTH_KINTEX7
+				(* dont_touch = "true" *) LUT2 #(.INIT(4'h8)) u_psl (.I0(in_valid), .I1(r_not_full), .O(push_sl[gsl]));
+				(* dont_touch = "true" *) LUT2 #(.INIT(4'h8)) u_ppl (.I0(r_valid), .I1(out_ready), .O(pop_sl[gsl]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				(* dont_touch = "true" *) LUT2 #(.INIT(4'h8)) u_psl (.I0(in_valid), .I1(r_not_full), .O(push_sl[gsl]));
+				(* dont_touch = "true" *) LUT2 #(.INIT(4'h8)) u_ppl (.I0(r_valid), .I1(out_ready), .O(pop_sl[gsl]));
+`else
+				assign push_sl[gsl] = in_valid && r_not_full;
+				assign pop_sl[gsl]  = r_valid && out_ready;
+`endif
+				always @(posedge clk or negedge rst_n) begin
+					if (!rst_n) begin
+						wp_sl[gsl] <= {DEPTH_LOG2{1'b0}};
+						rp_sl[gsl] <= {DEPTH_LOG2{1'b0}};
+					end else begin
+						if (push_sl[gsl])
+							wp_sl[gsl] <= wp_next[DEPTH_LOG2-1:0];
+						if (pop_sl[gsl])
+							rp_sl[gsl] <= rp_next[DEPTH_LOG2-1:0];
+					end
+				end
+				always @(posedge clk) begin
+					if (push_sl[gsl])
+						sl_mem[wp_sl[gsl]] <= in_data[LO +: SW];
+				end
+				assign out_data[LO +: SW] = sl_mem[rp_sl[gsl]];
+			end
+		end
+	endgenerate
+
+	wire next_full_on_push = (wp_next[DEPTH_LOG2-1:0] == rp[DEPTH_LOG2-1:0]) && (wp_next[DEPTH_LOG2] != rp[DEPTH_LOG2]);
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
 			wp <= {(DEPTH_LOG2 + 1){1'b0}};
 			rp <= {(DEPTH_LOG2 + 1){1'b0}};
 			r_valid <= 1'b0;
+			r_not_full <= 1'b1;
 		end else begin
 			if (push)
 				wp <= wp_next;
 			if (pop)
 				rp <= rp_next;
 			case ({push, pop})
-			2'b10: r_valid <= 1'b1;
-			2'b01: r_valid <= !will_empty;
+			2'b10: begin
+				r_valid <= 1'b1;
+				r_not_full <= !next_full_on_push;
+			end
+			2'b01: begin
+				r_valid <= !will_empty;
+				r_not_full <= 1'b1;
+			end
 			default: ;
 			endcase
 		end

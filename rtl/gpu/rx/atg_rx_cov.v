@@ -46,16 +46,29 @@ module atg_rx_cov (
 
 `ifdef SYNTH_KINTEX7
 	(* keep = "true", dont_touch = "true" *) wire [2:0] i_load_edge;
-	LUT1 #(.INIT(2'b10)) u_ild_0 (.I0(i_load), .O(i_load_edge[0]));
-	LUT1 #(.INIT(2'b10)) u_ild_1 (.I0(i_load), .O(i_load_edge[1]));
-	LUT1 #(.INIT(2'b10)) u_ild_2 (.I0(i_load), .O(i_load_edge[2]));
+	(* keep = "true", dont_touch = "true" *) wire i_load_rl;
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ild_0 (.I0(i_load), .O(i_load_edge[0]));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ild_1 (.I0(i_load), .O(i_load_edge[1]));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ild_2 (.I0(i_load), .O(i_load_edge[2]));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ild_r (.I0(i_load), .O(i_load_rl));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", dont_touch = "true" *) wire [2:0] i_load_edge;
+	(* keep = "true", dont_touch = "true" *) wire i_load_rl;
+	assign i_load_edge[0] = i_load;
+	assign i_load_edge[1] = i_load;
+	assign i_load_edge[2] = i_load;
+	assign i_load_rl = i_load;
+`else
+	wire [2:0] i_load_edge = {3{i_load}};
+	wire i_load_rl = i_load;
+`endif
 
 	reg r_load;
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n)
 			r_load <= 1'b0;
 		else
-			r_load <= i_load;
+			r_load <= i_load_rl;
 	end
 
 	wire [2:0] w_load_op [0:2];
@@ -64,12 +77,19 @@ module atg_rx_cov (
 	generate
 		for (gg = 0; gg < 3; gg = gg + 1) begin : g_ld_buf
 			for (gsl = 0; gsl < 3; gsl = gsl + 1) begin : g_ld_s
+`ifdef SYNTH_KINTEX7
 				(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_w_op (.I0(r_load), .O(w_load_op[gg][gsl]));
 				(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_w_oq (.I0(r_load), .O(w_load_oq[gg][gsl]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				assign w_load_op[gg][gsl] = r_load;
+				assign w_load_oq[gg][gsl] = r_load;
+`else
+				assign w_load_op[gg][gsl] = r_load;
+				assign w_load_oq[gg][gsl] = r_load;
+`endif
 			end
 		end
 	endgenerate
-`endif
 
 	function signed [47:0] sx48;
 		input [23:0] v;
@@ -123,6 +143,19 @@ module atg_rx_cov (
 		LUT1 #(.INIT(2'b10)) u_sgn_b3 (.I0(i_ab[48 * ge + 47]), .O(sgn_b_3));
 		wire [47:0] a = {{6{sgn_a_3}}, {6{sgn_a_2}}, {6{sgn_a_1}}, {6{sgn_a_0}}, i_ab[48 * ge +: 24]};
 		wire [47:0] b = {{6{sgn_b_3}}, {6{sgn_b_2}}, {6{sgn_b_1}}, {6{sgn_b_0}}, i_ab[48 * ge + 24 +: 24]};
+`elsif SYNTH_KINTEX_ULTRASCALE
+		(* keep = "true", dont_touch = "true" *) wire sgn_a_0, sgn_a_1, sgn_a_2, sgn_a_3;
+		(* keep = "true", dont_touch = "true" *) wire sgn_b_0, sgn_b_1, sgn_b_2, sgn_b_3;
+		assign sgn_a_0 = i_ab[48 * ge + 23];
+		assign sgn_a_1 = i_ab[48 * ge + 23];
+		assign sgn_a_2 = i_ab[48 * ge + 23];
+		assign sgn_a_3 = i_ab[48 * ge + 23];
+		assign sgn_b_0 = i_ab[48 * ge + 47];
+		assign sgn_b_1 = i_ab[48 * ge + 47];
+		assign sgn_b_2 = i_ab[48 * ge + 47];
+		assign sgn_b_3 = i_ab[48 * ge + 47];
+		wire [47:0] a = {{6{sgn_a_3}}, {6{sgn_a_2}}, {6{sgn_a_1}}, {6{sgn_a_0}}, i_ab[48 * ge +: 24]};
+		wire [47:0] b = {{6{sgn_b_3}}, {6{sgn_b_2}}, {6{sgn_b_1}}, {6{sgn_b_0}}, i_ab[48 * ge + 24 +: 24]};
 `else
 		wire [47:0] a = sx48(i_ab[48 * ge +: 24]);
 		wire [47:0] b = sx48(i_ab[48 * ge + 24 +: 24]);
@@ -133,7 +166,6 @@ module atg_rx_cov (
 		am_add #(.W(48)) u_op1 (.a(a <<< 5), .b(b <<< 6), .ci(1'b0), .s(op1), .co(carry_unused[0]));
 		am_add #(.W(48)) u_oq1 (.a(a <<< 6), .b(a <<< 5), .ci(1'b0), .s(oq1), .co(carry_unused[2]));
 
-`ifdef SYNTH_KINTEX7
 		wire [47:0] b_s5 = b <<< 5;
 		(* extract_reset = "no" *) reg signed [15:0] op1_r [0:2];
 		(* extract_reset = "no" *) reg signed [15:0] oq1_r [0:2];
@@ -141,11 +173,24 @@ module atg_rx_cov (
 		(* extract_reset = "no" *) reg signed [15:0] b_s5_oq_r [0:2];
 		genvar gr;
 		for (gr = 0; gr < 3; gr = gr + 1) begin : g_r_pipe
+`ifdef SYNTH_KINTEX7
 			(* keep = "true", dont_touch = "true" *) wire we_op1, we_oq1, we_bop, we_boq;
-			LUT1 #(.INIT(2'b10)) u_we_op1 (.I0(i_load_edge[ge]), .O(we_op1));
-			LUT1 #(.INIT(2'b10)) u_we_oq1 (.I0(i_load_edge[ge]), .O(we_oq1));
-			LUT1 #(.INIT(2'b10)) u_we_bop (.I0(i_load_edge[ge]), .O(we_bop));
-			LUT1 #(.INIT(2'b10)) u_we_boq (.I0(i_load_edge[ge]), .O(we_boq));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_we_op1 (.I0(i_load_edge[ge]), .O(we_op1));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_we_oq1 (.I0(i_load_edge[ge]), .O(we_oq1));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_we_bop (.I0(i_load_edge[ge]), .O(we_bop));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_we_boq (.I0(i_load_edge[ge]), .O(we_boq));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			(* keep = "true", dont_touch = "true" *) wire we_op1, we_oq1, we_bop, we_boq;
+			assign we_op1 = i_load_edge[ge];
+			assign we_oq1 = i_load_edge[ge];
+			assign we_bop = i_load_edge[ge];
+			assign we_boq = i_load_edge[ge];
+`else
+			wire we_op1 = i_load_edge[ge];
+			wire we_oq1 = i_load_edge[ge];
+			wire we_bop = i_load_edge[ge];
+			wire we_boq = i_load_edge[ge];
+`endif
 			always @(posedge clk) begin
 				if (we_op1) op1_r[gr]     <= op1[16 * gr +: 16];
 				if (we_oq1) oq1_r[gr]     <= oq1[16 * gr +: 16];
@@ -160,15 +205,55 @@ module atg_rx_cov (
 		wire [47:0] op_n, oq_n;
 		am_add #(.W(48)) u_op (.a(op1_r_w), .b(b_s5_op_r_w), .ci(1'b0), .s(op_n), .co(carry_unused[1]));
 		am_sub #(.W(48)) u_oq (.a(oq1_r_w), .b(b_s5_oq_r_w), .bi(1'b0), .d(oq_n), .bo(carry_unused[3]));
-`else
-		wire [47:0] op_n, oq_n;
-		am_add #(.W(48)) u_op (.a(op1), .b(b <<< 5), .ci(1'b0), .s(op_n), .co(carry_unused[1]));
-		am_sub #(.W(48)) u_oq (.a(oq1), .b(b <<< 5), .bi(1'b0), .d(oq_n), .bo(carry_unused[3]));
-`endif
 		wire [47:0] pa_in = op[ge];
 		wire [47:0] qa_in = oq[ge];
+`ifdef SYNTH_KINTEX7
 		am_addsub #(.W(48)) u_pa (.a(48'd0), .b(pa_in), .sub(pa_in[47]), .s(pa), .co(carry_unused[4]));
 		am_addsub #(.W(48)) u_qa (.a(48'd0), .b(qa_in), .sub(qa_in[47]), .s(qa), .co(carry_unused[5]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		am_addsub #(.W(48)) u_pa (.a(48'd0), .b(pa_in), .sub(pa_in[47]), .s(pa), .co(carry_unused[4]));
+		am_addsub #(.W(48)) u_qa (.a(48'd0), .b(qa_in), .sub(qa_in[47]), .s(qa), .co(carry_unused[5]));
+`else
+		/* 6x 8-bit pure-LUT abs (~v + 1 = ~v + byte-carry, <= 8 cmos3) */
+		wire [5:0] pa_z, qa_z;
+		wire [5:0] pa_c, qa_c;
+		wire [47:0] pa_p1, qa_p1;
+		genvar gba, gbi;
+		for (gba = 0; gba < 6; gba = gba + 1) begin : g_abs_b
+			wire [7:0] pb = pa_in[8*gba +: 8];
+			wire [7:0] qb = qa_in[8*gba +: 8];
+			wire [7:0] npb = ~pb;
+			wire [7:0] nqb = ~qb;
+			assign pa_z[gba] = (pb == 8'd0);
+			assign qa_z[gba] = (qb == 8'd0);
+			assign pa_p1[8*gba + 0] = ~npb[0];
+			assign qa_p1[8*gba + 0] = ~nqb[0];
+			for (gbi = 1; gbi < 4; gbi = gbi + 1) begin : g_p1_lo
+				assign pa_p1[8*gba + gbi] = npb[gbi] ^ (&npb[gbi-1:0]);
+				assign qa_p1[8*gba + gbi] = nqb[gbi] ^ (&nqb[gbi-1:0]);
+			end
+			wire pa_and4 = &npb[3:0];
+			wire qa_and4 = &nqb[3:0];
+			assign pa_p1[8*gba + 4] = npb[4] ^ pa_and4;
+			assign qa_p1[8*gba + 4] = nqb[4] ^ qa_and4;
+			for (gbi = 5; gbi < 8; gbi = gbi + 1) begin : g_p1_hi
+				assign pa_p1[8*gba + gbi] = npb[gbi] ^ (pa_and4 & (&npb[gbi-1:4]));
+				assign qa_p1[8*gba + gbi] = nqb[gbi] ^ (qa_and4 & (&nqb[gbi-1:4]));
+			end
+			if (gba == 0) begin : g_bc0
+				assign pa_c[0] = 1'b1;
+				assign qa_c[0] = 1'b1;
+			end else begin : g_bck
+				assign pa_c[gba] = &pa_z[gba-1:0];
+				assign qa_c[gba] = &qa_z[gba-1:0];
+			end
+			(* keep = "true" *) wire pa_sgn = pa_in[47];
+			(* keep = "true" *) wire qa_sgn = qa_in[47];
+			assign pa[8*gba +: 8] = !pa_sgn ? pb : (pa_c[gba] ? pa_p1[8*gba +: 8] : npb);
+			assign qa[8*gba +: 8] = !qa_sgn ? qb : (qa_c[gba] ? qa_p1[8*gba +: 8] : nqb);
+		end
+		assign carry_unused[5:4] = 2'b00;
+`endif
 		/* es: ec - op (start), ec + oq (sample 0), ec - oq (1), ec + op (2, 3) */
 		am_addsub #(.W(48)) u_es (.a(i_ec[48 * ge +: 48]), .b(i_start || i_sc[1] ? op[ge] : oq[ge]),
 `ifdef MUT_SAMPLE_SWAP
@@ -191,19 +276,10 @@ module atg_rx_cov (
 
 		genvar gs_e;
 		for (gs_e = 0; gs_e < 3; gs_e = gs_e + 1) begin : g_opq_slices
-`ifdef SYNTH_KINTEX7
 			always @(posedge clk) begin
 				if (w_load_op[ge][gs_e]) op[ge][16 * gs_e +: 16] <= op_n[16 * gs_e +: 16];
 				if (w_load_oq[ge][gs_e]) oq[ge][16 * gs_e +: 16] <= oq_n[16 * gs_e +: 16];
 			end
-`else
-			always @(posedge clk) begin
-				if (i_load) begin
-					op[ge][16 * gs_e +: 16] <= op_n[16 * gs_e +: 16];
-					oq[ge][16 * gs_e +: 16] <= oq_n[16 * gs_e +: 16];
-				end
-			end
-`endif
 		end
 	end
 	endgenerate

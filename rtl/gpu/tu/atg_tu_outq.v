@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -36,6 +36,8 @@ module atg_tu_outq #(
 	(* max_fanout = 16 *) reg [2:0] rp;
 	reg r_valid;
 	reg r_ready;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [NUM_GRPS-1:0] r_ready_g;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [1:0] wp_g_r [0:NUM_GRPS-1];
 
 	wire [2:0] used;
 	wire unused_used_bo;
@@ -43,7 +45,7 @@ module atg_tu_outq #(
 		.a(wp), .b(rp), .bi(1'b0), .d(used), .bo(unused_used_bo)
 	);
 
-	(* keep = "true" *) wire push = in_valid && in_ready;
+	wire push = in_valid && in_ready;
 	wire pop  = out_valid && out_ready;
 
 	wire [2:0] wp_next;
@@ -64,41 +66,58 @@ module atg_tu_outq #(
 	assign in_ready = r_ready;
 	assign out_valid = r_valid;
 
+	integer gw;
 	always @(posedge clk or posedge rst_inv) begin
 		if (rst_inv) begin
 			wp <= 3'd0;
 			rp <= 3'd0;
 			r_valid <= 1'b0;
 			r_ready <= 1'b1;
+			r_ready_g <= {NUM_GRPS{1'b1}};
+			for (gw = 0; gw < NUM_GRPS; gw = gw + 1)
+				wp_g_r[gw] <= 2'd0;
 		end else begin
-			if (push)
+			if (push) begin
 				wp <= wp_next;
+				for (gw = 0; gw < NUM_GRPS; gw = gw + 1)
+					wp_g_r[gw] <= wp_next[1:0];
+			end
 			if (pop)
 				rp <= rp_next;
 			case ({push, pop})
 			2'b10: begin
 				r_valid <= 1'b1;
 				r_ready <= !will_full;
+				r_ready_g <= {NUM_GRPS{!will_full}};
 			end
 			2'b01: begin
 				r_valid <= !will_empty;
 				r_ready <= 1'b1;
+				r_ready_g <= {NUM_GRPS{1'b1}};
 			end
 			default: ;
 			endcase
 		end
 	end
 
-	(* keep = "true" *) wire [NUM_GRPS-1:0] push_g;
-	(* keep = "true" *) wire [1:0] wp_g [0:NUM_GRPS-1];
+	localparam NUM_VBUFS = (NUM_GRPS + 2) / 3;
+	wire [NUM_VBUFS-1:0] in_vld_b;
 	(* keep = "true" *) wire [1:0] rp_g [0:NUM_GRPS-1];
 
 	genvar gi, si;
 	generate
+	for (gi = 0; gi < NUM_VBUFS; gi = gi + 1) begin : g_vbuf
+`ifdef SYNTH_KINTEX7
+		(* keep = "true", dont_touch = "true" *)
+		LUT1 #(.INIT(2'b10)) u_vbuf (.I0(in_valid), .O(in_vld_b[gi]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign in_vld_b[gi] = in_valid;
+`else
+		assign in_vld_b[gi] = in_valid;
+`endif
+	end
 	for (gi = 0; gi < NUM_GRPS; gi = gi + 1) begin : g_grp
-		assign push_g[gi] = push;
-		assign wp_g[gi]   = wp[1:0];
-		assign rp_g[gi]   = rp[1:0];
+		assign rp_g[gi] = rp[1:0];
 	end
 
 	for (si = 0; si < NUM_SLICES; si = si + 1) begin : g_slice
@@ -106,11 +125,12 @@ module atg_tu_outq #(
 		localparam HI = (si == NUM_SLICES - 1) ? (W - 1) : (si * 16 + 15);
 		localparam SW = HI - LO + 1;
 		localparam G  = si / 4;
+		localparam VB = G / 3;
 
-		(* keep = "true" *) wire we0 = push_g[G] && (wp_g[G] == 2'd0);
-		(* keep = "true" *) wire we1 = push_g[G] && (wp_g[G] == 2'd1);
-		(* keep = "true" *) wire we2 = push_g[G] && (wp_g[G] == 2'd2);
-		(* keep = "true" *) wire we3 = push_g[G] && (wp_g[G] == 2'd3);
+		(* keep = "true" *) wire we0 = in_vld_b[VB] && r_ready_g[G] && (wp_g_r[G] == 2'd0);
+		(* keep = "true" *) wire we1 = in_vld_b[VB] && r_ready_g[G] && (wp_g_r[G] == 2'd1);
+		(* keep = "true" *) wire we2 = in_vld_b[VB] && r_ready_g[G] && (wp_g_r[G] == 2'd2);
+		(* keep = "true" *) wire we3 = in_vld_b[VB] && r_ready_g[G] && (wp_g_r[G] == 2'd3);
 		(* keep = "true" *) wire [1:0] rp_b = rp_g[G];
 
 		(* extract_reset = "no", ram_style = "registers" *) reg [SW-1:0] m0, m1, m2, m3;

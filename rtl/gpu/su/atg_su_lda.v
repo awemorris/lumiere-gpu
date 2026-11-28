@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -81,12 +81,14 @@ module atg_su_lda #(
 	localparam NC = NQ < 2 ? NQ : 2;	/* table copies (read ports) */
 	localparam NR = NQ / NC;	/* read cycles per group */
 	localparam PW = NR > 1 ? $clog2(NR) : 1;
-	localparam LD = SHORT_LAT - NR - 2;	/* data stages after raddr_r (1) + BRAM rq (1) + rq_pipe (1) */
+	localparam PRE_R = (SHORT_LAT > 6) ? 1 : 0;	/* 1-cycle pre-address pipeline stage when SHORT_LAT > 6 */
+	localparam LD = SHORT_LAT - NR - 2 - PRE_R;	/* data stages after raddr_r (1) + BRAM rq (1) + rq_pipe (1) */
 	localparam DEPTH = NWARPS * PRIMS * 3 * VARY_WORDS;
 	localparam AW = $clog2(DEPTH);
 	localparam EW = 1 + WARP_W + GRP_W + 7 + NPHYS;
 	localparam PL = $clog2(PRIMS);	/* PRIMS, VARY_WORDS, NQ and NC are powers of two */
 	localparam VL = $clog2(VARY_WORDS);
+	localparam RY_W = (AW > VL) ? (AW - VL) : 1;
 
 	/*
 	 * A table word's address ((warp PRIMS + prim) 3 + vertex) VARY_WORDS +
@@ -145,8 +147,25 @@ module atg_su_lda #(
 	wire sc_on;
 	wire [AW-1:0] sc_a;
 
+	wire scrub_sc, scrub_we, wd_zero_lo, wd_zero_hi;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_scsc  (.I0(scrub_i),           .O(scrub_sc));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_scwe  (.I0(scrub_i),           .O(scrub_we));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_wdzl  (.I0(scrub_we || sc_on), .O(wd_zero_lo));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_wdzh  (.I0(scrub_we || sc_on), .O(wd_zero_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign scrub_sc = scrub_i;
+	assign scrub_we = scrub_i;
+	assign wd_zero_lo = scrub_we || sc_on;
+	assign wd_zero_hi = scrub_we || sc_on;
+`else
+	assign scrub_sc   = scrub_i;
+	assign scrub_we   = scrub_i;
+	assign wd_zero_lo = scrub_i || sc_on;
+	assign wd_zero_hi = scrub_i || sc_on;
+`endif
 	atg_su_scrub #(.DEPTH(DEPTH), .AW(AW)) sc (
-		.clk(clk), .rst_n(rst_n), .start(scrub_i), .on(sc_on), .a(sc_a)
+		.clk(clk), .rst_n(rst_n), .start(scrub_sc), .on(sc_on), .a(sc_a)
 	);
 
 	wire [AW-1:0] sc_a_next;
@@ -156,26 +175,28 @@ module atg_su_lda #(
 	assign scrub_busy = sc_on;
 	(* max_fanout = 12 *) reg t_we_r;
 	(* max_fanout = 12 *) reg [AW-1:0] t_wa_r;
+	reg sc_last_r;
 	(* shreg_extract = "no", max_fanout = 12 *) reg [15:0] t_wd_lo_r, t_wd_hi_r;
 	wire [31:0] t_wd_r = {t_wd_hi_r, t_wd_lo_r};
-	(* dont_touch = "true" *) wire wd_zero_lo = scrub_i || sc_on;
-	(* dont_touch = "true" *) wire wd_zero_hi = scrub_i || sc_on;
 	always @(posedge clk or posedge rst_p) begin
 		if (rst_p) begin
 			t_we_r <= 1'b0;
 			t_wa_r <= {AW{1'b0}};
+			sc_last_r <= (DEPTH <= 1);
 			t_wd_lo_r <= 16'd0;
 			t_wd_hi_r <= 16'd0;
 		end else begin
-			if (scrub_i) begin
+			if (scrub_we) begin
 				t_we_r <= 1'b1;
 				t_wa_r <= {AW{1'b0}};
+				sc_last_r <= (DEPTH <= 1);
 			end else if (sc_on) begin
-				if ({{(32-AW){1'b0}}, sc_a} == DEPTH - 1)
+				t_wa_r <= sc_a_next;
+				if (sc_last_r)
 					t_we_r <= 1'b0;
 				else begin
 					t_we_r <= 1'b1;
-					t_wa_r <= sc_a_next;
+					sc_last_r <= ({{(32-AW){1'b0}}, sc_a} == DEPTH - 2);
 				end
 			end else begin
 				t_we_r <= tab_we;
@@ -214,6 +235,14 @@ module atg_su_lda #(
 		for (glw = 0; glw < WARP_W; glw = glw + 1) begin : g_buf_xwl
 			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_xwm (.I0(x_warp[glw]), .O(x_warp_map[glw]));
 			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_xwc (.I0(x_warp[glw]), .O(x_warp_ctl[glw]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar glw;
+	generate
+		for (glw = 0; glw < WARP_W; glw = glw + 1) begin : g_buf_xwl
+			assign x_warp_map[glw] = x_warp[glw];
+			assign x_warp_ctl[glw] = x_warp[glw];
 		end
 	endgenerate
 `else
@@ -287,20 +316,66 @@ module atg_su_lda #(
 				if (pqi == pq[2:0])
 					prim = c_map[3 * pq +: 3];
 		end
-		wire [AW-1:0] rx = tab_x(c_warp, prim);
-		wire [AW-1:0] ry;
-		wire ry_co_unused;
-		am_add #(.W(AW)) u_ry (
-			.a({rx[AW-2:0], rvtx[0] | rvtx[1]}),
-			.b(rx),
-			.ci(rvtx[1]),
-			.s(ry),
-			.co(ry_co_unused)
-		);
-		/* verilator lint_off WIDTHTRUNC */
-		wire [AW-1:0] raddr_a = (ry << VL) | {{(AW > 7 ? AW - 7 : 0){1'b0}}, rvary};
-		/* verilator lint_on WIDTHTRUNC */
-		wire [31:0] raddr = {{(32-AW){1'b0}}, raddr_a};
+		wire [AW-1:0] raddr_next;
+		wire rok_next;
+		wire [31:0] raddr;
+		if (PRE_R != 0) begin : g_pre_r
+			reg [WARP_W-1:0] p1_warp;
+			reg [2:0] p1_prim;
+			reg [1:0] p1_rvtx;
+			reg [6:0] p1_rvary;
+			reg p1_rok;
+			always @(posedge clk or posedge rst_p) begin
+				if (rst_p) begin
+					p1_warp  <= {WARP_W{1'b0}};
+					p1_prim  <= 3'd0;
+					p1_rvtx  <= 2'd0;
+					p1_rvary <= 7'd0;
+					p1_rok   <= 1'b0;
+				end else begin
+					p1_warp  <= c_warp;
+					p1_prim  <= prim;
+					p1_rvtx  <= rvtx[1:0];
+					p1_rvary <= rvary;
+					p1_rok   <= rok && ({29'd0, prim} < PRIMS);
+				end
+			end
+			wire [AW-1:0] rx_full = tab_x(p1_warp, p1_prim);
+			wire [RY_W-1:0] rx_n = rx_full[RY_W-1:0];
+			wire [RY_W-1:0] ry_n;
+			wire ry_co_unused;
+			am_add #(.W(RY_W)) u_ry (
+				.a({rx_n[RY_W-2:0], p1_rvtx[0] | p1_rvtx[1]}),
+				.b(rx_n),
+				.ci(p1_rvtx[1]),
+				.s(ry_n),
+				.co(ry_co_unused)
+			);
+			/* verilator lint_off WIDTHTRUNC */
+			wire [AW-1:0] raddr_a = (ry_n << VL) | {{(AW > 7 ? AW - 7 : 0){1'b0}}, p1_rvary};
+			/* verilator lint_on WIDTHTRUNC */
+			assign raddr = {{(32-AW){1'b0}}, raddr_a};
+			assign raddr_next = raddr[AW-1:0];
+			assign rok_next = p1_rok;
+			wire unused_rx_hi = &{1'b0, rx_full[AW-1:RY_W]};
+		end else begin : g_no_pre_r
+			wire [AW-1:0] rx = tab_x(c_warp, prim);
+			wire [AW-1:0] ry;
+			wire ry_co_unused;
+			am_add #(.W(AW)) u_ry (
+				.a({rx[AW-2:0], rvtx[0] | rvtx[1]}),
+				.b(rx),
+				.ci(rvtx[1]),
+				.s(ry),
+				.co(ry_co_unused)
+			);
+			/* verilator lint_off WIDTHTRUNC */
+			wire [AW-1:0] raddr_a = (ry << VL) | {{(AW > 7 ? AW - 7 : 0){1'b0}}, rvary};
+			/* verilator lint_on WIDTHTRUNC */
+			assign raddr = {{(32-AW){1'b0}}, raddr_a};
+			assign raddr_next = raddr[AW-1:0];
+			assign rok_next = rok && {29'd0, prim} < PRIMS;
+		end
 		always @(posedge clk) begin
 			if (t_we_r)
 				m[t_wa_r] <= t_wd_r;
@@ -312,8 +387,8 @@ module atg_su_lda #(
 				rok_r <= 1'b0;
 				rq_ok[q] <= 1'b0;
 			end else begin
-				raddr_r <= raddr[AW-1:0];
-				rok_r <= rok && {29'd0, prim} < PRIMS;
+				raddr_r <= raddr_next;
+				rok_r <= rok_next;
 				rq_ok[q] <= rok_r;
 			end
 		end
@@ -333,14 +408,16 @@ module atg_su_lda #(
 	end
 
 	/* The reads of a group gathered: read cycle p's data is in rq_pipe 3 cycles after ph. */
-	(* shreg_extract = "no", max_fanout = 12 *) reg [PW-1:0] rph_d1, rph_d2, rph;
+	(* shreg_extract = "no", max_fanout = 12 *) reg [PW-1:0] rph_p1, rph_d1, rph_d2, rph;
 	always @(posedge clk or posedge rst_p)
 		if (rst_p) begin
+			rph_p1 <= {PW{1'b0}};
 			rph_d1 <= {PW{1'b0}};
 			rph_d2 <= {PW{1'b0}};
 			rph    <= {PW{1'b0}};
 		end else begin
-			rph_d1 <= ph;
+			rph_p1 <= ph;
+			rph_d1 <= (PRE_R != 0) ? rph_p1 : ph;
 			rph_d2 <= rph_d1;
 			rph    <= rph_d2;
 		end
@@ -406,14 +483,32 @@ module atg_su_lda #(
 	wire [DW-1:0] y_final;
 	generate
 	if (LD > 0) begin : g_dp
-		(* shreg_extract = "no" *) reg [DW-1:0] dp [0:LD-1];
-		integer kd;
-		always @(posedge clk) begin
-			dp[0] <= y;
-			for (kd = 1; kd < LD; kd = kd + 1)
-				dp[kd] <= dp[kd-1];
+		wire [DW-1:0] dp_out;
+		genvar gdps;
+		for (gdps = 0; gdps < DW / 16; gdps = gdps + 1) begin : g_dp_sl
+			wire pv_sl;
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_dpv (.I0(pipe_v[SHORT_LAT-2]), .O(pv_sl));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign pv_sl = pipe_v[SHORT_LAT-2];
+`else
+			assign pv_sl = pipe_v[SHORT_LAT-2];
+`endif
+			(* shreg_extract = "no" *) reg [15:0] dp_sl [0:LD-1];
+			integer kd;
+			always @(posedge clk) begin
+				if (LD == 1) begin
+					dp_sl[0] <= pv_sl ? y[gdps*16 +: 16] : 16'd0;
+				end else begin
+					dp_sl[0] <= y[gdps*16 +: 16];
+					for (kd = 1; kd < LD - 1; kd = kd + 1)
+						dp_sl[kd] <= dp_sl[kd-1];
+					dp_sl[LD-1] <= pv_sl ? dp_sl[LD-2] : 16'd0;
+				end
+			end
+			assign dp_out[gdps*16 +: 16] = dp_sl[LD-1];
 		end
-		assign y_final = dp[LD-1];
+		assign y_final = dp_out;
 	end else begin : g_nodp
 		assign y_final = y;
 	end
@@ -426,11 +521,15 @@ module atg_su_lda #(
 	assign s_grp = o[EW-2-WARP_W -: GRP_W];
 	assign s_rd = o[EW-2-WARP_W-GRP_W -: 7];
 	assign s_lanes = o[NPHYS-1:0];
-	(* dont_touch = "true" *) wire [NPHYS*2-1:0] s_val_sl;
 	generate
-	for (gs = 0; gs < NPHYS*2; gs = gs + 1) begin : g_sd_sl
-		assign s_val_sl[gs] = o[EW-1];
-		assign s_data[gs*16 +: 16] = s_val_sl[gs] ? y_final[gs*16 +: 16] : 16'd0;
+	if (LD > 0) begin : g_sd_direct
+		assign s_data = y_final;
+	end else begin : g_sd_mux
+		(* dont_touch = "true" *) wire [NPHYS*2-1:0] s_val_sl;
+		for (gs = 0; gs < NPHYS*2; gs = gs + 1) begin : g_sd_sl
+			assign s_val_sl[gs] = o[EW-1];
+			assign s_data[gs*16 +: 16] = s_val_sl[gs] ? y_final[gs*16 +: 16] : 16'd0;
+		end
 	end
 	endgenerate
 

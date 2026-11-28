@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -142,49 +142,115 @@ module atg_dc_regs #(
 	genvar gwd;
 	generate
 		for (gwd = 0; gwd < 32; gwd = gwd + 1) begin : g_wdata_tree
-			LUT1 #(.INIT(2'b10)) u_wd0 (.I0(d_wdata[gwd]), .O(d_wdata_b0[gwd]));
-			LUT1 #(.INIT(2'b10)) u_wd1 (.I0(d_wdata[gwd]), .O(d_wdata_b1[gwd]));
-			LUT1 #(.INIT(2'b10)) u_wd2 (.I0(d_wdata[gwd]), .O(d_wdata_b2[gwd]));
-			LUT1 #(.INIT(2'b10)) u_wm0 (.I0(d_wmask[gwd]), .O(d_wmask_b0[gwd]));
-			LUT1 #(.INIT(2'b10)) u_wm1 (.I0(d_wmask[gwd]), .O(d_wmask_b1[gwd]));
-			LUT1 #(.INIT(2'b10)) u_wm2 (.I0(d_wmask[gwd]), .O(d_wmask_b2[gwd]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_wd0 (.I0(d_wdata[gwd]), .O(d_wdata_b0[gwd]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_wd1 (.I0(d_wdata[gwd]), .O(d_wdata_b1[gwd]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_wd2 (.I0(d_wdata[gwd]), .O(d_wdata_b2[gwd]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_wm0 (.I0(d_wmask[gwd]), .O(d_wmask_b0[gwd]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_wm1 (.I0(d_wmask[gwd]), .O(d_wmask_b1[gwd]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_wm2 (.I0(d_wmask[gwd]), .O(d_wmask_b2[gwd]));
 		end
 	endgenerate
 
-	wire [5:0] idx_ctl, idx_cfg;
+	wire [5:0] idx_ctl, idx_cfg, idx_cfg_l, idx_cfg_h;
 	wire [5:0] idx_ext_l, idx_ext_h;
 	genvar gidx;
 	generate
 		for (gidx = 0; gidx < 6; gidx = gidx + 1) begin : g_idx_buf
-			LUT1 #(.INIT(2'b10)) u_buf_ict (.I0(d_idx[gidx]), .O(idx_ctl[gidx]));
-			LUT1 #(.INIT(2'b10)) u_buf_icf (.I0(d_idx[gidx]), .O(idx_cfg[gidx]));
-			LUT1 #(.INIT(2'b10)) u_buf_iel (.I0(d_idx[gidx]), .O(idx_ext_l[gidx]));
-			LUT1 #(.INIT(2'b10)) u_buf_ieh (.I0(d_idx[gidx]), .O(idx_ext_h[gidx]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_ict  (.I0(d_idx[gidx]), .O(idx_ctl[gidx]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_icf  (.I0(d_idx[gidx]), .O(idx_cfg[gidx]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_icfl (.I0(d_idx[gidx]), .O(idx_cfg_l[gidx]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_icfh (.I0(d_idx[gidx]), .O(idx_cfg_h[gidx]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_iel  (.I0(d_idx[gidx]), .O(idx_ext_l[gidx]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_ieh  (.I0(d_idx[gidx]), .O(idx_ext_h[gidx]));
 		end
 	endgenerate
-	wire d_we_ctl = d_we, d_we_cfg = d_we, d_we_cfg_l = d_we, d_we_cfg_h = d_we, d_we_ext_l = d_we, d_we_ext_h = d_we;
+	wire d_we_ctl, d_we_cfg, d_we_cfg_l, d_we_cfg_h, d_we_ext_l, d_we_ext_h;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wct  (.I0(d_we), .O(d_we_ctl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wcf  (.I0(d_we), .O(d_we_cfg));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wcfl (.I0(d_we), .O(d_we_cfg_l));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wcfh (.I0(d_we), .O(d_we_cfg_h));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wel  (.I0(d_we), .O(d_we_ext_l));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_weh  (.I0(d_we), .O(d_we_ext_h));
 	wire flip_valid_b0, flip_valid_b1, flip_valid_n0, flip_valid_n1, flip_valid_ctl;
-	LUT1 #(.INIT(2'b10)) u_buf_fvb0 (.I0(flip_valid), .O(flip_valid_b0));
-	LUT1 #(.INIT(2'b10)) u_buf_fvb1 (.I0(flip_valid), .O(flip_valid_b1));
-	LUT1 #(.INIT(2'b10)) u_buf_fvn0 (.I0(flip_valid), .O(flip_valid_n0));
-	LUT1 #(.INIT(2'b10)) u_buf_fvn1 (.I0(flip_valid), .O(flip_valid_n1));
-	LUT1 #(.INIT(2'b10)) u_buf_fvct (.I0(flip_valid), .O(flip_valid_ctl));
-	wire w_next_l, w_next_h, w_next_ctl;
-	LUT1 #(.INIT(2'b10)) u_buf_wnl (.I0(w_next), .O(w_next_l));
-	LUT1 #(.INIT(2'b10)) u_buf_wnh (.I0(w_next), .O(w_next_h));
-	LUT1 #(.INIT(2'b10)) u_buf_wnc (.I0(w_next), .O(w_next_ctl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fvb0 (.I0(flip_valid), .O(flip_valid_b0));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fvb1 (.I0(flip_valid), .O(flip_valid_b1));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fvn0 (.I0(flip_valid), .O(flip_valid_n0));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fvn1 (.I0(flip_valid), .O(flip_valid_n1));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fvct (.I0(flip_valid), .O(flip_valid_ctl));
+	wire w_next_bl = d_we_cfg_l && (idx_cfg_l == I_FB_NEXT);
+	wire w_next_bh = d_we_cfg_h && (idx_cfg_h == I_FB_NEXT);
+	wire w_next_nl = w_next_bl;
+	wire w_next_nh = w_next_bh;
+	wire w_next_ctl = d_we_ctl && (idx_ctl == I_FB_NEXT);
+	wire r_enable_l, r_enable_h;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_renl (.I0(r_enable), .O(r_enable_l));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_renh (.I0(r_enable), .O(r_enable_h));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", DONT_TOUCH = "TRUE" *) wire regs_rst_high;
+	LUT1 #(.INIT(2'b01)) u_regs_rst (.I0(rst_n), .O(regs_rst_high));
+	wire rst_high = regs_rst_high;
+
+	wire [31:0] d_wdata_b0, d_wdata_b1, d_wdata_b2;
+	wire [31:0] d_wmask_b0, d_wmask_b1, d_wmask_b2;
+	genvar gwd;
+	generate
+		for (gwd = 0; gwd < 32; gwd = gwd + 1) begin : g_wdata_tree
+			assign d_wdata_b0[gwd] = d_wdata[gwd];
+			assign d_wdata_b1[gwd] = d_wdata[gwd];
+			assign d_wdata_b2[gwd] = d_wdata[gwd];
+			assign d_wmask_b0[gwd] = d_wmask[gwd];
+			assign d_wmask_b1[gwd] = d_wmask[gwd];
+			assign d_wmask_b2[gwd] = d_wmask[gwd];
+		end
+	endgenerate
+
+	wire [5:0] idx_ctl, idx_cfg, idx_cfg_l, idx_cfg_h;
+	wire [5:0] idx_ext_l, idx_ext_h;
+	genvar gidx;
+	generate
+		for (gidx = 0; gidx < 6; gidx = gidx + 1) begin : g_idx_buf
+			assign idx_ctl[gidx] = d_idx[gidx];
+			assign idx_cfg[gidx] = d_idx[gidx];
+			assign idx_cfg_l[gidx] = d_idx[gidx];
+			assign idx_cfg_h[gidx] = d_idx[gidx];
+			assign idx_ext_l[gidx] = d_idx[gidx];
+			assign idx_ext_h[gidx] = d_idx[gidx];
+		end
+	endgenerate
+	wire d_we_ctl, d_we_cfg, d_we_cfg_l, d_we_cfg_h, d_we_ext_l, d_we_ext_h;
+	assign d_we_ctl = d_we;
+	assign d_we_cfg = d_we;
+	assign d_we_cfg_l = d_we;
+	assign d_we_cfg_h = d_we;
+	assign d_we_ext_l = d_we;
+	assign d_we_ext_h = d_we;
+	wire flip_valid_b0, flip_valid_b1, flip_valid_n0, flip_valid_n1, flip_valid_ctl;
+	assign flip_valid_b0 = flip_valid;
+	assign flip_valid_b1 = flip_valid;
+	assign flip_valid_n0 = flip_valid;
+	assign flip_valid_n1 = flip_valid;
+	assign flip_valid_ctl = flip_valid;
+	wire w_next_bl = d_we_cfg_l && (idx_cfg_l == I_FB_NEXT);
+	wire w_next_bh = d_we_cfg_h && (idx_cfg_h == I_FB_NEXT);
+	wire w_next_nl = w_next_bl;
+	wire w_next_nh = w_next_bh;
+	wire w_next_ctl = d_we_ctl && (idx_ctl == I_FB_NEXT);
+	wire r_enable_l, r_enable_h;
+	assign r_enable_l = r_enable;
+	assign r_enable_h = r_enable;
 `else
 	(* keep = "true" *) wire rst_high = !rst_n;
 	wire [31:0] d_wdata_b0 = d_wdata, d_wdata_b1 = d_wdata, d_wdata_b2 = d_wdata;
 	wire [31:0] d_wmask_b0 = d_wmask, d_wmask_b1 = d_wmask, d_wmask_b2 = d_wmask;
-	wire [5:0] idx_ctl = d_idx, idx_cfg = d_idx;
+	wire [5:0] idx_ctl = d_idx, idx_cfg = d_idx, idx_cfg_l = d_idx, idx_cfg_h = d_idx;
 	wire [5:0] idx_ext_l = d_idx, idx_ext_h = d_idx;
 	wire d_we_ctl = d_we, d_we_cfg = d_we, d_we_cfg_l = d_we, d_we_cfg_h = d_we;
 	wire d_we_ext_l = d_we, d_we_ext_h = d_we;
 	wire flip_valid_b0 = flip_valid, flip_valid_b1 = flip_valid;
 	wire flip_valid_n0 = flip_valid, flip_valid_n1 = flip_valid;
 	wire flip_valid_ctl = flip_valid;
-	wire w_next_l = w_next, w_next_h = w_next, w_next_ctl = w_next;
+	wire w_next_bl = w_next, w_next_bh = w_next, w_next_nl = w_next, w_next_nh = w_next, w_next_ctl = w_next;
+	wire r_enable_l = r_enable, r_enable_h = r_enable;
 `endif
 	wire [5:0] idx = idx_ctl;
 	/* ATG1 DC implementation-specific extensions (moved from ghci_regs.vh) */
@@ -324,8 +390,8 @@ module atg_dc_regs #(
 	genvar gtw;
 	generate
 		for (gtw = 0; gtw < 9; gtw = gtw + 1) begin : g_twrite
-			wire we_t_l = d_we_cfg_l && (idx_cfg == (I_TIMING + gtw)) && !quasi_bad;
-			wire we_t_h = d_we_cfg_h && (idx_cfg == (I_TIMING + gtw)) && !quasi_bad;
+			(* keep = "true" *) wire we_t_l = d_we_cfg_l && (idx_cfg_l == (I_TIMING + gtw)) && !r_enable_l;
+			(* keep = "true" *) wire we_t_h = d_we_cfg_h && (idx_cfg_h == (I_TIMING + gtw)) && !r_enable_h;
 			always @(posedge clk or posedge rst_high) begin
 				if (rst_high) begin
 					r_timing_lo[gtw] <= 16'd0;
@@ -351,11 +417,18 @@ module atg_dc_regs #(
 
 `ifdef SYNTH_KINTEX7
 	wire en_eff_blo, en_eff_bhi, en_eff_nlo, en_eff_nhi, en_eff_ctl;
-	LUT1 #(.INIT(2'b10)) u_buf_ebl (.I0(en_eff), .O(en_eff_blo));
-	LUT1 #(.INIT(2'b10)) u_buf_ebh (.I0(en_eff), .O(en_eff_bhi));
-	LUT1 #(.INIT(2'b10)) u_buf_enl (.I0(en_eff), .O(en_eff_nlo));
-	LUT1 #(.INIT(2'b10)) u_buf_enh (.I0(en_eff), .O(en_eff_nhi));
-	LUT1 #(.INIT(2'b10)) u_buf_ect (.I0(en_eff), .O(en_eff_ctl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_ebl (.I0(en_eff), .O(en_eff_blo));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_ebh (.I0(en_eff), .O(en_eff_bhi));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_enl (.I0(en_eff), .O(en_eff_nlo));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_enh (.I0(en_eff), .O(en_eff_nhi));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_ect (.I0(en_eff), .O(en_eff_ctl));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire en_eff_blo, en_eff_bhi, en_eff_nlo, en_eff_nhi, en_eff_ctl;
+	assign en_eff_blo = en_eff;
+	assign en_eff_bhi = en_eff;
+	assign en_eff_nlo = en_eff;
+	assign en_eff_nhi = en_eff;
+	assign en_eff_ctl = en_eff;
 `else
 	wire en_eff_blo = en_eff, en_eff_bhi = en_eff, en_eff_nlo = en_eff, en_eff_nhi = en_eff, en_eff_ctl = en_eff;
 `endif
@@ -363,31 +436,41 @@ module atg_dc_regs #(
 	wire w_next = d_we_cfg && idx_cfg == I_FB_NEXT;
 	wire [31:0] next_new = (r_fb_next & ~d_wmask_cfg) | wbits_cfg;
 
-	/* The reset's countdown and the vsync count. */
+	/* The reset's countdown and the vsync count (decoupled 16-bit halves). */
 	wire [5:0] reset_dec;
 	wire [15:0] frame_inc_lo, frame_inc_hi;
 	wire frame_co_lo;
+	reg frame_hi_inc_q;
 
 	am_sub #(.W(6)) s_reset (.a(reset_left), .b(6'd0), .bi(1'b1), .d(reset_dec), .bo(idx_bo_unused[2]));
 	am_add #(.W(16)) a_frame_l (.a(r_frame_count_lo), .b(16'd0), .ci(1'b1), .s(frame_inc_lo), .co(frame_co_lo));
-	am_add #(.W(16)) a_frame_h (.a(r_frame_count_hi), .b(16'd0), .ci(frame_co_lo), .s(frame_inc_hi), .co(idx_bo_unused[3]));
+	am_add #(.W(16)) a_frame_h (.a(r_frame_count_hi), .b(16'd0), .ci(1'b1), .s(frame_inc_hi), .co(idx_bo_unused[3]));
 
 `ifdef SYNTH_KINTEX7
 	wire ev_vsync_lo, ev_vsync_hi;
-	LUT1 #(.INIT(2'b10)) u_buf_vsl (.I0(ev_vsync), .O(ev_vsync_lo));
-	LUT1 #(.INIT(2'b10)) u_buf_vsh (.I0(ev_vsync), .O(ev_vsync_hi));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_vsl (.I0(ev_vsync), .O(ev_vsync_lo));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_vsh (.I0(ev_vsync), .O(ev_vsync_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire ev_vsync_lo, ev_vsync_hi;
+	assign ev_vsync_lo = ev_vsync;
+	assign ev_vsync_hi = ev_vsync;
 `else
 	wire ev_vsync_lo = ev_vsync;
 	wire ev_vsync_hi = ev_vsync;
 `endif
 
 	always @(posedge clk or posedge rst_high) begin
-		if (rst_high)
+		if (rst_high) begin
 			r_frame_count_lo <= 16'd0;
-		else if (do_reset_q)
+			frame_hi_inc_q   <= 1'b0;
+		end else if (do_reset_q) begin
 			r_frame_count_lo <= 16'd0;
-		else if (ev_vsync_lo)
-			r_frame_count_lo <= frame_inc_lo;
+			frame_hi_inc_q   <= 1'b0;
+		end else begin
+			if (ev_vsync_lo)
+				r_frame_count_lo <= frame_inc_lo;
+			frame_hi_inc_q <= ev_vsync_lo && (&r_frame_count_lo);
+		end
 	end
 
 	always @(posedge clk or posedge rst_high) begin
@@ -395,7 +478,7 @@ module atg_dc_regs #(
 			r_frame_count_hi <= 16'd0;
 		else if (do_reset_q)
 			r_frame_count_hi <= 16'd0;
-		else if (ev_vsync_hi)
+		else if (frame_hi_inc_q)
 			r_frame_count_hi <= frame_inc_hi;
 	end
 	wire w_status = d_we && idx == I_STATUS;
@@ -414,6 +497,19 @@ module atg_dc_regs #(
 	};
 
 	integer k;
+	wire vsync_pend = ev_vsync_hi && pend;
+`ifdef SYNTH_KINTEX7
+	wire vsync_pend_lo, vsync_pend_hi;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_vpl (.I0(vsync_pend), .O(vsync_pend_lo));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_vph (.I0(vsync_pend), .O(vsync_pend_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire vsync_pend_lo, vsync_pend_hi;
+	assign vsync_pend_lo = vsync_pend;
+	assign vsync_pend_hi = vsync_pend;
+`else
+	wire vsync_pend_lo = vsync_pend;
+	wire vsync_pend_hi = vsync_pend;
+`endif
 
 	always @(posedge clk or posedge rst_high) begin
 		if (rst_high) begin
@@ -422,29 +518,28 @@ module atg_dc_regs #(
 			r_fb_next_lo <= 16'd0;
 			r_fb_next_hi <= 16'd0;
 		end else begin
-			if (ev_vsync && pend) begin
+			if (vsync_pend_lo)
 				r_fb_base_lo <= r_fb_next_lo;
-				r_fb_base_hi <= r_fb_next_hi;
-			end else begin
-				if (flip_valid_b0 && !en_eff_blo)
-					r_fb_base_lo <= flip_base[15:0];
-				else if (w_next_l && !en_eff_blo)
-					r_fb_base_lo <= next_new[15:0];
+			else if (flip_valid_b0 && !en_eff_blo)
+				r_fb_base_lo <= flip_base[15:0];
+			else if (w_next_bl && !en_eff_blo)
+				r_fb_base_lo <= next_new[15:0];
 
-				if (flip_valid_b1 && !en_eff_bhi)
-					r_fb_base_hi <= flip_base[31:16];
-				else if (w_next_h && !en_eff_bhi)
-					r_fb_base_hi <= next_new[31:16];
-			end
+			if (vsync_pend_hi)
+				r_fb_base_hi <= r_fb_next_hi;
+			else if (flip_valid_b1 && !en_eff_bhi)
+				r_fb_base_hi <= flip_base[31:16];
+			else if (w_next_bh && !en_eff_bhi)
+				r_fb_base_hi <= next_new[31:16];
 
 			if (flip_valid_n0 && en_eff_nlo)
 				r_fb_next_lo <= flip_base[15:0];
-			else if (w_next_l)
+			else if (w_next_nl)
 				r_fb_next_lo <= next_new[15:0];
 
 			if (flip_valid_n1 && en_eff_nhi)
 				r_fb_next_hi <= flip_base[31:16];
-			else if (w_next_h)
+			else if (w_next_nh)
 				r_fb_next_hi <= next_new[31:16];
 		end
 	end
@@ -604,21 +699,19 @@ module atg_dc_regs #(
 			if (d_we_ext_h && idx_ext_h == I_HDR_CTRL)
 				r_hdr_ctrl_hi <= (r_hdr_ctrl_hi & ~d_wmask_ext[31:16]) | wbits_ext[31:16];
 
-			if (!quasi_bad) begin
-				if (d_we_cfg_l && idx_cfg == I_FB_STRIDE)
+			if (!r_enable_l) begin
+				if (d_we_cfg_l && idx_cfg_l == I_FB_STRIDE)
 					r_stride_lo <= (r_stride_lo & ~d_wmask_cfg[15:0])  | wbits_cfg[15:0];
-				if (d_we_cfg_h && idx_cfg == I_FB_STRIDE)
-					r_stride_hi <= (r_stride_hi & ~d_wmask_cfg[31:16]) | wbits_cfg[31:16];
-
-				if (d_we_cfg_l && idx_cfg == I_FB_SIZE)
+				if (d_we_cfg_l && idx_cfg_l == I_FB_SIZE)
 					r_size_lo <= (r_size_lo & ~d_wmask_cfg[15:0])  | wbits_cfg[15:0];
-				if (d_we_cfg_h && idx_cfg == I_FB_SIZE)
-					r_size_hi <= (r_size_hi & ~d_wmask_cfg[31:16]) | wbits_cfg[31:16];
-
 				if (d_we_cfg && idx_cfg == I_PCLK_SEL)
 					r_pclk_sel <= (r_pclk_sel & ~d_wmask_cfg[3:0]) | wbits_cfg[3:0];
-
-
+			end
+			if (!r_enable_h) begin
+				if (d_we_cfg_h && idx_cfg_h == I_FB_STRIDE)
+					r_stride_hi <= (r_stride_hi & ~d_wmask_cfg[31:16]) | wbits_cfg[31:16];
+				if (d_we_cfg_h && idx_cfg_h == I_FB_SIZE)
+					r_size_hi <= (r_size_hi & ~d_wmask_cfg[31:16]) | wbits_cfg[31:16];
 			end
 		end
 	end
@@ -629,34 +722,64 @@ module atg_dc_regs #(
 	assign i2c_ridx = d_ridx[1:0];
 	assign i2c_wdata = d_wdata;
 
-	/* Reads: Split into 16-bit low and high halves with buffered indices to limit fanout. */
+	/* Reads: Split into 8-bit lanes and smaller sub-cases with kept LUT1 buffers (Rule 2 fanout <= 16). */
 `ifdef SYNTH_KINTEX7
-	wire [5:0] ridx_b0_lo, ridx_b0_mid, ridx_b0_hi;
-	wire [5:0] ridx_b1_lo, ridx_b1_mid, ridx_b1_hi;
-	wire [5:0] ridx_b2_lo, ridx_b2_mid, ridx_b2_hi;
-	wire [5:0] ridx_b3_lo, ridx_b3_mid, ridx_b3_hi;
+	wire [5:0] ridx_b0_lo, ridx_b0_m0, ridx_b0_m1, ridx_b0_hi;
+	wire [5:0] ridx_b1_lo, ridx_b1_m0, ridx_b1_m1, ridx_b1_hi;
+	wire [5:0] ridx_b2_lo, ridx_b2_m0, ridx_b2_m1, ridx_b2_hi;
+	wire [5:0] ridx_b3_lo, ridx_b3_m0, ridx_b3_m1, ridx_b3_hi;
 	genvar gri;
 	generate
 		for (gri = 0; gri < 6; gri = gri + 1) begin : g_ridx_buf
-			LUT1 #(.INIT(2'b10)) u_buf_0l  (.I0(d_ridx[gri]), .O(ridx_b0_lo[gri]));
-			LUT1 #(.INIT(2'b10)) u_buf_0m  (.I0(d_ridx[gri]), .O(ridx_b0_mid[gri]));
-			LUT1 #(.INIT(2'b10)) u_buf_0h  (.I0(d_ridx[gri]), .O(ridx_b0_hi[gri]));
-			LUT1 #(.INIT(2'b10)) u_buf_1l  (.I0(d_ridx[gri]), .O(ridx_b1_lo[gri]));
-			LUT1 #(.INIT(2'b10)) u_buf_1m  (.I0(d_ridx[gri]), .O(ridx_b1_mid[gri]));
-			LUT1 #(.INIT(2'b10)) u_buf_1h  (.I0(d_ridx[gri]), .O(ridx_b1_hi[gri]));
-			LUT1 #(.INIT(2'b10)) u_buf_2l  (.I0(d_ridx[gri]), .O(ridx_b2_lo[gri]));
-			LUT1 #(.INIT(2'b10)) u_buf_2m  (.I0(d_ridx[gri]), .O(ridx_b2_mid[gri]));
-			LUT1 #(.INIT(2'b10)) u_buf_2h  (.I0(d_ridx[gri]), .O(ridx_b2_hi[gri]));
-			LUT1 #(.INIT(2'b10)) u_buf_3l  (.I0(d_ridx[gri]), .O(ridx_b3_lo[gri]));
-			LUT1 #(.INIT(2'b10)) u_buf_3m  (.I0(d_ridx[gri]), .O(ridx_b3_mid[gri]));
-			LUT1 #(.INIT(2'b10)) u_buf_3h  (.I0(d_ridx[gri]), .O(ridx_b3_hi[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_0l   (.I0(d_ridx[gri]), .O(ridx_b0_lo[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_0m0  (.I0(d_ridx[gri]), .O(ridx_b0_m0[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_0m1  (.I0(d_ridx[gri]), .O(ridx_b0_m1[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_0h   (.I0(d_ridx[gri]), .O(ridx_b0_hi[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_1l   (.I0(d_ridx[gri]), .O(ridx_b1_lo[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_1m0  (.I0(d_ridx[gri]), .O(ridx_b1_m0[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_1m1  (.I0(d_ridx[gri]), .O(ridx_b1_m1[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_1h   (.I0(d_ridx[gri]), .O(ridx_b1_hi[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_2l   (.I0(d_ridx[gri]), .O(ridx_b2_lo[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_2m0  (.I0(d_ridx[gri]), .O(ridx_b2_m0[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_2m1  (.I0(d_ridx[gri]), .O(ridx_b2_m1[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_2h   (.I0(d_ridx[gri]), .O(ridx_b2_hi[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_3l   (.I0(d_ridx[gri]), .O(ridx_b3_lo[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_3m0  (.I0(d_ridx[gri]), .O(ridx_b3_m0[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_3m1  (.I0(d_ridx[gri]), .O(ridx_b3_m1[gri]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_3h   (.I0(d_ridx[gri]), .O(ridx_b3_hi[gri]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [5:0] ridx_b0_lo, ridx_b0_m0, ridx_b0_m1, ridx_b0_hi;
+	wire [5:0] ridx_b1_lo, ridx_b1_m0, ridx_b1_m1, ridx_b1_hi;
+	wire [5:0] ridx_b2_lo, ridx_b2_m0, ridx_b2_m1, ridx_b2_hi;
+	wire [5:0] ridx_b3_lo, ridx_b3_m0, ridx_b3_m1, ridx_b3_hi;
+	genvar gri;
+	generate
+		for (gri = 0; gri < 6; gri = gri + 1) begin : g_ridx_buf
+			assign ridx_b0_lo[gri] = d_ridx[gri];
+			assign ridx_b0_m0[gri] = d_ridx[gri];
+			assign ridx_b0_m1[gri] = d_ridx[gri];
+			assign ridx_b0_hi[gri] = d_ridx[gri];
+			assign ridx_b1_lo[gri] = d_ridx[gri];
+			assign ridx_b1_m0[gri] = d_ridx[gri];
+			assign ridx_b1_m1[gri] = d_ridx[gri];
+			assign ridx_b1_hi[gri] = d_ridx[gri];
+			assign ridx_b2_lo[gri] = d_ridx[gri];
+			assign ridx_b2_m0[gri] = d_ridx[gri];
+			assign ridx_b2_m1[gri] = d_ridx[gri];
+			assign ridx_b2_hi[gri] = d_ridx[gri];
+			assign ridx_b3_lo[gri] = d_ridx[gri];
+			assign ridx_b3_m0[gri] = d_ridx[gri];
+			assign ridx_b3_m1[gri] = d_ridx[gri];
+			assign ridx_b3_hi[gri] = d_ridx[gri];
 		end
 	endgenerate
 `else
-	wire [5:0] ridx_b0_lo = d_ridx, ridx_b0_mid = d_ridx, ridx_b0_hi = d_ridx;
-	wire [5:0] ridx_b1_lo = d_ridx, ridx_b1_mid = d_ridx, ridx_b1_hi = d_ridx;
-	wire [5:0] ridx_b2_lo = d_ridx, ridx_b2_mid = d_ridx, ridx_b2_hi = d_ridx;
-	wire [5:0] ridx_b3_lo = d_ridx, ridx_b3_mid = d_ridx, ridx_b3_hi = d_ridx;
+	wire [5:0] ridx_b0_lo = d_ridx, ridx_b0_m0 = d_ridx, ridx_b0_m1 = d_ridx, ridx_b0_hi = d_ridx;
+	wire [5:0] ridx_b1_lo = d_ridx, ridx_b1_m0 = d_ridx, ridx_b1_m1 = d_ridx, ridx_b1_hi = d_ridx;
+	wire [5:0] ridx_b2_lo = d_ridx, ridx_b2_m0 = d_ridx, ridx_b2_m1 = d_ridx, ridx_b2_hi = d_ridx;
+	wire [5:0] ridx_b3_lo = d_ridx, ridx_b3_m0 = d_ridx, ridx_b3_m1 = d_ridx, ridx_b3_hi = d_ridx;
 `endif
 
 	localparam [5:0] I_TIMING_0 = I_TIMING + 6'd0;
@@ -671,9 +794,9 @@ module atg_dc_regs #(
 	localparam [5:0] I_I2C_0    = I_I2C + 6'd0;
 	localparam [5:0] I_I2C_1    = I_I2C + 6'd1;
 	localparam [5:0] I_I2C_2    = I_I2C + 6'd2;
-	wire unused_rd_meta = &{1'b0, idx_bo_unused[11:4], idx_bo_unused[1:0]};
+	wire unused_rd_meta = &{1'b0, idx_bo_unused[11:4], idx_bo_unused[1:0], frame_co_lo};
 
-	reg [7:0] rdata_b0_lo, rdata_b0_mid, rdata_b0_hi;
+	reg [7:0] rdata_b0_lo, rdata_b0_m0, rdata_b0_m1, rdata_b0_hi;
 	always @(*) begin
 		case (ridx_b0_lo)
 		GHCI_DC_ID[7:2]:      rdata_b0_lo = GHCI_DC_ID_VALUE[7:0];
@@ -692,23 +815,29 @@ module atg_dc_regs #(
 	end
 
 	always @(*) begin
-		case (ridx_b0_mid)
-		I_TIMING_0:        rdata_b0_mid = timing_lo[16*0 +: 8];
-		I_TIMING_1:        rdata_b0_mid = timing_lo[16*1 +: 8];
-		I_TIMING_2:        rdata_b0_mid = timing_lo[16*2 +: 8];
-		I_TIMING_3:        rdata_b0_mid = timing_lo[16*3 +: 8];
-		I_TIMING_4:        rdata_b0_mid = timing_lo[16*4 +: 8];
-		I_TIMING_5:        rdata_b0_mid = timing_lo[16*5 +: 8];
-		I_TIMING_6:        rdata_b0_mid = timing_lo[16*6 +: 8];
-		I_TIMING_7:        rdata_b0_mid = timing_lo[16*7 +: 8];
-		I_TIMING_8:        rdata_b0_mid = timing_lo[16*8 +: 8];
-		I_FRAME_COUNT:     rdata_b0_mid = r_frame_count_lo[7:0];
-		I_PCLK_SEL:        rdata_b0_mid = {4'd0, r_pclk_sel};
+		case (ridx_b0_m0)
+		I_TIMING_0:        rdata_b0_m0 = timing_lo[16*0 +: 8];
+		I_TIMING_1:        rdata_b0_m0 = timing_lo[16*1 +: 8];
+		I_TIMING_2:        rdata_b0_m0 = timing_lo[16*2 +: 8];
+		I_TIMING_3:        rdata_b0_m0 = timing_lo[16*3 +: 8];
+		I_TIMING_4:        rdata_b0_m0 = timing_lo[16*4 +: 8];
+		I_TIMING_5:        rdata_b0_m0 = timing_lo[16*5 +: 8];
+		I_TIMING_6:        rdata_b0_m0 = timing_lo[16*6 +: 8];
+		I_TIMING_7:        rdata_b0_m0 = timing_lo[16*7 +: 8];
+		default:           rdata_b0_m0 = 8'd0;
+		endcase
+	end
+
+	always @(*) begin
+		case (ridx_b0_m1)
+		I_TIMING_8:        rdata_b0_m1 = timing_lo[16*8 +: 8];
+		I_FRAME_COUNT:     rdata_b0_m1 = r_frame_count_lo[7:0];
+		I_PCLK_SEL:        rdata_b0_m1 = {4'd0, r_pclk_sel};
 		I_I2C_0, I_I2C_1, I_I2C_2:
-		                   rdata_b0_mid = (HAS_I2C != 0) ? i2c_rdata[7:0] : 8'd0;
-		I_SCAN_SUM:        rdata_b0_mid = scan_sum[7:0];
-		I_SCAN_WORDS:      rdata_b0_mid = scan_words[7:0];
-		default:           rdata_b0_mid = 8'd0;
+		                   rdata_b0_m1 = (HAS_I2C != 0) ? i2c_rdata[7:0] : 8'd0;
+		I_SCAN_SUM:        rdata_b0_m1 = scan_sum[7:0];
+		I_SCAN_WORDS:      rdata_b0_m1 = scan_words[7:0];
+		default:           rdata_b0_m1 = 8'd0;
 		endcase
 	end
 
@@ -725,9 +854,9 @@ module atg_dc_regs #(
 		default:           rdata_b0_hi = 8'd0;
 		endcase
 	end
-	wire [7:0] d_rdata_b0 = rdata_b0_lo | rdata_b0_mid | rdata_b0_hi;
+	wire [7:0] d_rdata_b0 = rdata_b0_lo | rdata_b0_m0 | rdata_b0_m1 | rdata_b0_hi;
 
-	reg [7:0] rdata_b1_lo, rdata_b1_mid, rdata_b1_hi;
+	reg [7:0] rdata_b1_lo, rdata_b1_m0, rdata_b1_m1, rdata_b1_hi;
 	always @(*) begin
 		case (ridx_b1_lo)
 		GHCI_DC_ID[7:2]:      rdata_b1_lo = GHCI_DC_ID_VALUE[15:8];
@@ -746,23 +875,29 @@ module atg_dc_regs #(
 	end
 
 	always @(*) begin
-		case (ridx_b1_mid)
-		I_TIMING_0:        rdata_b1_mid = timing_lo[16*0 + 8 +: 8];
-		I_TIMING_1:        rdata_b1_mid = timing_lo[16*1 + 8 +: 8];
-		I_TIMING_2:        rdata_b1_mid = timing_lo[16*2 + 8 +: 8];
-		I_TIMING_3:        rdata_b1_mid = timing_lo[16*3 + 8 +: 8];
-		I_TIMING_4:        rdata_b1_mid = timing_lo[16*4 + 8 +: 8];
-		I_TIMING_5:        rdata_b1_mid = timing_lo[16*5 + 8 +: 8];
-		I_TIMING_6:        rdata_b1_mid = timing_lo[16*6 + 8 +: 8];
-		I_TIMING_7:        rdata_b1_mid = timing_lo[16*7 + 8 +: 8];
-		I_TIMING_8:        rdata_b1_mid = timing_lo[16*8 + 8 +: 8];
-		I_FRAME_COUNT:     rdata_b1_mid = r_frame_count_lo[15:8];
-		I_PCLK_SEL:        rdata_b1_mid = 8'd0;
+		case (ridx_b1_m0)
+		I_TIMING_0:        rdata_b1_m0 = timing_lo[16*0 + 8 +: 8];
+		I_TIMING_1:        rdata_b1_m0 = timing_lo[16*1 + 8 +: 8];
+		I_TIMING_2:        rdata_b1_m0 = timing_lo[16*2 + 8 +: 8];
+		I_TIMING_3:        rdata_b1_m0 = timing_lo[16*3 + 8 +: 8];
+		I_TIMING_4:        rdata_b1_m0 = timing_lo[16*4 + 8 +: 8];
+		I_TIMING_5:        rdata_b1_m0 = timing_lo[16*5 + 8 +: 8];
+		I_TIMING_6:        rdata_b1_m0 = timing_lo[16*6 + 8 +: 8];
+		I_TIMING_7:        rdata_b1_m0 = timing_lo[16*7 + 8 +: 8];
+		default:           rdata_b1_m0 = 8'd0;
+		endcase
+	end
+
+	always @(*) begin
+		case (ridx_b1_m1)
+		I_TIMING_8:        rdata_b1_m1 = timing_lo[16*8 + 8 +: 8];
+		I_FRAME_COUNT:     rdata_b1_m1 = r_frame_count_lo[15:8];
+		I_PCLK_SEL:        rdata_b1_m1 = 8'd0;
 		I_I2C_0, I_I2C_1, I_I2C_2:
-		                   rdata_b1_mid = (HAS_I2C != 0) ? i2c_rdata[15:8] : 8'd0;
-		I_SCAN_SUM:        rdata_b1_mid = scan_sum[15:8];
-		I_SCAN_WORDS:      rdata_b1_mid = scan_words[15:8];
-		default:           rdata_b1_mid = 8'd0;
+		                   rdata_b1_m1 = (HAS_I2C != 0) ? i2c_rdata[15:8] : 8'd0;
+		I_SCAN_SUM:        rdata_b1_m1 = scan_sum[15:8];
+		I_SCAN_WORDS:      rdata_b1_m1 = scan_words[15:8];
+		default:           rdata_b1_m1 = 8'd0;
 		endcase
 	end
 
@@ -779,9 +914,9 @@ module atg_dc_regs #(
 		default:           rdata_b1_hi = 8'd0;
 		endcase
 	end
-	wire [7:0] d_rdata_b1 = rdata_b1_lo | rdata_b1_mid | rdata_b1_hi;
+	wire [7:0] d_rdata_b1 = rdata_b1_lo | rdata_b1_m0 | rdata_b1_m1 | rdata_b1_hi;
 
-	reg [7:0] rdata_b2_lo, rdata_b2_mid, rdata_b2_hi;
+	reg [7:0] rdata_b2_lo, rdata_b2_m0, rdata_b2_m1, rdata_b2_hi;
 	always @(*) begin
 		case (ridx_b2_lo)
 		GHCI_DC_ID[7:2]:      rdata_b2_lo = GHCI_DC_ID_VALUE[23:16];
@@ -800,23 +935,29 @@ module atg_dc_regs #(
 	end
 
 	always @(*) begin
-		case (ridx_b2_mid)
-		I_TIMING_0:        rdata_b2_mid = timing_hi[16*0 +: 8];
-		I_TIMING_1:        rdata_b2_mid = timing_hi[16*1 +: 8];
-		I_TIMING_2:        rdata_b2_mid = timing_hi[16*2 +: 8];
-		I_TIMING_3:        rdata_b2_mid = timing_hi[16*3 +: 8];
-		I_TIMING_4:        rdata_b2_mid = timing_hi[16*4 +: 8];
-		I_TIMING_5:        rdata_b2_mid = timing_hi[16*5 +: 8];
-		I_TIMING_6:        rdata_b2_mid = timing_hi[16*6 +: 8];
-		I_TIMING_7:        rdata_b2_mid = timing_hi[16*7 +: 8];
-		I_TIMING_8:        rdata_b2_mid = timing_hi[16*8 +: 8];
-		I_FRAME_COUNT:     rdata_b2_mid = r_frame_count_hi[7:0];
-		I_PCLK_SEL:        rdata_b2_mid = 8'd0;
+		case (ridx_b2_m0)
+		I_TIMING_0:        rdata_b2_m0 = timing_hi[16*0 +: 8];
+		I_TIMING_1:        rdata_b2_m0 = timing_hi[16*1 +: 8];
+		I_TIMING_2:        rdata_b2_m0 = timing_hi[16*2 +: 8];
+		I_TIMING_3:        rdata_b2_m0 = timing_hi[16*3 +: 8];
+		I_TIMING_4:        rdata_b2_m0 = timing_hi[16*4 +: 8];
+		I_TIMING_5:        rdata_b2_m0 = timing_hi[16*5 +: 8];
+		I_TIMING_6:        rdata_b2_m0 = timing_hi[16*6 +: 8];
+		I_TIMING_7:        rdata_b2_m0 = timing_hi[16*7 +: 8];
+		default:           rdata_b2_m0 = 8'd0;
+		endcase
+	end
+
+	always @(*) begin
+		case (ridx_b2_m1)
+		I_TIMING_8:        rdata_b2_m1 = timing_hi[16*8 +: 8];
+		I_FRAME_COUNT:     rdata_b2_m1 = r_frame_count_hi[7:0];
+		I_PCLK_SEL:        rdata_b2_m1 = 8'd0;
 		I_I2C_0, I_I2C_1, I_I2C_2:
-		                   rdata_b2_mid = (HAS_I2C != 0) ? i2c_rdata[23:16] : 8'd0;
-		I_SCAN_SUM:        rdata_b2_mid = scan_sum[23:16];
-		I_SCAN_WORDS:      rdata_b2_mid = scan_words[23:16];
-		default:           rdata_b2_mid = 8'd0;
+		                   rdata_b2_m1 = (HAS_I2C != 0) ? i2c_rdata[23:16] : 8'd0;
+		I_SCAN_SUM:        rdata_b2_m1 = scan_sum[23:16];
+		I_SCAN_WORDS:      rdata_b2_m1 = scan_words[23:16];
+		default:           rdata_b2_m1 = 8'd0;
 		endcase
 	end
 
@@ -833,9 +974,9 @@ module atg_dc_regs #(
 		default:           rdata_b2_hi = 8'd0;
 		endcase
 	end
-	wire [7:0] d_rdata_b2 = rdata_b2_lo | rdata_b2_mid | rdata_b2_hi;
+	wire [7:0] d_rdata_b2 = rdata_b2_lo | rdata_b2_m0 | rdata_b2_m1 | rdata_b2_hi;
 
-	reg [7:0] rdata_b3_lo, rdata_b3_mid, rdata_b3_hi;
+	reg [7:0] rdata_b3_lo, rdata_b3_m0, rdata_b3_m1, rdata_b3_hi;
 	always @(*) begin
 		case (ridx_b3_lo)
 		GHCI_DC_ID[7:2]:      rdata_b3_lo = GHCI_DC_ID_VALUE[31:24];
@@ -854,23 +995,29 @@ module atg_dc_regs #(
 	end
 
 	always @(*) begin
-		case (ridx_b3_mid)
-		I_TIMING_0:        rdata_b3_mid = timing_hi[16*0 + 8 +: 8];
-		I_TIMING_1:        rdata_b3_mid = timing_hi[16*1 + 8 +: 8];
-		I_TIMING_2:        rdata_b3_mid = timing_hi[16*2 + 8 +: 8];
-		I_TIMING_3:        rdata_b3_mid = timing_hi[16*3 + 8 +: 8];
-		I_TIMING_4:        rdata_b3_mid = timing_hi[16*4 + 8 +: 8];
-		I_TIMING_5:        rdata_b3_mid = timing_hi[16*5 + 8 +: 8];
-		I_TIMING_6:        rdata_b3_mid = timing_hi[16*6 + 8 +: 8];
-		I_TIMING_7:        rdata_b3_mid = timing_hi[16*7 + 8 +: 8];
-		I_TIMING_8:        rdata_b3_mid = timing_hi[16*8 + 8 +: 8];
-		I_FRAME_COUNT:     rdata_b3_mid = r_frame_count_hi[15:8];
-		I_PCLK_SEL:        rdata_b3_mid = 8'd0;
+		case (ridx_b3_m0)
+		I_TIMING_0:        rdata_b3_m0 = timing_hi[16*0 + 8 +: 8];
+		I_TIMING_1:        rdata_b3_m0 = timing_hi[16*1 + 8 +: 8];
+		I_TIMING_2:        rdata_b3_m0 = timing_hi[16*2 + 8 +: 8];
+		I_TIMING_3:        rdata_b3_m0 = timing_hi[16*3 + 8 +: 8];
+		I_TIMING_4:        rdata_b3_m0 = timing_hi[16*4 + 8 +: 8];
+		I_TIMING_5:        rdata_b3_m0 = timing_hi[16*5 + 8 +: 8];
+		I_TIMING_6:        rdata_b3_m0 = timing_hi[16*6 + 8 +: 8];
+		I_TIMING_7:        rdata_b3_m0 = timing_hi[16*7 + 8 +: 8];
+		default:           rdata_b3_m0 = 8'd0;
+		endcase
+	end
+
+	always @(*) begin
+		case (ridx_b3_m1)
+		I_TIMING_8:        rdata_b3_m1 = timing_hi[16*8 + 8 +: 8];
+		I_FRAME_COUNT:     rdata_b3_m1 = r_frame_count_hi[15:8];
+		I_PCLK_SEL:        rdata_b3_m1 = 8'd0;
 		I_I2C_0, I_I2C_1, I_I2C_2:
-		                   rdata_b3_mid = (HAS_I2C != 0) ? i2c_rdata[31:24] : 8'd0;
-		I_SCAN_SUM:        rdata_b3_mid = scan_sum[31:24];
-		I_SCAN_WORDS:      rdata_b3_mid = scan_words[31:24];
-		default:           rdata_b3_mid = 8'd0;
+		                   rdata_b3_m1 = (HAS_I2C != 0) ? i2c_rdata[31:24] : 8'd0;
+		I_SCAN_SUM:        rdata_b3_m1 = scan_sum[31:24];
+		I_SCAN_WORDS:      rdata_b3_m1 = scan_words[31:24];
+		default:           rdata_b3_m1 = 8'd0;
 		endcase
 	end
 
@@ -887,7 +1034,7 @@ module atg_dc_regs #(
 		default:           rdata_b3_hi = 8'd0;
 		endcase
 	end
-	wire [7:0] d_rdata_b3 = rdata_b3_lo | rdata_b3_mid | rdata_b3_hi;
+	wire [7:0] d_rdata_b3 = rdata_b3_lo | rdata_b3_m0 | rdata_b3_m1 | rdata_b3_hi;
 
 	assign d_rdata = {d_rdata_b3, d_rdata_b2, d_rdata_b1, d_rdata_b0};
 endmodule

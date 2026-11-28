@@ -81,6 +81,10 @@ for ent in "$@"; do
 					defines="$defines -DSYNTH_ASIC"
 					tag="${tag:+$tag.}asic"
 					;;
+				ku|KU|SYNTH_KINTEX_ULTRASCALE)
+					defines="$defines -DSYNTH_KINTEX_ULTRASCALE"
+					tag="${tag:+$tag.}ku"
+					;;
 				-D*)
 					defines="$defines $a"
 					tag="${tag:+$tag.}$(echo "${a#-D}" | tr '[:upper:]' '[:lower:]')"

@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -46,6 +46,7 @@ module atg_mc_plb #(
 	output wire [7:0] byte_data,
 
 	input wire fill,
+	input wire fill_data_en,
 	input wire [TAGW-1:0] fill_tag,
 	input wire [LINE_BYTES*8-1:0] fill_data,
 
@@ -189,6 +190,32 @@ module atg_mc_plb #(
 	wire [PLB:0] ov;
 	wire [(PLB+1)*TAGW-1:0] ov_tag = {w_tag, pl_tag};
 
+	/* Stage 0->1 invalidation pipeline: Stage 0 computes ie_21/is_l_20/gs_21, Stage 1 compares. */
+	reg inv_v_r, inv_nz_r, inv_sm_r, ie_ov_r;
+	reg [GW:0] ie_21_r;
+	reg [GW-1:0] is_l_20_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			inv_v_r   <= 1'b0;
+			inv_nz_r  <= 1'b0;
+			inv_sm_r  <= 1'b0;
+			ie_ov_r   <= 1'b0;
+			ie_21_r   <= {(GW+1){1'b0}};
+			is_l_20_r <= {GW{1'b0}};
+		end else if (flush || !en) begin
+			inv_v_r <= 1'b0;
+		end else begin
+			inv_v_r <= inv_valid;
+			if (inv_valid) begin
+				inv_nz_r  <= inv_n_zero;
+				inv_sm_r  <= is_small;
+				ie_ov_r   <= ie_ov;
+				ie_21_r   <= ie_21;
+				is_l_20_r <= is_l_20;
+			end
+		end
+	end
+
 	localparam integer C0_W = 5;
 	localparam integer C1_W = 5;
 	localparam integer C2_W = 5;
@@ -214,31 +241,36 @@ module atg_mc_plb #(
 				.a({1'b0, g0[GW-1:LINE_SHIFT+TAG_LO_W]}), .b({1'b0, t_w[TAGW-1:TAG_LO_W]}), .ci(1'b1),
 				.s(gs_h1), .co(gs_hc_unused[1])
 			);
-			wire [GW:0] gs_21 = {gs_mc ? gs_h1 : gs_h0, gs_m, g0[LINE_SHIFT-1:0]};
+			wire [GW:0] gs_21_w = {gs_mc ? gs_h1 : gs_h0, gs_m, g0[LINE_SHIFT-1:0]};
+			reg [GW:0] gs_21_r;
+			always @(posedge clk) begin
+				if (inv_valid)
+					gs_21_r <= gs_21_w;
+			end
 
-			/* Fast chunked unsigned compare: gs_21 < ie_21 */
-			wire lt_gi_0 = gs_21[0 +: C0_W] < ie_21[0 +: C0_W];
-			wire eq_gi_1 = gs_21[C0_W +: C1_W] == ie_21[C0_W +: C1_W];
-			wire lt_gi_1 = gs_21[C0_W +: C1_W] < ie_21[C0_W +: C1_W];
-			wire eq_gi_2 = gs_21[C0_W+C1_W +: C2_W] == ie_21[C0_W+C1_W +: C2_W];
-			wire lt_gi_2 = gs_21[C0_W+C1_W +: C2_W] < ie_21[C0_W+C1_W +: C2_W];
-			wire eq_gi_3 = gs_21[GW:C0_W+C1_W+C2_W] == ie_21[GW:C0_W+C1_W+C2_W];
-			wire lt_gi_3 = gs_21[GW:C0_W+C1_W+C2_W] < ie_21[GW:C0_W+C1_W+C2_W];
+			/* Fast chunked unsigned compare on registered operands (<= 7 cmos3). */
+			wire lt_gi_0 = gs_21_r[0 +: C0_W] < ie_21_r[0 +: C0_W];
+			wire eq_gi_1 = gs_21_r[C0_W +: C1_W] == ie_21_r[C0_W +: C1_W];
+			wire lt_gi_1 = gs_21_r[C0_W +: C1_W] < ie_21_r[C0_W +: C1_W];
+			wire eq_gi_2 = gs_21_r[C0_W+C1_W +: C2_W] == ie_21_r[C0_W+C1_W +: C2_W];
+			wire lt_gi_2 = gs_21_r[C0_W+C1_W +: C2_W] < ie_21_r[C0_W+C1_W +: C2_W];
+			wire eq_gi_3 = gs_21_r[GW:C0_W+C1_W+C2_W] == ie_21_r[GW:C0_W+C1_W+C2_W];
+			wire lt_gi_3 = gs_21_r[GW:C0_W+C1_W+C2_W] < ie_21_r[GW:C0_W+C1_W+C2_W];
 			wire lt_gi_lo = lt_gi_1 || (eq_gi_1 && lt_gi_0);
-			wire gs_lt_ie = ie_ov || lt_gi_3 || (eq_gi_3 && (lt_gi_2 || (eq_gi_2 && lt_gi_lo)));
+			wire gs_lt_ie = ie_ov_r || lt_gi_3 || (eq_gi_3 && (lt_gi_2 || (eq_gi_2 && lt_gi_lo)));
 
-			/* Fast chunked unsigned compare: is_l_20 < gs_21 */
-			wire lt_ig_0 = is_l_20[0 +: C0_W] < gs_21[0 +: C0_W];
-			wire eq_ig_1 = is_l_20[C0_W +: C1_W] == gs_21[C0_W +: C1_W];
-			wire lt_ig_1 = is_l_20[C0_W +: C1_W] < gs_21[C0_W +: C1_W];
-			wire eq_ig_2 = is_l_20[C0_W+C1_W +: C2_W] == gs_21[C0_W+C1_W +: C2_W];
-			wire lt_ig_2 = is_l_20[C0_W+C1_W +: C2_W] < gs_21[C0_W+C1_W +: C2_W];
-			wire eq_ig_3 = is_l_20[GW-1:C0_W+C1_W+C2_W] == gs_21[GW-1:C0_W+C1_W+C2_W];
-			wire lt_ig_3 = is_l_20[GW-1:C0_W+C1_W+C2_W] < gs_21[GW-1:C0_W+C1_W+C2_W];
+			/* Fast chunked unsigned compare: is_l_20_r < gs_21_r */
+			wire lt_ig_0 = is_l_20_r[0 +: C0_W] < gs_21_r[0 +: C0_W];
+			wire eq_ig_1 = is_l_20_r[C0_W +: C1_W] == gs_21_r[C0_W +: C1_W];
+			wire lt_ig_1 = is_l_20_r[C0_W +: C1_W] < gs_21_r[C0_W +: C1_W];
+			wire eq_ig_2 = is_l_20_r[C0_W+C1_W +: C2_W] == gs_21_r[C0_W+C1_W +: C2_W];
+			wire lt_ig_2 = is_l_20_r[C0_W+C1_W +: C2_W] < gs_21_r[C0_W+C1_W +: C2_W];
+			wire eq_ig_3 = is_l_20_r[GW-1:C0_W+C1_W+C2_W] == gs_21_r[GW-1:C0_W+C1_W+C2_W];
+			wire lt_ig_3 = is_l_20_r[GW-1:C0_W+C1_W+C2_W] < gs_21_r[GW-1:C0_W+C1_W+C2_W];
 			wire lt_ig_lo = lt_ig_1 || (eq_ig_1 && lt_ig_0);
-			wire isl_lt_gs = gs_21[GW] || lt_ig_3 || (eq_ig_3 && (lt_ig_2 || (eq_ig_2 && lt_ig_lo)));
+			wire isl_lt_gs = gs_21_r[GW] || lt_ig_3 || (eq_ig_3 && (lt_ig_2 || (eq_ig_2 && lt_ig_lo)));
 
-			assign ov[gk] = inv_n_zero || (gs_lt_ie && (is_small || isl_lt_gs));
+			assign ov[gk] = inv_nz_r || (gs_lt_ie && (inv_sm_r || isl_lt_gs));
 			wire unused_ovl = &{1'b0, gs_hc_unused};
 		end
 	endgenerate
@@ -246,9 +278,9 @@ module atg_mc_plb #(
 `ifdef MUT_PROT_STALE
 	assign pl_inv = {PLB{1'b0}};
 `else
-	assign pl_inv = {PLB{inv_valid}} & ov[PLB-1:0];
+	assign pl_inv = {PLB{inv_v_r}} & ov[PLB-1:0];
 `endif
-	assign w_inv = inv_valid && ov[PLB];
+	assign w_inv = inv_v_r && ov[PLB];
 
 	/* The next line to fill, round-robin, with replicated one-hot FFs to keep FO <= 256. */
 	wire [PLB_W-1:0] rr_next;
@@ -288,11 +320,11 @@ module atg_mc_plb #(
 	localparam integer HALF_LB = LB / 2;
 	always @(posedge clk) begin
 		for (k = 0; k < PLB; k = k + 1) begin
-			if (fill && rr_hot_lo[k]) begin
+			if (fill_data_en && rr_hot_lo[k]) begin
 				pl_tag[k*TAGW +: TAGW] <= fill_tag;
 				pl_data[k*LB +: HALF_LB] <= fill_data[HALF_LB-1:0];
 			end
-			if (fill && rr_hot_hi[k]) begin
+			if (fill_data_en && rr_hot_hi[k]) begin
 				pl_data[k*LB + HALF_LB +: LB - HALF_LB] <= fill_data[LB-1:HALF_LB];
 			end
 		end

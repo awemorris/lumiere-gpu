@@ -200,7 +200,7 @@ module atg_gfx_dist_tb;
 		c_ex_v = 4'b0101; c_ex_last = 4'b0101;
 		@(posedge clk); #1;
 		c_ex_v = 4'b0000;
-		repeat (3) @(posedge clk);
+		repeat (4) @(posedge clk);
 		if (ex_cnt != 1 || ex_seq0 != 16'd7) begin
 			$display("FAIL ex_prio (hold seq=9): cnt=%0d s0=%0d", ex_cnt, ex_seq0);
 			errors = errors + 1;

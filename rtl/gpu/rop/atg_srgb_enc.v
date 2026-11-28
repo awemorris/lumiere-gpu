@@ -105,9 +105,9 @@ module atg_srgb_enc (
 	wire is_max_s1  = (!is_neg_s1) && cmp16_s1;
 
 	/* Stage 1 -> Stage 2 Pipeline Registers (3 LUT levels from input FF) */
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [14:0] r0_c_hi;
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [2:0]  r0_c_hi7_rep;
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [30:0] r0_b_rep [0:2];
+	(* keep = "true", dont_touch = "true" *) reg [14:0] r0_c_hi;
+	(* keep = "true", dont_touch = "true" *) reg [2:0]  r0_c_hi7_rep;
+	(* keep = "true", dont_touch = "true" *) reg [30:0] r0_b_rep [0:2];
 	reg r0_is_zero, r0_is_max;
 
 	/* =========================================================================
@@ -139,11 +139,10 @@ module atg_srgb_enc (
 		r0_c_hi7_rep[2] ? (r0_c_hi[11] ? hi0_3 : hi0_2) : (r0_c_hi[3] ? hi0_1 : hi0_0)
 	};
 
-	/* Stage 2 -> Stage 3 Pipeline Registers (replicated so all Stage 3 fanouts <= 15) */
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [3:0]  r1_hi_lo [0:14];
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [3:0]  r1_hi_hi [0:14];
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [3:0]  r1_hi_out;
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [30:0] r1_b_rep [0:2];
+	/* Stage 2 -> Stage 3 Pipeline Registers (replicated scalars so Yosys keeps copies separate, fanout <= 15) */
+	(* keep = "true", dont_touch = "true" *) reg [3:0]  r1_hi_out;
+	(* keep = "true", dont_touch = "true" *) reg [59:0] r1_hi_lo_vec, r1_hi_hi_vec;
+	(* keep = "true", dont_touch = "true" *) reg [92:0] r1_b_rep_vec;
 	reg r1_is_zero, r1_is_max;
 	integer i1;
 	function [30:0] get_tl;
@@ -290,68 +289,99 @@ module atg_srgb_enc (
 		end
 	endfunction
 
-	wire [14:0] s2_ge_lo, s2_gt_hi, s2_eq_hi;
+	wire [14:0] s2_ge_lo8, s2_gt_mid8, s2_eq_mid8, s2_gt_hia, s2_eq_hia, s2_gt_hib, s2_eq_hib;
 	genvar gk, gp, gg;
 	generate
 	for (gk = 0; gk < 15; gk = gk + 1) begin : g_cmp_s2
 		localparam [3:0] K_IDX = gk[3:0];
-		wire [30:0] b_k = r1_b_rep[gk / 5];
-		wire [30:0] tl_lo = get_tl(K_IDX, r1_hi_lo[gk]);
-		wire [30:0] tl_hi = get_tl(K_IDX, r1_hi_hi[gk]);
+		wire [30:0] b_k = r1_b_rep_vec[31 * (gk / 5) +: 31];
+		wire [30:0] tl_lo = get_tl(K_IDX, r1_hi_lo_vec[4 * gk +: 4]);
+		wire [30:0] tl_hi = get_tl(K_IDX, r1_hi_hi_vec[4 * gk +: 4]);
 		wire [30:0] tl_k  = {tl_hi[30:16], tl_lo[15:0]};
 
-		/* Level 1: 15 pairs of 2 bits + 4 bits of r1_hi_* = 6 inputs = 1 LUT6 each */
-		(* keep = "true" *) wire ge0_0 = (b_k[1:0] >= tl_k[1:0]);
-		(* keep = "true" *) wire [14:1] gt0, eq0;
+		/* Level 1: 0-XOR 1-bit active-low compare (1 cmos3) + 4-stage AOI3/OAI3 tree (<= 9 cmos3 total) */
+		wire [30:0] gtn1 = (~b_k) | tl_k;
+		wire [30:0] gen1 = (~b_k) & tl_k;
+		wire [14:0] gt2, ge2;
+		assign ge2[0] = !(gen1[1] | (gtn1[1] & gen1[0]));
+		assign gt2[0] = !(gen1[1] | (gtn1[1] & gtn1[0]));
 		for (gp = 1; gp < 15; gp = gp + 1) begin : g_pair
-			assign gt0[gp] = (b_k[2 * gp +: 2] >  tl_k[2 * gp +: 2]);
+			assign ge2[gp] = !(gen1[2 * gp + 1] | (gtn1[2 * gp + 1] & gen1[2 * gp]));
+			assign gt2[gp] = !(gen1[2 * gp + 1] | (gtn1[2 * gp + 1] & gtn1[2 * gp]));
+		end
+		wire [14:1] eq0;
+		for (gp = 1; gp < 15; gp = gp + 1) begin : g_eqpair
 			assign eq0[gp] = (b_k[2 * gp +: 2] == tl_k[2 * gp +: 2]);
 		end
 
-		/* Level 2: 5 groups of 3 pairs (6 inputs each = 1 LUT6) */
-		(* keep = "true" *) wire ge1_0 = gt0[2] | (eq0[2] & gt0[1]) | (eq0[2] & eq0[1] & ge0_0);
-		(* keep = "true" *) wire [4:1] gt1, eq1;
-		for (gg = 1; gg < 5; gg = gg + 1) begin : g_grp
-			localparam P0 = 3 * gg;
-			localparam P1 = 3 * gg + 1;
-			localparam P2 = 3 * gg + 2;
-			assign gt1[gg] = gt0[P2] | (eq0[P2] & gt0[P1]) | (eq0[P2] & eq0[P1] & gt0[P0]);
-			assign eq1[gg] = eq0[P2] & eq0[P1] & eq0[P0];
-		end
+		wire gtn_lo4_lo = !(gt2[1] | (ge2[1] & ge2[0]));
+		wire gen_lo4_lo = gtn_lo4_lo;
+		wire gtn_lo4_hi = !(gt2[3] | (ge2[3] & gt2[2]));
+		wire gen_lo4_hi = !(gt2[3] | (ge2[3] & ge2[2]));
+		wire ge_lo8_w   = !(gtn_lo4_hi & (gen_lo4_hi | gtn_lo4_lo));
 
-		/* Level 3: combine into ge_lo (groups 0..2) and gt_hi/eq_hi (groups 3..4 + b[30]) */
-		(* keep = "true" *) wire ge_lo_w = gt1[2] | (eq1[2] & gt1[1]) | (eq1[2] & eq1[1] & ge1_0);
-		(* keep = "true" *) wire gt_hi_w = b_k[30] | gt1[4] | (eq1[4] & gt1[3]);
-		(* keep = "true" *) wire eq_hi_w = (~b_k[30]) & eq1[4] & eq1[3];
+		wire gtn_mid4_lo = !(gt2[5] | (ge2[5] & gt2[4]));
+		wire gtn_mid4_hi = !(gt2[7] | (ge2[7] & gt2[6]));
+		wire gen_mid4_hi = !(gt2[7] | (ge2[7] & ge2[6]));
+		wire gt_mid8_w   = !(gtn_mid4_hi & (gen_mid4_hi | gtn_mid4_lo));
+		wire eq_mid4_lo  = eq0[5] & eq0[4];
+		wire eq_mid4_hi  = eq0[7] & eq0[6];
+		wire eq_mid8_w   = eq_mid4_hi & eq_mid4_lo;
 
-		assign s2_ge_lo[gk] = ge_lo_w;
-		assign s2_gt_hi[gk] = gt_hi_w;
-		assign s2_eq_hi[gk] = eq_hi_w;
+		wire gtn_hia_lo = !(gt2[9]  | (ge2[9]  & gt2[8]));
+		wire gtn_hia_hi = !(gt2[11] | (ge2[11] & gt2[10]));
+		wire gen_hia_hi = !(gt2[11] | (ge2[11] & ge2[10]));
+		wire gt_hia_w   = !(gtn_hia_hi & (gen_hia_hi | gtn_hia_lo));
+		wire eq_hia_lo  = eq0[9]  & eq0[8];
+		wire eq_hia_hi  = eq0[11] & eq0[10];
+		wire eq_hia_w   = eq_hia_hi & eq_hia_lo;
+
+		wire gtn_hib_lo  = !(gt2[13] | (ge2[13] & gt2[12]));
+		wire gt_hib_top  = b_k[30] | gt2[14];
+		wire ge_hib_top  = b_k[30] | ge2[14];
+		wire gtn_hib_top = !gt_hib_top;
+		wire gen_hib_top = !ge_hib_top;
+		wire gt_hib_w    = !(gtn_hib_top & (gen_hib_top | gtn_hib_lo));
+		wire eq_hib_lo   = eq0[13] & eq0[12];
+		wire eq_hib_top  = (~b_k[30]) & eq0[14];
+		wire eq_hib_w    = eq_hib_top & eq_hib_lo;
+		wire unused_gen_lo = gen_lo4_lo;
+
+		assign s2_ge_lo8[gk]  = ge_lo8_w;
+		assign s2_gt_mid8[gk] = gt_mid8_w;
+		assign s2_eq_mid8[gk] = eq_mid8_w;
+		assign s2_gt_hia[gk]  = gt_hia_w;
+		assign s2_eq_hia[gk]  = eq_hia_w;
+		assign s2_gt_hib[gk]  = gt_hib_w;
+		assign s2_eq_hib[gk]  = eq_hib_w;
 	end
 	endgenerate
 
 	/* Stage 2 -> Stage 3 Pipeline Registers */
-	reg [14:0] r2_ge_lo, r2_gt_hi, r2_eq_hi;
+	reg [14:0] r2_ge_lo8, r2_gt_mid8, r2_eq_mid8, r2_gt_hia, r2_eq_hia, r2_gt_hib, r2_eq_hib;
 	reg [3:0]  r2_hi;
 	reg        r2_is_zero, r2_is_max;
 
 	/* =========================================================================
 	 * STAGE 3: Final Compare Combine, Thermometer Decode & Output Register
-	 *          (0 CARRY4s, <= 3 LUT levels)
+	 *          (0 CARRY4s, <= 10 cmos3)
 	 * ========================================================================= */
-	(* keep = "true" *) wire [14:0] cmp_lo;
+	wire [14:0] cmp_lo;
 	generate
 	for (gk = 0; gk < 15; gk = gk + 1) begin : g_cmp_s3
-		assign cmp_lo[gk] = r2_gt_hi[gk] | (r2_eq_hi[gk] & r2_ge_lo[gk]);
+		wire ge_lo16 = r2_gt_mid8[gk] | (r2_eq_mid8[gk] & r2_ge_lo8[gk]);
+		wire gt_hi15 = r2_gt_hib[gk]  | (r2_eq_hib[gk]  & r2_gt_hia[gk]);
+		wire eq_hi15 = r2_eq_hib[gk]  & r2_eq_hia[gk];
+		assign cmp_lo[gk] = gt_hi15 | (eq_hi15 & ge_lo16);
 	end
 	endgenerate
 
-	(* keep = "true" *) wire lo1_top = cmp_lo[13] | (~cmp_lo[11] & cmp_lo[9]);
-	(* keep = "true" *) wire lo1_bot = cmp_lo[5]  | (~cmp_lo[3]  & cmp_lo[1]);
-	(* keep = "true" *) wire lo0_3   = cmp_lo[14] | (~cmp_lo[13] & cmp_lo[12]);
-	(* keep = "true" *) wire lo0_2   = cmp_lo[10] | (~cmp_lo[9]  & cmp_lo[8]);
-	(* keep = "true" *) wire lo0_1   = cmp_lo[6]  | (~cmp_lo[5]  & cmp_lo[4]);
-	(* keep = "true" *) wire lo0_0   = cmp_lo[2]  | (~cmp_lo[1]  & cmp_lo[0]);
+	wire lo1_top = cmp_lo[13] | (~cmp_lo[11] & cmp_lo[9]);
+	wire lo1_bot = cmp_lo[5]  | (~cmp_lo[3]  & cmp_lo[1]);
+	wire lo0_3   = cmp_lo[14] | (~cmp_lo[13] & cmp_lo[12]);
+	wire lo0_2   = cmp_lo[10] | (~cmp_lo[9]  & cmp_lo[8]);
+	wire lo0_1   = cmp_lo[6]  | (~cmp_lo[5]  & cmp_lo[4]);
+	wire lo0_0   = cmp_lo[2]  | (~cmp_lo[1]  & cmp_lo[0]);
 
 	wire [3:0] lo_s3;
 	assign lo_s3[3] = cmp_lo[7];
@@ -372,18 +402,20 @@ module atg_srgb_enc (
 			r0_is_zero  <= 1'b0;
 			r0_is_max   <= 1'b0;
 			for (i1 = 0; i1 < 15; i1 = i1 + 1) begin
-				r1_hi_lo[i1] <= 4'd0;
-				r1_hi_hi[i1] <= 4'd0;
+				r1_hi_lo_vec[4 * i1 +: 4] <= 4'd0;
+				r1_hi_hi_vec[4 * i1 +: 4] <= 4'd0;
 			end
-			r1_hi_out   <= 4'd0;
-			r1_b_rep[0] <= 31'd0;
-			r1_b_rep[1] <= 31'd0;
-			r1_b_rep[2] <= 31'd0;
+			r1_hi_out    <= 4'd0;
+			r1_b_rep_vec <= 93'd0;
 			r1_is_zero  <= 1'b0;
 			r1_is_max   <= 1'b0;
-			r2_ge_lo    <= 15'd0;
-			r2_gt_hi    <= 15'd0;
-			r2_eq_hi    <= 15'd0;
+			r2_ge_lo8   <= 15'd0;
+			r2_gt_mid8  <= 15'd0;
+			r2_eq_mid8  <= 15'd0;
+			r2_gt_hia   <= 15'd0;
+			r2_eq_hia   <= 15'd0;
+			r2_gt_hib   <= 15'd0;
+			r2_eq_hib   <= 15'd0;
 			r2_hi       <= 4'd0;
 			r2_is_zero  <= 1'b0;
 			r2_is_max   <= 1'b0;
@@ -412,59 +444,66 @@ module atg_srgb_enc (
 			/* Stage 2 -> Stage 3 */
 			if (en_s2_buf[0]) begin
 				for (i1 = 0; i1 < 4; i1 = i1 + 1)
-					r1_hi_lo[i1] <= hi_w_a;
+					r1_hi_lo_vec[4 * i1 +: 4] <= hi_w_a;
 			end
 			if (en_s2_buf[1]) begin
 				for (i1 = 4; i1 < 8; i1 = i1 + 1)
-					r1_hi_lo[i1] <= hi_w_a;
+					r1_hi_lo_vec[4 * i1 +: 4] <= hi_w_a;
 			end
 			if (en_s2_buf[2]) begin
 				for (i1 = 8; i1 < 12; i1 = i1 + 1)
-					r1_hi_lo[i1] <= hi_w_b;
+					r1_hi_lo_vec[4 * i1 +: 4] <= hi_w_b;
 			end
 			if (en_s2_buf[3]) begin
 				for (i1 = 12; i1 < 15; i1 = i1 + 1)
-					r1_hi_lo[i1] <= hi_w_b;
+					r1_hi_lo_vec[4 * i1 +: 4] <= hi_w_b;
 				r1_hi_out  <= hi_w_b;
 			end
 			if (en_s2_buf[4]) begin
 				for (i1 = 0; i1 < 4; i1 = i1 + 1)
-					r1_hi_hi[i1] <= hi_w_c;
+					r1_hi_hi_vec[4 * i1 +: 4] <= hi_w_c;
 			end
 			if (en_s2_buf[5]) begin
 				for (i1 = 4; i1 < 8; i1 = i1 + 1)
-					r1_hi_hi[i1] <= hi_w_c;
+					r1_hi_hi_vec[4 * i1 +: 4] <= hi_w_c;
 			end
 			if (en_s2_buf[6]) begin
 				for (i1 = 8; i1 < 12; i1 = i1 + 1)
-					r1_hi_hi[i1] <= hi_w_c;
+					r1_hi_hi_vec[4 * i1 +: 4] <= hi_w_c;
 			end
 			if (en_s2_buf[7]) begin
 				for (i1 = 12; i1 < 15; i1 = i1 + 1)
-					r1_hi_hi[i1] <= hi_w_c;
+					r1_hi_hi_vec[4 * i1 +: 4] <= hi_w_c;
 				r1_is_zero <= r0_is_zero;
 				r1_is_max  <= r0_is_max;
 			end
 			if (en_s2_buf[8])
-				r1_b_rep[0][15:0]  <= r0_b_rep[0][15:0];
+				r1_b_rep_vec[0  +: 16] <= r0_b_rep[0][15:0];
 			if (en_s2_buf[9])
-				r1_b_rep[0][30:16] <= r0_b_rep[0][30:16];
+				r1_b_rep_vec[16 +: 15] <= r0_b_rep[0][30:16];
 			if (en_s2_buf[10])
-				r1_b_rep[1][15:0]  <= r0_b_rep[1][15:0];
+				r1_b_rep_vec[31 +: 16] <= r0_b_rep[1][15:0];
 			if (en_s2_buf[11])
-				r1_b_rep[1][30:16] <= r0_b_rep[1][30:16];
+				r1_b_rep_vec[47 +: 15] <= r0_b_rep[1][30:16];
 			if (en_s2_buf[12])
-				r1_b_rep[2][15:0]  <= r0_b_rep[2][15:0];
+				r1_b_rep_vec[62 +: 16] <= r0_b_rep[2][15:0];
 			if (en_s2_buf[13])
-				r1_b_rep[2][30:16] <= r0_b_rep[2][30:16];
+				r1_b_rep_vec[78 +: 15] <= r0_b_rep[2][30:16];
 
 			/* Stage 3 -> Stage 4 */
-			if (en_s3_buf[0])
-				r2_ge_lo <= s2_ge_lo;
-			if (en_s3_buf[1])
-				r2_gt_hi <= s2_gt_hi;
-			if (en_s3_buf[2])
-				r2_eq_hi <= s2_eq_hi;
+			if (en_s3_buf[0]) begin
+				r2_ge_lo8  <= s2_ge_lo8;
+				r2_gt_mid8 <= s2_gt_mid8;
+				r2_eq_mid8 <= s2_eq_mid8;
+			end
+			if (en_s3_buf[1]) begin
+				r2_gt_hia <= s2_gt_hia;
+				r2_gt_hib <= s2_gt_hib;
+			end
+			if (en_s3_buf[2]) begin
+				r2_eq_hia <= s2_eq_hia;
+				r2_eq_hib <= s2_eq_hib;
+			end
 			if (en_s3_buf[3]) begin
 				r2_hi      <= r1_hi_out;
 				r2_is_zero <= r1_is_zero;

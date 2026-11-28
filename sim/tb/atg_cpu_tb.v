@@ -201,7 +201,7 @@ module atg_cpu_tb;
 		/* The packet: 6 dwords at line 16. */
 		for (i = 0; i < 8; i = i + 1)
 			amem[16][32 * i +: 32] = 32'hC0DE_0000 + i;
-		repeat (3) @(negedge clk);
+		repeat (10) @(negedge clk);
 		rst_n = 1'b1;
 		hw(GHCI_CPFW_MBOX0, MBASE + 100 * LB);
 		hw(GHCI_CPFW_CTRL, 32'h2);	/* RUN */
@@ -247,7 +247,7 @@ module atg_cpu_tb;
 				$display("FAIL DMA write word %0d: %h", i, amem[100][32 * i +: 32]);
 				errors = errors + 1;
 			end
-		repeat (3) @(negedge clk);
+		repeat (10) @(negedge clk);
 		if (results != 1) begin
 			$display("FAIL RESULT pulses %0d", results);
 			errors = errors + 1;

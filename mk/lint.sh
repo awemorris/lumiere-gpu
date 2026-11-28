@@ -35,8 +35,11 @@ done
 run "am_jtag_bscan (generic)" sim/lint/xilinx_stubs.v rtl/bsp/generic/am_jtag_bscan.v --top-module am_jtag_bscan
 run "am_jtag_bscan (xilinx7)" -DSYNTH_KINTEX7 sim/lint/xilinx_stubs.v rtl/bsp/xilinx7/am_jtag_bscan.v --top-module am_jtag_bscan
 run "am_mul (SYNTH_KINTEX7)" -DSYNTH_KINTEX7 sim/lint/xilinx_stubs.v --top-module am_mul
+run "am_mul (SYNTH_KINTEX_ULTRASCALE)" -DSYNTH_KINTEX_ULTRASCALE sim/lint/xilinx_stubs.v --top-module am_mul
 run "am_shift (SYNTH_ASIC)" -DSYNTH_ASIC --top-module am_shift
 run "am_shift (SYNTH_KINTEX7)" -DSYNTH_KINTEX7 sim/lint/xilinx_stubs.v --top-module am_shift
+run "am_shift (SYNTH_KINTEX_ULTRASCALE)" -DSYNTH_KINTEX_ULTRASCALE sim/lint/xilinx_stubs.v --top-module am_shift
+run "am_dot (SYNTH_KINTEX_ULTRASCALE)" -DSYNTH_KINTEX_ULTRASCALE sim/lint/xilinx_stubs.v --top-module am_dot
 # The format table of include/atg_fmt_info.vh for any format value, through
 # a lint-only top (sim/lint/atg_fmt_lint.v).
 run "atg_fmt functions (lint top)" --top-module atg_fmt_lint sim/lint/atg_fmt_lint.v
@@ -62,7 +65,13 @@ run "atg_top (SA reserved: 1 SU + atg_sa)" --top-module atg_top $kc -GNSU=1 -GHA
 for f in boards/*/*.v; do
 	t=$(basename "$f" .v)
 	b=$(dirname "$f")
-	run "$t (board top)" --top-module "$t" -Wno-PINMISSING -Wno-PINCONNECTEMPTY -fno-dedup \
+	extra_def=
+	if [ "$t" = "atg_xcku5p_top" ]; then
+		extra_def=-DSYNTH_KINTEX_ULTRASCALE
+	elif [ "$t" = "atg_kc705_top" ]; then
+		extra_def=-DSYNTH_KINTEX7
+	fi
+	run "$t (board top)" $extra_def --top-module "$t" -Wno-PINMISSING -Wno-PINCONNECTEMPTY -fno-dedup \
 		"$f" $(ls "$b"/lib/*.v 2>/dev/null) sim/lint/xilinx_stubs.v
 done
 exit $fail

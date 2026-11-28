@@ -1,17 +1,16 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
  */
 
 /*
- * atg1_regs.h: Lumiere GPU (ATG1) vendor/internal implementation definitions.
+ * atg1_regs.h: Amaterrace GPU (ATG1) internal implementation definitions.
  *
  * Separated from the public GHCI 1.0 contract (ghci_regs.h): contains
- * vendor CPFW window registers (0x170..0x17F, 0x1A0..0x1BF), reference
- * prototype PCI IDs, and internal Command Processor -> hardware unit state
- * register constants used by CP firmware and ATG1 test harnesses.
+ * board/reference PCI IDs and the internal Command Processor -> hardware unit
+ * state register file constants used by CP firmware and ATG1 test harnesses.
  */
 
 #ifndef ATG1_REGS_H
@@ -21,32 +20,11 @@
 extern "C" {
 #endif
 
-/* ATG1 / Reference FPGA Prototype PCI Identification Constants (non-normative) */
+/* ATG1 / KC705 Reference PCI Identification Constants */
 #define GHCI_PCI_VENDOR_ID_XILINX 0x10EEu
-#define GHCI_PCI_DEVICE_ID_FPGA   0x7024u
+#define GHCI_PCI_DEVICE_ID_KC705  0x7024u
 #define GHCI_PCI_VENDOR_ID_ATG    0x5441u /* "AT" */
 #define GHCI_PCI_DEVICE_ID_ATG    0x4748u /* "GH" */
-
-/* Vendor-Defined CPFW Control-Path Window (0x170..0x17F and 0x1A0..0x1BF) */
-#define GHCI_CPFW_CTRL            0x170u
-#define GHCI_CPFW_STATUS          0x174u
-#define GHCI_CPFW_VERSION         0x178u
-#define GHCI_CPFW_IBASE           0x1A0u
-#define GHCI_CPFW_IWORDS          0x1A4u
-#define GHCI_CPFW_DBASE           0x1A8u
-#define GHCI_CPFW_DWORDS          0x1ACu
-#define GHCI_CPFW_MBOX(n)         (0x1B0u + 4u * (n)) /* n = 0..3 */
-
-/* CPFW_CTRL and CPFW_STATUS bits */
-#define GHCI_CPFW_CTRL_LOAD       (1u << 0)
-#define GHCI_CPFW_CTRL_RUN        (1u << 1)
-#define GHCI_CPFW_CTRL_HALT       (1u << 2)
-#define GHCI_CPFW_STATUS_READY    (1u << 0)
-#define GHCI_CPFW_STATUS_FAULT    (1u << 1)
-#define GHCI_CPFW_STATUS_ALIVE    (1u << 2)
-#define GHCI_CPFW_STATUS_STOPPED  (1u << 3) /* Core is stopped or held in reset */
-#define GHCI_CPFW_STATUS_LOADING  (1u << 4)
-#define GHCI_CPFW_STATUS_STATE(s) (((s) >> 8) & 0xFFu)
 
 /*
  * State register file.  Only the BLT range is defined in this draft; the
@@ -215,7 +193,7 @@ extern "C" {
 #define GHCI_S_WG_SIZE (GHCI_S_PROG + 9u)
 #define GHCI_S_VS_OUT_WORDS (GHCI_S_PROG + 10u)
 
-/* Lumiere's vendor words, written by the uop sequencer. */
+/* Amaterrace's vendor words, written by the uop sequencer. */
 #define GHCI_S_RAW (GHCI_S_VENDOR + 0u) /* DRAW_RAW's 9 words */
 #define GHCI_S_GRID_X (GHCI_S_VENDOR + 9u) /* DISPATCH's grid */
 #define GHCI_S_GRID_Y (GHCI_S_VENDOR + 10u)
@@ -251,8 +229,8 @@ extern "C" {
 #define GHCI_XY(x, y) (((unsigned)(y) << 16) | ((unsigned)(x) & 0xFFFFu))
 
 /*
- * ATG1 Legacy Pre-1.0 Display Controller (DISP window, 0x0C0..0x0DC) vendor extensions.
- * GHCI 1.0 display control uses primary ring commands (0x50..0x57), not MMIO windows.
+ * ATG1 Display Controller (DISP2 window, 0x0C0..0x0DC) vendor extensions.
+ * Standard GHCI DISP2 registers (0x000..0x0BC) are in ghci_regs.h.
  */
 #define ATG_DC_PLANE2_BASE     0x0C0u /* Secondary overlay plane framebuffer PA/VA */
 #define ATG_DC_PLANE2_POS      0x0C4u /* [11:0] pos_x, [27:16] pos_y */

@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -62,6 +62,12 @@ module atg_dc_mode #(
 	LUT1 #(.INIT(2'b01)) u_mode_rst_lo (.I0(rst_n), .O(mode_rst_lo));
 	LUT1 #(.INIT(2'b01)) u_mode_rst_hi (.I0(rst_n), .O(mode_rst_hi));
 	wire rst_high = mode_rst_lo;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", DONT_TOUCH = "TRUE" *) wire mode_rst_lo;
+	(* keep = "true", DONT_TOUCH = "TRUE" *) wire mode_rst_hi;
+	LUT1 #(.INIT(2'b01)) u_mode_rst_lo (.I0(rst_n), .O(mode_rst_lo));
+	LUT1 #(.INIT(2'b01)) u_mode_rst_hi (.I0(rst_n), .O(mode_rst_hi));
+	wire rst_high = mode_rst_lo;
 `else
 	wire rst_high = !rst_n;
 	wire mode_rst_lo = rst_high;
@@ -75,6 +81,15 @@ module atg_dc_mode #(
 		for (grm = 0; grm < 6; grm = grm + 1) begin : g_ridx_buf
 			LUT1 #(.INIT(2'b10)) u_buf_rl (.I0(d_ridx[grm]), .O(ridx_l[grm]));
 			LUT1 #(.INIT(2'b10)) u_buf_rh (.I0(d_ridx[grm]), .O(ridx_h[grm]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [5:0] ridx_l, ridx_h;
+	genvar grm;
+	generate
+		for (grm = 0; grm < 6; grm = grm + 1) begin : g_ridx_buf
+			assign ridx_l[grm] = d_ridx[grm];
+			assign ridx_h[grm] = d_ridx[grm];
 		end
 	endgenerate
 `else
@@ -101,6 +116,10 @@ module atg_dc_mode #(
 	wire w_pos_lo, w_pos_hi;
 	LUT1 #(.INIT(2'b10)) u_buf_wp0 (.I0(w_pos), .O(w_pos_lo));
 	LUT1 #(.INIT(2'b10)) u_buf_wp1 (.I0(w_pos), .O(w_pos_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire w_pos_lo, w_pos_hi;
+	assign w_pos_lo = w_pos;
+	assign w_pos_hi = w_pos;
 `else
 	wire w_pos_lo = w_pos;
 	wire w_pos_hi = w_pos;

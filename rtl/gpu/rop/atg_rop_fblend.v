@@ -91,6 +91,48 @@ module atg_rop_fblend (
 	endgenerate
 
 	wire [2495:0] pe_leaf = {2496{1'b1}};
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", dont_touch = "true" *) wire rst_sync;
+	LUT1 #(.INIT(2'b01)) u_rst_inv (.I0(rst_n), .O(rst_sync));
+	(* keep = "true", dont_touch = "true" *) wire [15:0] rst_n_sub;
+	genvar g_rn;
+	generate
+	for (g_rn = 0; g_rn < 16; g_rn = g_rn + 1) begin : g_rstn_buf
+		assign rst_n_sub[g_rn] = rst_n;
+	end
+	endgenerate
+
+	/* Buffered enable tree for output registers (fanout <= 16, <= 3 LUTs) */
+	(* keep = "true", dont_touch = "true" *) wire [2:0]  out_en_root;
+	(* keep = "true", dont_touch = "true" *) wire [31:0] out_en_leaf;
+	genvar gor, gol;
+	generate
+	for (gor = 0; gor < 3; gor = gor + 1) begin : g_oe_r
+		assign out_en_root[gor] = pipe_en;
+	end
+	for (gor = 0; gor < 2; gor = gor + 1) begin : g_oe_l_grp
+		for (gol = 0; gol < 16; gol = gol + 1) begin : g_oe_l
+			assign out_en_leaf[gor * 16 + gol] = out_en_root[gor];
+		end
+	end
+	endgenerate
+
+	/* Buffered i_fmt input port tree (fanout <= 12 everywhere) */
+	(* keep = "true", dont_touch = "true" *) wire [7:0] i_fmt_ctrl_b;
+	(* keep = "true", dont_touch = "true" *) wire [7:0] i_fmt_b0 [0:3];
+	(* keep = "true", dont_touch = "true" *) wire [7:0] i_fmt_b1 [0:3];
+	genvar gfb, gfl;
+	generate
+	for (gfb = 0; gfb < 8; gfb = gfb + 1) begin : g_fmt_buf
+		assign i_fmt_ctrl_b[gfb] = i_fmt[gfb];
+		for (gfl = 0; gfl < 4; gfl = gfl + 1) begin : g_fmt_l
+			assign i_fmt_b0[gfl][gfb] = i_fmt[gfb];
+			assign i_fmt_b1[gfl][gfb] = i_fmt[gfb];
+		end
+	end
+	endgenerate
+
+	wire [2495:0] pe_leaf = {2496{1'b1}};
 `else
 	wire rst_sync = !rst_n;
 	wire [15:0] rst_n_sub = {16{rst_n}};
@@ -177,7 +219,9 @@ module atg_rop_fblend (
 	(* keep = "true", dont_touch = "true" *) reg [3:0] r_in_k_o  [0:3][0:3];
 	(* keep = "true", dont_touch = "true" *) reg [3:0] r_in_ka_z [0:3];
 	(* keep = "true", dont_touch = "true" *) reg [3:0] r_in_ka_o [0:3];
-	(* keep = "true", dont_touch = "true" *) reg [3:0] r_in_hf_lz   [0:3][0:3];
+	(* keep = "true", dont_touch = "true" *) reg [3:0] r_in_hf_lz0_oh [0:3][0:3];
+	(* keep = "true", dont_touch = "true" *) reg [3:0] r_in_hf_lz1_oh [0:3][0:3];
+	(* keep = "true", dont_touch = "true" *) reg [7:0] r_in_hf_el_subn [0:3][0:3];
 	(* keep = "true", dont_touch = "true" *) reg       r_in_hf_subn [0:3][0:3];
 	(* keep = "true", dont_touch = "true" *) reg       r_in_hf_zero [0:3][0:3];
 	(* keep = "true", dont_touch = "true" *) reg       r_in_hf_nan  [0:3][0:3];
@@ -230,18 +274,46 @@ module atg_rop_fblend (
 			(* keep = "true", dont_touch = "true" *) wire k_o_in = (!k_raw[31]) && (!k_nan_in) && k_gt1_in;
 
 			wire [15:0] h_raw = i_dst[64 * gl + 16 * gc +: 16];
-			(* keep = "true", dont_touch = "true" *) wire h_ez  = (h_raw[14:10] == 5'd0);
-			(* keep = "true", dont_touch = "true" *) wire h_eff = (&h_raw[14:10]);
-			(* keep = "true", dont_touch = "true" *) wire h_mhi = (h_raw[9:5] != 5'd0);
-			(* keep = "true", dont_touch = "true" *) wire h_mlo = (h_raw[4:0] != 5'd0);
-			(* keep = "true", dont_touch = "true" *) wire [3:0] h_lz_hi =
-				h_raw[9] ? 4'd0 : h_raw[8] ? 4'd1 : h_raw[7] ? 4'd2 : h_raw[6] ? 4'd3 : 4'd4;
-			(* keep = "true", dont_touch = "true" *) wire [3:0] h_lz_lo =
-				h_raw[4] ? 4'd5 : h_raw[3] ? 4'd6 : h_raw[2] ? 4'd7 : h_raw[1] ? 4'd8 : 4'd9;
-			(* keep = "true", dont_touch = "true" *) wire [3:0] h_lz_in = h_mhi ? h_lz_hi : h_lz_lo;
-			(* keep = "true", dont_touch = "true" *) wire h_subn_in = h_ez && (h_mhi || h_mlo);
-			(* keep = "true", dont_touch = "true" *) wire h_zero_in = h_ez && !h_mhi && !h_mlo;
-			(* keep = "true", dont_touch = "true" *) wire h_nan_in  = h_eff && (h_mhi || h_mlo);
+			wire h_ez  = (h_raw[14:10] == 5'd0);
+			wire h_eff = (&h_raw[14:10]);
+			wire h_mhi = (h_raw[9:5] != 5'd0);
+			wire h_mlo = (h_raw[4:0] != 5'd0);
+			wire [9:0] h_p;
+			assign h_p[9] = h_raw[9];
+			assign h_p[8] = !h_raw[9] && h_raw[8];
+			assign h_p[7] = !h_raw[9] && !h_raw[8] && h_raw[7];
+			assign h_p[6] = !(h_raw[9] || h_raw[8] || h_raw[7]) && h_raw[6];
+			assign h_p[5] = !(h_raw[9] || h_raw[8] || h_raw[7] || h_raw[6]) && h_raw[5];
+			assign h_p[4] = !h_mhi && h_raw[4];
+			assign h_p[3] = !h_mhi && !h_raw[4] && h_raw[3];
+			assign h_p[2] = !h_mhi && !(h_raw[4] || h_raw[3]) && h_raw[2];
+			assign h_p[1] = !h_mhi && !(h_raw[4] || h_raw[3] || h_raw[2]) && h_raw[1];
+			assign h_p[0] = !h_mhi && !(h_raw[4] || h_raw[3] || h_raw[2] || h_raw[1]);
+			wire [3:0] h_lz0_oh_in = {
+				h_p[6] | h_p[2],
+				h_p[7] | h_p[3],
+				h_p[8] | h_p[4] | h_p[0],
+				h_p[9] | h_p[5] | h_p[1]
+			};
+			wire [3:0] h_lz1_oh_in = {
+				1'b0,
+				h_p[1] | h_p[0],
+				h_p[5] | h_p[4] | h_p[3] | h_p[2],
+				h_p[9] | h_p[8] | h_p[7] | h_p[6]
+			};
+			wire [7:0] h_el_subn_in = {
+				1'b0,
+				1'b1,
+				1'b1,
+				h_p[9],
+				!h_p[9] && !h_p[0],
+				h_p[8] | h_p[7] | h_p[6] | h_p[5] | h_p[0],
+				h_p[8] | h_p[7] | h_p[4] | h_p[3] | h_p[0],
+				h_p[8] | h_p[6] | h_p[4] | h_p[2] | h_p[0]
+			};
+			wire h_subn_in = h_ez && (h_mhi || h_mlo);
+			wire h_zero_in = h_ez && !h_mhi && !h_mlo;
+			wire h_nan_in  = h_eff && (h_mhi || h_mlo);
 
 			always @(posedge clk) begin
 				if (pe_leaf[1 + gl]) begin
@@ -249,7 +321,9 @@ module atg_rop_fblend (
 					r_in_s_o[gl][gc] <= {4{s_o_in}};
 					r_in_k_z[gl][gc] <= {4{k_z_in}};
 					r_in_k_o[gl][gc] <= {4{k_o_in}};
-					r_in_hf_lz[gl][gc]   <= h_lz_in;
+					r_in_hf_lz0_oh[gl][gc]  <= h_lz0_oh_in;
+					r_in_hf_lz1_oh[gl][gc]  <= h_lz1_oh_in;
+					r_in_hf_el_subn[gl][gc] <= h_el_subn_in;
 					r_in_hf_subn[gl][gc] <= h_subn_in;
 					r_in_hf_zero[gl][gc] <= h_zero_in;
 					r_in_hf_nan[gl][gc]  <= h_nan_in;
@@ -361,6 +435,26 @@ module atg_rop_fblend (
 		end
 	end
 
+`ifdef SYNTH_KINTEX7
+	wire [255:0] i_dst_reg_b;
+	genvar gidb;
+	generate
+	for (gidb = 0; gidb < 256; gidb = gidb + 1) begin : g_idst_rb
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_idb (.I0(i_dst[gidb]), .O(i_dst_reg_b[gidb]));
+	end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [255:0] i_dst_reg_b;
+	genvar gidb;
+	generate
+	for (gidb = 0; gidb < 256; gidb = gidb + 1) begin : g_idst_rb
+		assign i_dst_reg_b[gidb] = i_dst[gidb];
+	end
+	endgenerate
+`else
+	wire [255:0] i_dst_reg_b = i_dst;
+`endif
+
 	always @(posedge clk) begin
 		for (i_in = 0; i_in < 8; i_in = i_in + 1)
 			if (pe_leaf[17 + i_in])
@@ -368,20 +462,20 @@ module atg_rop_fblend (
 		for (i_l = 0; i_l < 4; i_l = i_l + 1) begin
 			for (i_c = 0; i_c < 8; i_c = i_c + 1) begin
 				if (pe_leaf[25 + i_l * 8 + i_c]) begin
-					r_in_srgb_b0[i_l][i_c] <= i_dst[64 * i_l + 0  +: 8];
-					r_in_srgb_b1[i_l][i_c] <= i_dst[64 * i_l + 8  +: 8];
-					r_in_srgb_b2[i_l][i_c] <= i_dst[64 * i_l + 16 +: 8];
-					r_in_u8[i_l][i_c]      <= i_dst[64 * i_l + 24 +: 8];
+					r_in_srgb_b0[i_l][i_c] <= i_dst_reg_b[64 * i_l + 0  +: 8];
+					r_in_srgb_b1[i_l][i_c] <= i_dst_reg_b[64 * i_l + 8  +: 8];
+					r_in_srgb_b2[i_l][i_c] <= i_dst_reg_b[64 * i_l + 16 +: 8];
+					r_in_u8[i_l][i_c]      <= i_dst_reg_b[64 * i_l + 24 +: 8];
 				end
 			end
 		end
 		for (i_in = 0; i_in < 16; i_in = i_in + 1) begin
-			if (pe_leaf[25 + i_in * 7 + 1]) r_in_dst_u10_a[16 * i_in +: 16] <= i_dst[16 * i_in +: 16];
-			if (pe_leaf[25 + i_in * 7 + 2]) r_in_dst_u10_b[16 * i_in +: 16] <= i_dst[16 * i_in +: 16];
-			if (pe_leaf[25 + i_in * 7 + 3]) r_in_dst_u10_c[16 * i_in +: 16] <= i_dst[16 * i_in +: 16];
-			if (pe_leaf[25 + i_in * 7 + 4]) r_in_dst_u10_d[16 * i_in +: 16] <= i_dst[16 * i_in +: 16];
-			if (pe_leaf[25 + i_in * 7 + 5]) r_in_dst_hf_a[16 * i_in +: 16]  <= i_dst[16 * i_in +: 16];
-			if (pe_leaf[25 + i_in * 7 + 6]) r_in_dst_hf_b[16 * i_in +: 16]  <= i_dst[16 * i_in +: 16];
+			if (pe_leaf[25 + i_in * 7 + 1]) r_in_dst_u10_a[16 * i_in +: 16] <= i_dst_reg_b[16 * i_in +: 16];
+			if (pe_leaf[25 + i_in * 7 + 2]) r_in_dst_u10_b[16 * i_in +: 16] <= i_dst_reg_b[16 * i_in +: 16];
+			if (pe_leaf[25 + i_in * 7 + 3]) r_in_dst_u10_c[16 * i_in +: 16] <= i_dst_reg_b[16 * i_in +: 16];
+			if (pe_leaf[25 + i_in * 7 + 4]) r_in_dst_u10_d[16 * i_in +: 16] <= i_dst_reg_b[16 * i_in +: 16];
+			if (pe_leaf[25 + i_in * 7 + 5]) r_in_dst_hf_a[16 * i_in +: 16]  <= i_dst_reg_b[16 * i_in +: 16];
+			if (pe_leaf[25 + i_in * 7 + 6]) r_in_dst_hf_b[16 * i_in +: 16]  <= i_dst_reg_b[16 * i_in +: 16];
 		end
 		for (i_in = 0; i_in < 32; i_in = i_in + 1)
 			if (pe_leaf[137 + i_in])
@@ -441,34 +535,32 @@ module atg_rop_fblend (
 			wire [31:0] u10_val_d = atg_unorm10(u10_in_d);
 			wire [31:0] u10_val   = {u10_val_d[31:24], u10_val_c[23:16], u10_val_b[15:8], u10_val_a[7:0]};
 
-			wire [3:0] h_lz = r_in_hf_lz[gl][gc];
-			(* keep = "true", dont_touch = "true" *) wire [7:0] hf_el_subn =
-				(h_lz == 4'd0) ? 8'd112 : (h_lz == 4'd1) ? 8'd111 :
-				(h_lz == 4'd2) ? 8'd110 : (h_lz == 4'd3) ? 8'd109 :
-				(h_lz == 4'd4) ? 8'd108 : (h_lz == 4'd5) ? 8'd107 :
-				(h_lz == 4'd6) ? 8'd106 : (h_lz == 4'd7) ? 8'd105 :
-				(h_lz == 4'd8) ? 8'd104 : 8'd103;
+			wire [3:0] h_lz0_oh   = r_in_hf_lz0_oh[gl][gc];
+			wire [3:0] h_lz1_oh   = r_in_hf_lz1_oh[gl][gc];
+			wire [7:0] hf_el_subn = r_in_hf_el_subn[gl][gc];
 			wire [9:0] hf_m_pad = {hf_in_a[8:0], 1'b0};
-			(* keep = "true", dont_touch = "true" *) wire [9:0] hf_m_s1 =
-				(h_lz[1:0] == 2'd0) ? hf_m_pad :
-				(h_lz[1:0] == 2'd1) ? {hf_m_pad[8:0], 1'b0} :
-				(h_lz[1:0] == 2'd2) ? {hf_m_pad[7:0], 2'b0} : {hf_m_pad[6:0], 3'b0};
-			(* keep = "true", dont_touch = "true" *) wire [9:0] hf_m_sh =
-				(h_lz[3:2] == 2'd0) ? hf_m_s1 :
-				(h_lz[3:2] == 2'd1) ? {hf_m_s1[5:0], 4'b0} :
-				(h_lz[3:2] == 2'd2) ? {hf_m_s1[1:0], 8'b0} : 10'd0;
+			wire [9:0] hf_m_s1 =
+				(h_lz0_oh[0] ? hf_m_pad : 10'd0) |
+				(h_lz0_oh[1] ? {hf_m_pad[8:0], 1'b0} : 10'd0) |
+				(h_lz0_oh[2] ? {hf_m_pad[7:0], 2'b0} : 10'd0) |
+				(h_lz0_oh[3] ? {hf_m_pad[6:0], 3'b0} : 10'd0);
+			wire [9:0] hf_m_sh =
+				(h_lz1_oh[0] ? hf_m_s1 : 10'd0) |
+				(h_lz1_oh[1] ? {hf_m_s1[5:0], 4'b0} : 10'd0) |
+				(h_lz1_oh[2] ? {hf_m_s1[1:0], 8'b0} : 10'd0);
+			wire unused_h_lz1_3 = h_lz1_oh[3];
 			wire [7:0] hf_exp_norm = {hf_in_b[14], ~hf_in_b[14], ~hf_in_b[14], ~hf_in_b[14], hf_in_b[13:10]};
-			(* keep = "true", dont_touch = "true" *) wire [7:0] hf_exp32 =
+			wire [7:0] hf_exp32 =
 				r_in_hf_eff[gl][gc]  ? 8'hFF :
 				r_in_hf_zero[gl][gc] ? 8'h00 :
 				r_in_hf_subn[gl][gc] ? hf_el_subn : hf_exp_norm;
-			(* keep = "true", dont_touch = "true" *) wire [9:0] hf_mant32;
+			wire [9:0] hf_mant32;
 			assign hf_mant32[8:0] = (r_in_hf_eff[gl][gc] || r_in_hf_zero[gl][gc]) ? 9'd0 :
 				(r_in_hf_subn[gl][gc] ? hf_m_sh[8:0] : hf_in_a[8:0]);
 			assign hf_mant32[9]   = r_in_hf_nan[gl][gc] ||
 				((!r_in_hf_eff[gl][gc] && !r_in_hf_zero[gl][gc]) &&
 				 (r_in_hf_subn[gl][gc] ? hf_m_sh[9] : hf_in_b[9]));
-			(* keep = "true", dont_touch = "true" *) wire hf_sign32 = (!r_in_hf_nan[gl][gc]) && hf_in_b[15];
+			wire hf_sign32 = (!r_in_hf_nan[gl][gc]) && hf_in_b[15];
 			wire [31:0] hf_val = {hf_sign32, hf_exp32, hf_mant32, 13'd0};
 
 			wire [31:0] v0_ch = (gc == 0) ? srgb_b0_val : (gc == 1) ? srgb_b1_val : (gc == 2) ? srgb_b0_val : u8_val;
@@ -586,12 +678,12 @@ module atg_rop_fblend (
 	 * STAGE 1A: Factor Input Mux Registration (Latency: 1 cycle)
 	 * Registers xs1 and xd1 so atg_rop_sub1 receives registered inputs directly
 	 * ========================================================================= */
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [31:0] r1a_xs      [0:3][0:3];
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [7:0]  r1a_xs_eb   [0:3][0:3];
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [31:0] r1a_xd      [0:3][0:3];
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [7:0]  r1a_xd_eb   [0:3][0:3];
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [31:0] r1a_xs_pipe [0:3][0:3];
-	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [31:0] r1a_xd_pipe [0:3][0:3];
+	(* keep = "true", dont_touch = "true" *) reg [31:0] r1a_xs      [0:3][0:3];
+	(* keep = "true", dont_touch = "true" *) reg [7:0]  r1a_xs_eb   [0:3][0:3];
+	(* keep = "true", dont_touch = "true" *) reg [31:0] r1a_xd      [0:3][0:3];
+	(* keep = "true", dont_touch = "true" *) reg [7:0]  r1a_xd_eb   [0:3][0:3];
+	(* keep = "true", dont_touch = "true" *) reg [31:0] r1a_xs_pipe [0:3][0:3];
+	(* keep = "true", dont_touch = "true" *) reg [31:0] r1a_xd_pipe [0:3][0:3];
 	reg [127:0] s1a [0:3];
 	reg [127:0] d1a [0:3];
 	(* equivalent_register_removal = "no", max_fanout = 16 *) reg [22:0] blend1a_l [0:3];
@@ -674,6 +766,8 @@ module atg_rop_fblend (
 	wire [31:0] sub_d_res [0:3][0:3];
 	reg v1b_pipe [0:4];
 `ifdef SYNTH_KINTEX7
+	wire sub1_clk = clk;
+`elsif SYNTH_KINTEX_ULTRASCALE
 	wire sub1_clk = clk;
 `else
 	reg sub1_icg_en;
@@ -1020,6 +1114,8 @@ module atg_rop_fblend (
 	reg v2c_pipe [0:4];
 `ifdef SYNTH_KINTEX7
 	wire mul_clk = clk;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire mul_clk = clk;
 `else
 	reg mul_icg_en;
 	always @(negedge clk or posedge rst_sync) begin
@@ -1102,6 +1198,8 @@ module atg_rop_fblend (
 	wire [31:0] pq_add_out [0:3][0:3];
 	reg v3a_pipe [0:3];
 `ifdef SYNTH_KINTEX7
+	wire add_clk = clk;
+`elsif SYNTH_KINTEX_ULTRASCALE
 	wire add_clk = clk;
 `else
 	reg add_icg_en;
@@ -1253,6 +1351,8 @@ module atg_rop_fblend (
 	wire [15:0] hf0_out [0:3], hf1_out [0:3], hf2_out [0:3], hf3_out [0:3];
 	reg v4_pipe [0:3];
 `ifdef SYNTH_KINTEX7
+	wire enc_clk = clk;
+`elsif SYNTH_KINTEX_ULTRASCALE
 	wire enc_clk = clk;
 `else
 	reg enc_icg_en;
@@ -1442,7 +1542,9 @@ module atg_rop_fblend (
 	assign o_raw   = r_raw;
 	assign o_keep  = r_keep;
 
-`ifndef SYNTH_KINTEX7
+`ifdef SYNTH_KINTEX7
+`elsif SYNTH_KINTEX_ULTRASCALE
+`else
 	assign pe_leaf = {2496{1'b1}};
 `endif
 
@@ -1539,15 +1641,135 @@ module atg_rop_fblend_fle (
 
 	assign has_nan = has_nan_out;
 	assign le      = le_out;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	/* Level 1: 3-bit magnitude slices for bits [26:0], 2-bit slice for [28:27], zero/NaN sub-blocks */
+	(* keep = "true" *) wire le0_0 = (~a[2] & b[2]) |
+		((a[2] ~^ b[2]) & ((~a[1] & b[1]) | ((a[1] ~^ b[1]) & (~a[0] | b[0]))));
+	(* keep = "true" *) wire ge0_0 = (a[2] & ~b[2]) |
+		((a[2] ~^ b[2]) & ((a[1] & ~b[1]) | ((a[1] ~^ b[1]) & (a[0] | ~b[0]))));
+
+	(* keep = "true" *) wire [8:1] lt0, gt0, eq0;
+	genvar i;
+	generate
+	for (i = 1; i < 9; i = i + 1) begin : g_s0
+		wire [2:0] sa = a[3 * i +: 3];
+		wire [2:0] sb = b[3 * i +: 3];
+		assign eq0[i] = (sa == sb);
+		assign lt0[i] = (~sa[2] & sb[2]) |
+			((sa[2] ~^ sb[2]) & ((~sa[1] & sb[1]) | ((sa[1] ~^ sb[1]) & (~sa[0] & sb[0]))));
+		assign gt0[i] = (sa[2] & ~sb[2]) |
+			((sa[2] ~^ sb[2]) & ((sa[1] & ~sb[1]) | ((sa[1] ~^ sb[1]) & (sa[0] & ~sb[0]))));
+	end
+	endgenerate
+
+	(* keep = "true" *) wire eq_top_lo = (a[28:27] == b[28:27]);
+	(* keep = "true" *) wire lt_top_lo = (~a[28] & b[28]) | ((a[28] ~^ b[28]) & (~a[27] & b[27]));
+	(* keep = "true" *) wire gt_top_lo = (a[28] & ~b[28]) | ((a[28] ~^ b[28]) & (a[27] & ~b[27]));
+
+	(* keep = "true" *) wire [3:0] a_mnz, b_mnz;
+	assign a_mnz[0] = (a[5:0]   != 6'd0);
+	assign a_mnz[1] = (a[11:6]  != 6'd0);
+	assign a_mnz[2] = (a[17:12] != 6'd0);
+	assign a_mnz[3] = (a[22:18] != 5'd0);
+	assign b_mnz[0] = (b[5:0]   != 6'd0);
+	assign b_mnz[1] = (b[11:6]  != 6'd0);
+	assign b_mnz[2] = (b[17:12] != 6'd0);
+	assign b_mnz[3] = (b[22:18] != 5'd0);
+
+	(* keep = "true" *) wire a_elo = &a[28:23];
+	(* keep = "true" *) wire b_elo = &b[28:23];
+	(* keep = "true" *) wire a_ez0 = (a[26:23] == 4'd0);
+	(* keep = "true" *) wire a_ez1 = (a[30:27] == 4'd0);
+	(* keep = "true" *) wire b_ez0 = (b[26:23] == 4'd0);
+	(* keep = "true" *) wire b_ez1 = (b[30:27] == 4'd0);
+
+	/* Level 2: 9-bit group combines for [26:0], 4-bit top combine for [30:27], zero & mantissa flags */
+	(* keep = "true" *) wire le1_0 = lt0[2] | (eq0[2] & (lt0[1] | (eq0[1] & le0_0)));
+	(* keep = "true" *) wire ge1_0 = gt0[2] | (eq0[2] & (gt0[1] | (eq0[1] & ge0_0)));
+
+	(* keep = "true" *) wire eq1_1 = eq0[5] & eq0[4] & eq0[3];
+	(* keep = "true" *) wire lt1_1 = lt0[5] | (eq0[5] & (lt0[4] | (eq0[4] & lt0[3])));
+	(* keep = "true" *) wire gt1_1 = gt0[5] | (eq0[5] & (gt0[4] | (eq0[4] & gt0[3])));
+
+	(* keep = "true" *) wire eq1_2 = eq0[8] & eq0[7] & eq0[6];
+	(* keep = "true" *) wire lt1_2 = lt0[8] | (eq0[8] & (lt0[7] | (eq0[7] & lt0[6])));
+	(* keep = "true" *) wire gt1_2 = gt0[8] | (eq0[8] & (gt0[7] | (eq0[7] & gt0[6])));
+
+	(* keep = "true" *) wire eq_top = (a[30:29] == b[30:29]) && eq_top_lo;
+	(* keep = "true" *) wire lt_top = (~a[30] & b[30]) |
+		((a[30] ~^ b[30]) & ((~a[29] & b[29]) | ((a[29] ~^ b[29]) & lt_top_lo)));
+	(* keep = "true" *) wire gt_top = (a[30] & ~b[30]) |
+		((a[30] ~^ b[30]) & ((a[29] & ~b[29]) | ((a[29] ~^ b[29]) & gt_top_lo)));
+
+	(* keep = "true" *) wire a_m_any = |a_mnz;
+	(* keep = "true" *) wire b_m_any = |b_mnz;
+	(* keep = "true" *) wire a_is_zero = a_ez1 && a_ez0 && !(|a_mnz);
+	(* keep = "true" *) wire b_is_zero = b_ez1 && b_ez0 && !(|b_mnz);
+
+	/* Level 3: 27-bit signed-gated compares, top decision, and NaN flags (each <= 6 inputs) */
+	(* keep = "true" *) wire pos_le_26 = (!a[31]) && (lt1_2 | (eq1_2 & (lt1_1 | (eq1_1 & le1_0))));
+	(* keep = "true" *) wire neg_ge_26 = a[31]    && (gt1_2 | (eq1_2 & (gt1_1 | (eq1_1 & ge1_0))));
+	(* keep = "true" *) wire same_sign_eq_top = (a[31] == b[31]) && eq_top;
+	(* keep = "true" *) wire force_le_1 = (a[31] && !b[31]) ||
+		(!a[31] && b[31] && a_is_zero && b_is_zero) ||
+		(!a[31] && !b[31] && lt_top) ||
+		(a[31] && b[31] && gt_top);
+	(* keep = "true" *) wire a_nan = a[30] && a[29] && a_elo && a_m_any;
+	(* keep = "true" *) wire b_nan = b[30] && b[29] && b_elo && b_m_any;
+
+	/* Level 4: Final 6-input LUT6 for le and 2-input LUT2 for has_nan */
+	(* keep = "true", dont_touch = "true" *) wire has_nan_out = a_nan || b_nan;
+	(* keep = "true", dont_touch = "true" *) wire le_out = (!a_nan) && (!b_nan) &&
+		(force_le_1 || (same_sign_eq_top && (pos_le_26 || neg_ge_26)));
+
+	assign has_nan = has_nan_out;
+	assign le      = le_out;
 `else
-	wire a_nan = (&a[30:23]) && (a[22:0] != 23'd0);
-	wire b_nan = (&b[30:23]) && (b[22:0] != 23'd0);
-	wire both_zero = (a[30:0] == 31'd0) && (b[30:0] == 31'd0);
-	wire ka_le_kb = (a[30:0] <= b[30:0]);
-	wire ka_ge_kb = (a[30:0] >= b[30:0]);
+	/* Single signed-magnitude 2->4->8->16->32 comparator (~7 cmos3) */
+	wire [30:0] ka = a[30:0] ^ {31{a[31]}};
+	wire [30:0] kb = b[30:0] ^ {31{b[31]}};
+	wire [30:0] gt_g = ka & (~kb);
+	wire [30:0] gt_p = ka | (~kb);
+	wire [31:0] g0 = {1'b0, gt_g};
+	wire [31:0] p0 = {1'b1, gt_p};
+	wire [15:0] g2, p2;
+	wire [7:0]  g4, p4;
+	wire [3:0]  g8, p8;
+	genvar gi_f;
+	generate
+	for (gi_f = 0; gi_f < 16; gi_f = gi_f + 1) begin : g_f2
+		assign g2[gi_f] = g0[2*gi_f+1] | (p0[2*gi_f+1] & g0[2*gi_f]);
+		assign p2[gi_f] = p0[2*gi_f+1] & p0[2*gi_f];
+	end
+	for (gi_f = 0; gi_f < 8; gi_f = gi_f + 1) begin : g_f4
+		assign g4[gi_f] = g2[2*gi_f+1] | (p2[2*gi_f+1] & g2[2*gi_f]);
+		assign p4[gi_f] = p2[2*gi_f+1] & p2[2*gi_f];
+	end
+	for (gi_f = 0; gi_f < 4; gi_f = gi_f + 1) begin : g_f8
+		assign g8[gi_f] = g4[2*gi_f+1] | (p4[2*gi_f+1] & g4[2*gi_f]);
+		assign p8[gi_f] = p4[2*gi_f+1] & p4[2*gi_f];
+	end
+	endgenerate
+	wire g16_hi = g8[3] | (p8[3] & g8[2]);
+	wire p16_hi = p8[3] & p8[2];
+	wire g16_lo = g8[1] | (p8[1] & g8[0]);
+	wire gt_signed_mag = g16_hi | (p16_hi & g16_lo);
+
+	wire a_e_ff = (&a[30:27]) & (&a[26:23]);
+	wire b_e_ff = (&b[30:27]) & (&b[26:23]);
+	wire a_mnz = (|a[5:0]) | (|a[11:6]) | (|a[17:12]) | (|a[22:18]);
+	wire b_mnz = (|b[5:0]) | (|b[11:6]) | (|b[17:12]) | (|b[22:18]);
+	wire a_nan = a_e_ff & a_mnz;
+	wire b_nan = b_e_ff & b_mnz;
+	wire a_nz = a_mnz | (|a[30:27]) | (|a[26:23]);
+	wire b_nz = b_mnz | (|b[30:27]) | (|b[26:23]);
+	wire both_zero = !a_nz && !b_nz;
+
 	assign has_nan = a_nan || b_nan;
-	assign le = !a_nan && !b_nan &&
-		(a[31] ? (b[31] ? ka_ge_kb : 1'b1) : (b[31] ? both_zero : ka_le_kb));
+	assign le = !a_nan && !b_nan && (
+		(a[31] != b[31]) ? (a[31] | both_zero) : !gt_signed_mag
+	);
+	wire unused_fle_p = p8[0] & p8[1] & g16_lo;
 `endif
 endmodule
 
@@ -1734,8 +1956,21 @@ module atg_rop_f2h #(
 
 	(* max_fanout = 16 *) reg [15:0] r3_h;
 
-	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n) begin
+`ifdef SYNTH_KINTEX7
+	wire rst_hf_a, rst_hf_b;
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b01)) u_rhfa (.I0(rst_n), .O(rst_hf_a));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b01)) u_rhfb (.I0(rst_n), .O(rst_hf_b));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire rst_hf_a, rst_hf_b;
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b01)) u_rhfa (.I0(rst_n), .O(rst_hf_a));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'b01)) u_rhfb (.I0(rst_n), .O(rst_hf_b));
+`else
+	wire rst_hf_a = !rst_n;
+	wire rst_hf_b = !rst_n;
+`endif
+
+	always @(posedge clk or posedge rst_hf_a) begin
+		if (rst_hf_a) begin
 			r1_sign      <= 1'b0;
 			r1_is_nan    <= 1'b0;
 			r1_is_inf    <= 1'b0;
@@ -1751,7 +1986,6 @@ module atg_rop_f2h #(
 			r2_is_142    <= 1'b0;
 			r2_is_norm   <= 1'b0;
 			r2_is_denorm <= 1'b0;
-			r3_h         <= 16'd0;
 		end else begin
 			if (en_s1[0]) begin
 				r1_sign      <= f[31];
@@ -1772,6 +2006,13 @@ module atg_rop_f2h #(
 				r2_is_norm   <= r1_is_norm;
 				r2_is_denorm <= r1_is_denorm;
 			end
+		end
+	end
+
+	always @(posedge clk or posedge rst_hf_b) begin
+		if (rst_hf_b) begin
+			r3_h <= 16'd0;
+		end else begin
 			if (en_s3)
 				r3_h <= h_w;
 		end

@@ -1,15 +1,17 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
  */
 
 /*
- * ghci_frame.h: LEGACY pre-1.0 / CP-firmware-internal class V packet and
- * gpu-op envelope definitions. Kept only for internal CP firmware and
- * pre-overhaul test harnesses; NOT part of the public GHCI 1.0 contract
- * (see ghci.md §7 and ghci_cmd.h).
+ * ghci_frame.h: the class V packets of GHCI 1.0 (docs/ghci.md section 7,
+ * draft): the GHCI gpu-ops, the GHCI_FRAME packet that points at a frame
+ * of commands in a staging buffer, and the result records the firmware
+ * writes.  The Vulkan gpu-op numbers are those of zedBSD's GPU command
+ * protocol (include/uapi/gpu-op.h of zedBSD); only the ones the firmware
+ * decodes are named here.  The GHCI numbers from 0x10100 are a draft.
  */
 
 #ifndef GHCI_FRAME_H
@@ -139,7 +141,7 @@ struct ghci_init_ack {
 #define GHCI_DIAG_SUM_FIRST 4u
 #define GHCI_DIAG_SUM_LAST 8u
 
-/* Legacy pre-1.0 gpu-ops decoded by the ATG1 CP firmware. */
+/* The Vulkan gpu-ops the Amaterrace firmware decodes (zedBSD gpu-op.h). */
 #define GHCI_VK_DESTROY_DEVICE 12u
 #define GHCI_VK_QUEUE_SUBMIT 18u
 #define GHCI_VK_FREE_MEMORY 22u

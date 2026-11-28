@@ -123,6 +123,8 @@ module atg_mc_arb_tb;
 	integer cycle_cnt = 0;
 `ifdef SYNTH_KINTEX7
 	localparam integer EXP_REQ_LAT = 1;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	localparam integer EXP_REQ_LAT = 2;
 `else
 	localparam integer EXP_REQ_LAT = 2;
 `endif

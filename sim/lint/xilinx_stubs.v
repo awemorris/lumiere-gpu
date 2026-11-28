@@ -318,6 +318,22 @@ module ODDR #(
 	assign Q = C ? D1 : D2;
 endmodule
 
+module ODDRE1 #(
+	parameter [0:0] IS_C_INVERTED = 1'b0,
+	parameter [0:0] IS_D1_INVERTED = 1'b0,
+	parameter [0:0] IS_D2_INVERTED = 1'b0,
+	parameter SIM_DEVICE = "ULTRASCALE",
+	parameter [0:0] SRVAL = 1'b0
+) (
+	output wire Q,
+	input wire C,
+	input wire D1,
+	input wire D2,
+	input wire SR
+);
+	assign Q = C ? D1 : D2;
+endmodule
+
 module DSP48E1 #(
 	parameter integer ACASCREG = 1,
 	parameter integer ADREG = 1,
@@ -1671,6 +1687,985 @@ module atg_kc705_ddr3 (
 	assign s_axi_rresp = 2'd0;
 	assign s_axi_rlast = 1'b0;
 	assign s_axi_rvalid = 1'b0;
+endmodule
+
+/* ZCU106 IP stubs (boards/zcu106/ip.tcl) */
+module atg_zcu106_ps (
+	output wire pl_clk0,
+	output wire pl_resetn0,
+	input wire [0:0] pl_ps_irq0,
+	input wire maxihpm0_fpd_aclk,
+	output wire [15:0] maxigp0_awid,
+	output wire [39:0] maxigp0_awaddr,
+	output wire [7:0] maxigp0_awlen,
+	output wire [2:0] maxigp0_awsize,
+	output wire [1:0] maxigp0_awburst,
+	output wire maxigp0_awlock,
+	output wire [3:0] maxigp0_awcache,
+	output wire [2:0] maxigp0_awprot,
+	output wire maxigp0_awvalid,
+	output wire [15:0] maxigp0_awuser,
+	input wire maxigp0_awready,
+	output wire [63:0] maxigp0_wdata,
+	output wire [7:0] maxigp0_wstrb,
+	output wire maxigp0_wlast,
+	output wire maxigp0_wvalid,
+	input wire maxigp0_wready,
+	input wire [15:0] maxigp0_bid,
+	input wire [1:0] maxigp0_bresp,
+	input wire maxigp0_bvalid,
+	output wire maxigp0_bready,
+	output wire [15:0] maxigp0_arid,
+	output wire [39:0] maxigp0_araddr,
+	output wire [7:0] maxigp0_arlen,
+	output wire [2:0] maxigp0_arsize,
+	output wire [1:0] maxigp0_arburst,
+	output wire maxigp0_arlock,
+	output wire [3:0] maxigp0_arcache,
+	output wire [2:0] maxigp0_arprot,
+	output wire maxigp0_arvalid,
+	output wire [15:0] maxigp0_aruser,
+	input wire maxigp0_arready,
+	input wire [15:0] maxigp0_rid,
+	input wire [63:0] maxigp0_rdata,
+	input wire [1:0] maxigp0_rresp,
+	input wire maxigp0_rlast,
+	input wire maxigp0_rvalid,
+	output wire maxigp0_rready,
+	output wire [3:0] maxigp0_awqos,
+	output wire [3:0] maxigp0_arqos,
+	input wire saxihp0_fpd_aclk,
+	input wire saxigp2_aruser,
+	input wire saxigp2_awuser,
+	input wire [5:0] saxigp2_awid,
+	input wire [48:0] saxigp2_awaddr,
+	input wire [7:0] saxigp2_awlen,
+	input wire [2:0] saxigp2_awsize,
+	input wire [1:0] saxigp2_awburst,
+	input wire saxigp2_awlock,
+	input wire [3:0] saxigp2_awcache,
+	input wire [2:0] saxigp2_awprot,
+	input wire saxigp2_awvalid,
+	output wire saxigp2_awready,
+	input wire [127:0] saxigp2_wdata,
+	input wire [15:0] saxigp2_wstrb,
+	input wire saxigp2_wlast,
+	input wire saxigp2_wvalid,
+	output wire saxigp2_wready,
+	output wire [5:0] saxigp2_bid,
+	output wire [1:0] saxigp2_bresp,
+	output wire saxigp2_bvalid,
+	input wire saxigp2_bready,
+	input wire [5:0] saxigp2_arid,
+	input wire [48:0] saxigp2_araddr,
+	input wire [7:0] saxigp2_arlen,
+	input wire [2:0] saxigp2_arsize,
+	input wire [1:0] saxigp2_arburst,
+	input wire saxigp2_arlock,
+	input wire [3:0] saxigp2_arcache,
+	input wire [2:0] saxigp2_arprot,
+	input wire saxigp2_arvalid,
+	output wire saxigp2_arready,
+	output wire [5:0] saxigp2_rid,
+	output wire [127:0] saxigp2_rdata,
+	output wire [1:0] saxigp2_rresp,
+	output wire saxigp2_rlast,
+	output wire saxigp2_rvalid,
+	input wire saxigp2_rready,
+	input wire [3:0] saxigp2_awqos,
+	input wire [3:0] saxigp2_arqos
+);
+	assign pl_clk0 = 1'b0;
+	assign pl_resetn0 = 1'b0;
+	assign maxigp0_awid = 0;
+	assign maxigp0_awaddr = 0;
+	assign maxigp0_awlen = 0;
+	assign maxigp0_awsize = 0;
+	assign maxigp0_awburst = 0;
+	assign maxigp0_awlock = 0;
+	assign maxigp0_awcache = 0;
+	assign maxigp0_awprot = 0;
+	assign maxigp0_awvalid = 0;
+	assign maxigp0_awuser = 0;
+	assign maxigp0_wdata = 0;
+	assign maxigp0_wstrb = 0;
+	assign maxigp0_wlast = 0;
+	assign maxigp0_wvalid = 0;
+	assign maxigp0_bready = 0;
+	assign maxigp0_arid = 0;
+	assign maxigp0_araddr = 0;
+	assign maxigp0_arlen = 0;
+	assign maxigp0_arsize = 0;
+	assign maxigp0_arburst = 0;
+	assign maxigp0_arlock = 0;
+	assign maxigp0_arcache = 0;
+	assign maxigp0_arprot = 0;
+	assign maxigp0_arvalid = 0;
+	assign maxigp0_aruser = 0;
+	assign maxigp0_rready = 0;
+	assign maxigp0_awqos = 0;
+	assign maxigp0_arqos = 0;
+	assign saxigp2_awready = 0;
+	assign saxigp2_wready = 0;
+	assign saxigp2_bid = 0;
+	assign saxigp2_bresp = 0;
+	assign saxigp2_bvalid = 0;
+	assign saxigp2_arready = 0;
+	assign saxigp2_rid = 0;
+	assign saxigp2_rdata = 0;
+	assign saxigp2_rresp = 0;
+	assign saxigp2_rlast = 0;
+	assign saxigp2_rvalid = 0;
+endmodule
+
+module atg_zcu106_axi_cc (
+	input wire s_axi_aclk,
+	input wire s_axi_aresetn,
+	input wire [0:0] s_axi_awid,
+	input wire [48:0] s_axi_awaddr,
+	input wire [7:0] s_axi_awlen,
+	input wire [2:0] s_axi_awsize,
+	input wire [1:0] s_axi_awburst,
+	input wire [0:0] s_axi_awlock,
+	input wire [3:0] s_axi_awcache,
+	input wire [2:0] s_axi_awprot,
+	input wire [3:0] s_axi_awregion,
+	input wire [3:0] s_axi_awqos,
+	input wire s_axi_awvalid,
+	output wire s_axi_awready,
+	input wire [127:0] s_axi_wdata,
+	input wire [15:0] s_axi_wstrb,
+	input wire s_axi_wlast,
+	input wire s_axi_wvalid,
+	output wire s_axi_wready,
+	output wire [0:0] s_axi_bid,
+	output wire [1:0] s_axi_bresp,
+	output wire s_axi_bvalid,
+	input wire s_axi_bready,
+	input wire [0:0] s_axi_arid,
+	input wire [48:0] s_axi_araddr,
+	input wire [7:0] s_axi_arlen,
+	input wire [2:0] s_axi_arsize,
+	input wire [1:0] s_axi_arburst,
+	input wire [0:0] s_axi_arlock,
+	input wire [3:0] s_axi_arcache,
+	input wire [2:0] s_axi_arprot,
+	input wire [3:0] s_axi_arregion,
+	input wire [3:0] s_axi_arqos,
+	input wire s_axi_arvalid,
+	output wire s_axi_arready,
+	output wire [0:0] s_axi_rid,
+	output wire [127:0] s_axi_rdata,
+	output wire [1:0] s_axi_rresp,
+	output wire s_axi_rlast,
+	output wire s_axi_rvalid,
+	input wire s_axi_rready,
+	input wire m_axi_aclk,
+	input wire m_axi_aresetn,
+	output wire [0:0] m_axi_awid,
+	output wire [48:0] m_axi_awaddr,
+	output wire [7:0] m_axi_awlen,
+	output wire [2:0] m_axi_awsize,
+	output wire [1:0] m_axi_awburst,
+	output wire [0:0] m_axi_awlock,
+	output wire [3:0] m_axi_awcache,
+	output wire [2:0] m_axi_awprot,
+	output wire [3:0] m_axi_awregion,
+	output wire [3:0] m_axi_awqos,
+	output wire m_axi_awvalid,
+	input wire m_axi_awready,
+	output wire [127:0] m_axi_wdata,
+	output wire [15:0] m_axi_wstrb,
+	output wire m_axi_wlast,
+	output wire m_axi_wvalid,
+	input wire m_axi_wready,
+	input wire [0:0] m_axi_bid,
+	input wire [1:0] m_axi_bresp,
+	input wire m_axi_bvalid,
+	output wire m_axi_bready,
+	output wire [0:0] m_axi_arid,
+	output wire [48:0] m_axi_araddr,
+	output wire [7:0] m_axi_arlen,
+	output wire [2:0] m_axi_arsize,
+	output wire [1:0] m_axi_arburst,
+	output wire [0:0] m_axi_arlock,
+	output wire [3:0] m_axi_arcache,
+	output wire [2:0] m_axi_arprot,
+	output wire [3:0] m_axi_arregion,
+	output wire [3:0] m_axi_arqos,
+	output wire m_axi_arvalid,
+	input wire m_axi_arready,
+	input wire [0:0] m_axi_rid,
+	input wire [127:0] m_axi_rdata,
+	input wire [1:0] m_axi_rresp,
+	input wire m_axi_rlast,
+	input wire m_axi_rvalid,
+	output wire m_axi_rready
+);
+	assign s_axi_awready = 0;
+	assign s_axi_wready = 0;
+	assign s_axi_bid = 0;
+	assign s_axi_bresp = 0;
+	assign s_axi_bvalid = 0;
+	assign s_axi_arready = 0;
+	assign s_axi_rid = 0;
+	assign s_axi_rdata = 0;
+	assign s_axi_rresp = 0;
+	assign s_axi_rlast = 0;
+	assign s_axi_rvalid = 0;
+	assign m_axi_awid = 0;
+	assign m_axi_awaddr = 0;
+	assign m_axi_awlen = 0;
+	assign m_axi_awsize = 0;
+	assign m_axi_awburst = 0;
+	assign m_axi_awlock = 0;
+	assign m_axi_awcache = 0;
+	assign m_axi_awprot = 0;
+	assign m_axi_awregion = 0;
+	assign m_axi_awqos = 0;
+	assign m_axi_awvalid = 0;
+	assign m_axi_wdata = 0;
+	assign m_axi_wstrb = 0;
+	assign m_axi_wlast = 0;
+	assign m_axi_wvalid = 0;
+	assign m_axi_bready = 0;
+	assign m_axi_arid = 0;
+	assign m_axi_araddr = 0;
+	assign m_axi_arlen = 0;
+	assign m_axi_arsize = 0;
+	assign m_axi_arburst = 0;
+	assign m_axi_arlock = 0;
+	assign m_axi_arcache = 0;
+	assign m_axi_arprot = 0;
+	assign m_axi_arregion = 0;
+	assign m_axi_arqos = 0;
+	assign m_axi_arvalid = 0;
+	assign m_axi_rready = 0;
+endmodule
+
+/* XCKU5P IP stubs (boards/xcku5p/ip.tcl) */
+module IBUFDS_GTE4 #(
+	parameter [0:0] REFCLK_EN_TX_PATH = 1'b0,
+	parameter [1:0] REFCLK_HROW_CK_SEL = 2'b00,
+	parameter [1:0] REFCLK_ICNTL_RX = 2'b00
+) (
+	output wire O,
+	output wire ODIV2,
+	input wire CEB,
+	input wire I,
+	input wire IB
+);
+	assign O = CEB ? 1'b0 : (I & ~IB);
+	assign ODIV2 = O;
+endmodule
+
+module atg_xcku5p_pcie_ip (
+	input wire sys_clk,
+	input wire sys_clk_gt,
+	input wire sys_rst_n,
+	output wire [5:0] cfg_ltssm_state,
+	output wire user_lnk_up,
+	output wire [3:0] pci_exp_txp,
+	output wire [3:0] pci_exp_txn,
+	input wire [3:0] pci_exp_rxp,
+	input wire [3:0] pci_exp_rxn,
+	output wire axi_aclk,
+	output wire axi_aresetn,
+	output wire axi_ctl_aresetn,
+	input wire [0:0] usr_irq_req,
+	output wire [0:0] usr_irq_ack,
+	output wire msi_enable,
+	output wire [2:0] msi_vector_width,
+	input wire [3:0] s_axib_awid,
+	input wire [63:0] s_axib_awaddr,
+	input wire [3:0] s_axib_awregion,
+	input wire [7:0] s_axib_awlen,
+	input wire [2:0] s_axib_awsize,
+	input wire [1:0] s_axib_awburst,
+	input wire s_axib_awvalid,
+	output wire s_axib_awready,
+	input wire [127:0] s_axib_wdata,
+	input wire [15:0] s_axib_wstrb,
+	input wire s_axib_wlast,
+	input wire s_axib_wvalid,
+	output wire s_axib_wready,
+	output wire [3:0] s_axib_bid,
+	output wire [1:0] s_axib_bresp,
+	output wire s_axib_bvalid,
+	input wire s_axib_bready,
+	input wire [3:0] s_axib_arid,
+	input wire [63:0] s_axib_araddr,
+	input wire [3:0] s_axib_arregion,
+	input wire [7:0] s_axib_arlen,
+	input wire [2:0] s_axib_arsize,
+	input wire [1:0] s_axib_arburst,
+	input wire s_axib_arvalid,
+	output wire s_axib_arready,
+	output wire [3:0] s_axib_rid,
+	output wire [127:0] s_axib_rdata,
+	output wire [1:0] s_axib_rresp,
+	output wire s_axib_rlast,
+	output wire s_axib_rvalid,
+	input wire s_axib_rready,
+	output wire [3:0] m_axib_awid,
+	output wire [63:0] m_axib_awaddr,
+	output wire [7:0] m_axib_awlen,
+	output wire [2:0] m_axib_awsize,
+	output wire [1:0] m_axib_awburst,
+	output wire [2:0] m_axib_awprot,
+	output wire m_axib_awvalid,
+	input wire m_axib_awready,
+	output wire m_axib_awlock,
+	output wire [3:0] m_axib_awcache,
+	output wire [127:0] m_axib_wdata,
+	output wire [15:0] m_axib_wstrb,
+	output wire m_axib_wlast,
+	output wire m_axib_wvalid,
+	input wire m_axib_wready,
+	input wire [3:0] m_axib_bid,
+	input wire [1:0] m_axib_bresp,
+	input wire m_axib_bvalid,
+	output wire m_axib_bready,
+	output wire [3:0] m_axib_arid,
+	output wire [63:0] m_axib_araddr,
+	output wire [7:0] m_axib_arlen,
+	output wire [2:0] m_axib_arsize,
+	output wire [1:0] m_axib_arburst,
+	output wire [2:0] m_axib_arprot,
+	output wire m_axib_arvalid,
+	input wire m_axib_arready,
+	output wire m_axib_arlock,
+	output wire [3:0] m_axib_arcache,
+	input wire [3:0] m_axib_rid,
+	input wire [127:0] m_axib_rdata,
+	input wire [1:0] m_axib_rresp,
+	input wire m_axib_rlast,
+	input wire m_axib_rvalid,
+	output wire m_axib_rready,
+	input wire [31:0] s_axil_awaddr,
+	input wire [2:0] s_axil_awprot,
+	input wire s_axil_awvalid,
+	output wire s_axil_awready,
+	input wire [31:0] s_axil_wdata,
+	input wire [3:0] s_axil_wstrb,
+	input wire s_axil_wvalid,
+	output wire s_axil_wready,
+	output wire s_axil_bvalid,
+	output wire [1:0] s_axil_bresp,
+	input wire s_axil_bready,
+	input wire [31:0] s_axil_araddr,
+	input wire [2:0] s_axil_arprot,
+	input wire s_axil_arvalid,
+	output wire s_axil_arready,
+	output wire [31:0] s_axil_rdata,
+	output wire [1:0] s_axil_rresp,
+	output wire s_axil_rvalid,
+	input wire s_axil_rready,
+	output wire interrupt_out
+);
+	assign cfg_ltssm_state = 0;
+	assign user_lnk_up = 0;
+	assign pci_exp_txp = 0;
+	assign pci_exp_txn = 0;
+	assign axi_aclk = 0;
+	assign axi_aresetn = 0;
+	assign axi_ctl_aresetn = 0;
+	assign usr_irq_ack = 0;
+	assign msi_enable = 0;
+	assign msi_vector_width = 0;
+	assign s_axil_awready = 0;
+	assign s_axil_wready = 0;
+	assign s_axil_bvalid = 0;
+	assign s_axil_bresp = 0;
+	assign s_axil_arready = 0;
+	assign s_axil_rdata = 0;
+	assign s_axil_rresp = 0;
+	assign s_axil_rvalid = 0;
+	assign interrupt_out = 0;
+	assign s_axib_awready = 0;
+	assign s_axib_wready = 0;
+	assign s_axib_bid = 0;
+	assign s_axib_bresp = 0;
+	assign s_axib_bvalid = 0;
+	assign s_axib_arready = 0;
+	assign s_axib_rid = 0;
+	assign s_axib_rdata = 0;
+	assign s_axib_rresp = 0;
+	assign s_axib_rlast = 0;
+	assign s_axib_rvalid = 0;
+	assign m_axib_awid = 0;
+	assign m_axib_awaddr = 0;
+	assign m_axib_awlen = 0;
+	assign m_axib_awsize = 0;
+	assign m_axib_awburst = 0;
+	assign m_axib_awprot = 0;
+	assign m_axib_awvalid = 0;
+	assign m_axib_awlock = 0;
+	assign m_axib_awcache = 0;
+	assign m_axib_wdata = 0;
+	assign m_axib_wstrb = 0;
+	assign m_axib_wlast = 0;
+	assign m_axib_wvalid = 0;
+	assign m_axib_bready = 0;
+	assign m_axib_arid = 0;
+	assign m_axib_araddr = 0;
+	assign m_axib_arlen = 0;
+	assign m_axib_arsize = 0;
+	assign m_axib_arburst = 0;
+	assign m_axib_arprot = 0;
+	assign m_axib_arvalid = 0;
+	assign m_axib_arlock = 0;
+	assign m_axib_arcache = 0;
+	assign m_axib_rready = 0;
+endmodule
+
+module atg_xcku5p_bar_xbar (
+	input wire aclk,
+	input wire aresetn,
+	input wire [3:0] s_axi_awid,
+	input wire [31:0] s_axi_awaddr,
+	input wire [7:0] s_axi_awlen,
+	input wire [2:0] s_axi_awsize,
+	input wire [1:0] s_axi_awburst,
+	input wire s_axi_awlock,
+	input wire [3:0] s_axi_awcache,
+	input wire [2:0] s_axi_awprot,
+	input wire [3:0] s_axi_awqos,
+	input wire s_axi_awvalid,
+	output wire s_axi_awready,
+	input wire [127:0] s_axi_wdata,
+	input wire [15:0] s_axi_wstrb,
+	input wire s_axi_wlast,
+	input wire s_axi_wvalid,
+	output wire s_axi_wready,
+	output wire [3:0] s_axi_bid,
+	output wire [1:0] s_axi_bresp,
+	output wire s_axi_bvalid,
+	input wire s_axi_bready,
+	input wire [3:0] s_axi_arid,
+	input wire [31:0] s_axi_araddr,
+	input wire [7:0] s_axi_arlen,
+	input wire [2:0] s_axi_arsize,
+	input wire [1:0] s_axi_arburst,
+	input wire s_axi_arlock,
+	input wire [3:0] s_axi_arcache,
+	input wire [2:0] s_axi_arprot,
+	input wire [3:0] s_axi_arqos,
+	input wire s_axi_arvalid,
+	output wire s_axi_arready,
+	output wire [3:0] s_axi_rid,
+	output wire [127:0] s_axi_rdata,
+	output wire [1:0] s_axi_rresp,
+	output wire s_axi_rlast,
+	output wire s_axi_rvalid,
+	input wire s_axi_rready,
+	output wire [7:0] m_axi_awid,
+	output wire [63:0] m_axi_awaddr,
+	output wire [15:0] m_axi_awlen,
+	output wire [5:0] m_axi_awsize,
+	output wire [3:0] m_axi_awburst,
+	output wire [1:0] m_axi_awlock,
+	output wire [7:0] m_axi_awcache,
+	output wire [5:0] m_axi_awprot,
+	output wire [7:0] m_axi_awregion,
+	output wire [7:0] m_axi_awqos,
+	output wire [1:0] m_axi_awvalid,
+	input wire [1:0] m_axi_awready,
+	output wire [255:0] m_axi_wdata,
+	output wire [31:0] m_axi_wstrb,
+	output wire [1:0] m_axi_wlast,
+	output wire [1:0] m_axi_wvalid,
+	input wire [1:0] m_axi_wready,
+	input wire [7:0] m_axi_bid,
+	input wire [3:0] m_axi_bresp,
+	input wire [1:0] m_axi_bvalid,
+	output wire [1:0] m_axi_bready,
+	output wire [7:0] m_axi_arid,
+	output wire [63:0] m_axi_araddr,
+	output wire [15:0] m_axi_arlen,
+	output wire [5:0] m_axi_arsize,
+	output wire [3:0] m_axi_arburst,
+	output wire [1:0] m_axi_arlock,
+	output wire [7:0] m_axi_arcache,
+	output wire [5:0] m_axi_arprot,
+	output wire [7:0] m_axi_arregion,
+	output wire [7:0] m_axi_arqos,
+	output wire [1:0] m_axi_arvalid,
+	input wire [1:0] m_axi_arready,
+	input wire [7:0] m_axi_rid,
+	input wire [255:0] m_axi_rdata,
+	input wire [3:0] m_axi_rresp,
+	input wire [1:0] m_axi_rlast,
+	input wire [1:0] m_axi_rvalid,
+	output wire [1:0] m_axi_rready
+);
+	assign s_axi_awready = 0;
+	assign s_axi_wready = 0;
+	assign s_axi_bid = 0;
+	assign s_axi_bresp = 0;
+	assign s_axi_bvalid = 0;
+	assign s_axi_arready = 0;
+	assign s_axi_rid = 0;
+	assign s_axi_rdata = 0;
+	assign s_axi_rresp = 0;
+	assign s_axi_rlast = 0;
+	assign s_axi_rvalid = 0;
+	assign m_axi_awid = 0;
+	assign m_axi_awaddr = 0;
+	assign m_axi_awlen = 0;
+	assign m_axi_awsize = 0;
+	assign m_axi_awburst = 0;
+	assign m_axi_awlock = 0;
+	assign m_axi_awcache = 0;
+	assign m_axi_awprot = 0;
+	assign m_axi_awregion = 0;
+	assign m_axi_awqos = 0;
+	assign m_axi_awvalid = 0;
+	assign m_axi_wdata = 0;
+	assign m_axi_wstrb = 0;
+	assign m_axi_wlast = 0;
+	assign m_axi_wvalid = 0;
+	assign m_axi_bready = 0;
+	assign m_axi_arid = 0;
+	assign m_axi_araddr = 0;
+	assign m_axi_arlen = 0;
+	assign m_axi_arsize = 0;
+	assign m_axi_arburst = 0;
+	assign m_axi_arlock = 0;
+	assign m_axi_arcache = 0;
+	assign m_axi_arprot = 0;
+	assign m_axi_arregion = 0;
+	assign m_axi_arqos = 0;
+	assign m_axi_arvalid = 0;
+	assign m_axi_rready = 0;
+endmodule
+
+module atg_xcku5p_bar0_dn (
+	input wire s_axi_aclk, input wire s_axi_aresetn,
+	input wire [3:0] s_axi_awid, input wire [31:0] s_axi_awaddr, input wire [7:0] s_axi_awlen,
+	input wire [2:0] s_axi_awsize, input wire [1:0] s_axi_awburst, input wire s_axi_awlock,
+	input wire [3:0] s_axi_awcache, input wire [2:0] s_axi_awprot, input wire [3:0] s_axi_awregion,
+	input wire [3:0] s_axi_awqos, input wire s_axi_awvalid, output wire s_axi_awready,
+	input wire [127:0] s_axi_wdata, input wire [15:0] s_axi_wstrb, input wire s_axi_wlast,
+	input wire s_axi_wvalid, output wire s_axi_wready, output wire [3:0] s_axi_bid,
+	output wire [1:0] s_axi_bresp, output wire s_axi_bvalid, input wire s_axi_bready,
+	input wire [3:0] s_axi_arid, input wire [31:0] s_axi_araddr, input wire [7:0] s_axi_arlen,
+	input wire [2:0] s_axi_arsize, input wire [1:0] s_axi_arburst, input wire s_axi_arlock,
+	input wire [3:0] s_axi_arcache, input wire [2:0] s_axi_arprot, input wire [3:0] s_axi_arregion,
+	input wire [3:0] s_axi_arqos, input wire s_axi_arvalid, output wire s_axi_arready,
+	output wire [3:0] s_axi_rid, output wire [127:0] s_axi_rdata, output wire [1:0] s_axi_rresp,
+	output wire s_axi_rlast, output wire s_axi_rvalid, input wire s_axi_rready,
+	output wire [31:0] m_axi_awaddr, output wire [7:0] m_axi_awlen, output wire [2:0] m_axi_awsize,
+	output wire [1:0] m_axi_awburst, output wire m_axi_awlock, output wire [3:0] m_axi_awcache,
+	output wire [2:0] m_axi_awprot, output wire [3:0] m_axi_awregion, output wire [3:0] m_axi_awqos,
+	output wire m_axi_awvalid, input wire m_axi_awready, output wire [63:0] m_axi_wdata,
+	output wire [7:0] m_axi_wstrb, output wire m_axi_wlast, output wire m_axi_wvalid,
+	input wire m_axi_wready, input wire [1:0] m_axi_bresp, input wire m_axi_bvalid,
+	output wire m_axi_bready, output wire [31:0] m_axi_araddr, output wire [7:0] m_axi_arlen,
+	output wire [2:0] m_axi_arsize, output wire [1:0] m_axi_arburst, output wire m_axi_arlock,
+	output wire [3:0] m_axi_arcache, output wire [2:0] m_axi_arprot, output wire [3:0] m_axi_arregion,
+	output wire [3:0] m_axi_arqos, output wire m_axi_arvalid, input wire m_axi_arready,
+	input wire [63:0] m_axi_rdata, input wire [1:0] m_axi_rresp, input wire m_axi_rlast,
+	input wire m_axi_rvalid, output wire m_axi_rready
+);
+	assign s_axi_awready = 0; assign s_axi_wready = 0; assign s_axi_bid = 0;
+	assign s_axi_bresp = 0; assign s_axi_bvalid = 0; assign s_axi_arready = 0;
+	assign s_axi_rid = 0; assign s_axi_rdata = 0; assign s_axi_rresp = 0;
+	assign s_axi_rlast = 0; assign s_axi_rvalid = 0;
+	assign m_axi_awaddr = 0; assign m_axi_awlen = 0; assign m_axi_awsize = 0;
+	assign m_axi_awburst = 0; assign m_axi_awlock = 0; assign m_axi_awcache = 0;
+	assign m_axi_awprot = 0; assign m_axi_awregion = 0; assign m_axi_awqos = 0;
+	assign m_axi_awvalid = 0; assign m_axi_wdata = 0; assign m_axi_wstrb = 0;
+	assign m_axi_wlast = 0; assign m_axi_wvalid = 0; assign m_axi_bready = 0;
+	assign m_axi_araddr = 0; assign m_axi_arlen = 0; assign m_axi_arsize = 0;
+	assign m_axi_arburst = 0; assign m_axi_arlock = 0; assign m_axi_arcache = 0;
+	assign m_axi_arprot = 0; assign m_axi_arregion = 0; assign m_axi_arqos = 0;
+	assign m_axi_arvalid = 0; assign m_axi_rready = 0;
+endmodule
+
+module atg_xcku5p_host_dn (
+	input wire s_axi_aclk, input wire s_axi_aresetn,
+	input wire [3:0] s_axi_awid, input wire [63:0] s_axi_awaddr, input wire [7:0] s_axi_awlen,
+	input wire [2:0] s_axi_awsize, input wire [1:0] s_axi_awburst, input wire s_axi_awlock,
+	input wire [3:0] s_axi_awcache, input wire [2:0] s_axi_awprot, input wire [3:0] s_axi_awregion,
+	input wire [3:0] s_axi_awqos, input wire s_axi_awvalid, output wire s_axi_awready,
+	input wire [511:0] s_axi_wdata, input wire [63:0] s_axi_wstrb, input wire s_axi_wlast,
+	input wire s_axi_wvalid, output wire s_axi_wready, output wire [3:0] s_axi_bid,
+	output wire [1:0] s_axi_bresp, output wire s_axi_bvalid, input wire s_axi_bready,
+	input wire [3:0] s_axi_arid, input wire [63:0] s_axi_araddr, input wire [7:0] s_axi_arlen,
+	input wire [2:0] s_axi_arsize, input wire [1:0] s_axi_arburst, input wire s_axi_arlock,
+	input wire [3:0] s_axi_arcache, input wire [2:0] s_axi_arprot, input wire [3:0] s_axi_arregion,
+	input wire [3:0] s_axi_arqos, input wire s_axi_arvalid, output wire s_axi_arready,
+	output wire [3:0] s_axi_rid, output wire [511:0] s_axi_rdata, output wire [1:0] s_axi_rresp,
+	output wire s_axi_rlast, output wire s_axi_rvalid, input wire s_axi_rready,
+	output wire [63:0] m_axi_awaddr, output wire [7:0] m_axi_awlen, output wire [2:0] m_axi_awsize,
+	output wire [1:0] m_axi_awburst, output wire m_axi_awlock, output wire [3:0] m_axi_awcache,
+	output wire [2:0] m_axi_awprot, output wire [3:0] m_axi_awregion, output wire [3:0] m_axi_awqos,
+	output wire m_axi_awvalid, input wire m_axi_awready, output wire [127:0] m_axi_wdata,
+	output wire [15:0] m_axi_wstrb, output wire m_axi_wlast, output wire m_axi_wvalid,
+	input wire m_axi_wready, input wire [1:0] m_axi_bresp, input wire m_axi_bvalid,
+	output wire m_axi_bready, output wire [63:0] m_axi_araddr, output wire [7:0] m_axi_arlen,
+	output wire [2:0] m_axi_arsize, output wire [1:0] m_axi_arburst, output wire m_axi_arlock,
+	output wire [3:0] m_axi_arcache, output wire [2:0] m_axi_arprot, output wire [3:0] m_axi_arregion,
+	output wire [3:0] m_axi_arqos, output wire m_axi_arvalid, input wire m_axi_arready,
+	input wire [127:0] m_axi_rdata, input wire [1:0] m_axi_rresp, input wire m_axi_rlast,
+	input wire m_axi_rvalid, output wire m_axi_rready
+);
+	assign s_axi_awready = 0; assign s_axi_wready = 0; assign s_axi_bid = 0;
+	assign s_axi_bresp = 0; assign s_axi_bvalid = 0; assign s_axi_arready = 0;
+	assign s_axi_rid = 0; assign s_axi_rdata = 0; assign s_axi_rresp = 0;
+	assign s_axi_rlast = 0; assign s_axi_rvalid = 0;
+	assign m_axi_awaddr = 0; assign m_axi_awlen = 0; assign m_axi_awsize = 0;
+	assign m_axi_awburst = 0; assign m_axi_awlock = 0; assign m_axi_awcache = 0;
+	assign m_axi_awprot = 0; assign m_axi_awregion = 0; assign m_axi_awqos = 0;
+	assign m_axi_awvalid = 0; assign m_axi_wdata = 0; assign m_axi_wstrb = 0;
+	assign m_axi_wlast = 0; assign m_axi_wvalid = 0; assign m_axi_bready = 0;
+	assign m_axi_araddr = 0; assign m_axi_arlen = 0; assign m_axi_arsize = 0;
+	assign m_axi_arburst = 0; assign m_axi_arlock = 0; assign m_axi_arcache = 0;
+	assign m_axi_arprot = 0; assign m_axi_arregion = 0; assign m_axi_arqos = 0;
+	assign m_axi_arvalid = 0; assign m_axi_rready = 0;
+endmodule
+
+module atg_xcku5p_host_cc (
+	input wire s_axi_aclk, input wire s_axi_aresetn,
+	input wire [3:0] s_axi_awid, input wire [63:0] s_axi_awaddr, input wire [7:0] s_axi_awlen,
+	input wire [2:0] s_axi_awsize, input wire [1:0] s_axi_awburst, input wire s_axi_awlock,
+	input wire [3:0] s_axi_awcache, input wire [2:0] s_axi_awprot, input wire [3:0] s_axi_awregion,
+	input wire [3:0] s_axi_awqos, input wire s_axi_awvalid, output wire s_axi_awready,
+	input wire [511:0] s_axi_wdata, input wire [63:0] s_axi_wstrb, input wire s_axi_wlast,
+	input wire s_axi_wvalid, output wire s_axi_wready, output wire [3:0] s_axi_bid,
+	output wire [1:0] s_axi_bresp, output wire s_axi_bvalid, input wire s_axi_bready,
+	input wire [3:0] s_axi_arid, input wire [63:0] s_axi_araddr, input wire [7:0] s_axi_arlen,
+	input wire [2:0] s_axi_arsize, input wire [1:0] s_axi_arburst, input wire s_axi_arlock,
+	input wire [3:0] s_axi_arcache, input wire [2:0] s_axi_arprot, input wire [3:0] s_axi_arregion,
+	input wire [3:0] s_axi_arqos, input wire s_axi_arvalid, output wire s_axi_arready,
+	output wire [3:0] s_axi_rid, output wire [511:0] s_axi_rdata, output wire [1:0] s_axi_rresp,
+	output wire s_axi_rlast, output wire s_axi_rvalid, input wire s_axi_rready,
+	input wire m_axi_aclk, input wire m_axi_aresetn,
+	output wire [3:0] m_axi_awid, output wire [63:0] m_axi_awaddr, output wire [7:0] m_axi_awlen,
+	output wire [2:0] m_axi_awsize, output wire [1:0] m_axi_awburst, output wire m_axi_awlock,
+	output wire [3:0] m_axi_awcache, output wire [2:0] m_axi_awprot, output wire [3:0] m_axi_awregion,
+	output wire [3:0] m_axi_awqos, output wire m_axi_awvalid, input wire m_axi_awready,
+	output wire [511:0] m_axi_wdata, output wire [63:0] m_axi_wstrb, output wire m_axi_wlast,
+	output wire m_axi_wvalid, input wire m_axi_wready, input wire [3:0] m_axi_bid,
+	input wire [1:0] m_axi_bresp, input wire m_axi_bvalid, output wire m_axi_bready,
+	output wire [3:0] m_axi_arid, output wire [63:0] m_axi_araddr, output wire [7:0] m_axi_arlen,
+	output wire [2:0] m_axi_arsize, output wire [1:0] m_axi_arburst, output wire m_axi_arlock,
+	output wire [3:0] m_axi_arcache, output wire [2:0] m_axi_arprot, output wire [3:0] m_axi_arregion,
+	output wire [3:0] m_axi_arqos, output wire m_axi_arvalid, input wire m_axi_arready,
+	input wire [3:0] m_axi_rid, input wire [511:0] m_axi_rdata, input wire [1:0] m_axi_rresp,
+	input wire m_axi_rlast, input wire m_axi_rvalid, output wire m_axi_rready
+);
+	assign s_axi_awready = 0; assign s_axi_wready = 0; assign s_axi_bid = 0;
+	assign s_axi_bresp = 0; assign s_axi_bvalid = 0; assign s_axi_arready = 0;
+	assign s_axi_rid = 0; assign s_axi_rdata = 0; assign s_axi_rresp = 0;
+	assign s_axi_rlast = 0; assign s_axi_rvalid = 0;
+	assign m_axi_awid = 0; assign m_axi_awaddr = 0; assign m_axi_awlen = 0; assign m_axi_awsize = 0;
+	assign m_axi_awburst = 0; assign m_axi_awlock = 0; assign m_axi_awcache = 0;
+	assign m_axi_awprot = 0; assign m_axi_awregion = 0; assign m_axi_awqos = 0;
+	assign m_axi_awvalid = 0; assign m_axi_wdata = 0; assign m_axi_wstrb = 0;
+	assign m_axi_wlast = 0; assign m_axi_wvalid = 0; assign m_axi_bready = 0;
+	assign m_axi_arid = 0; assign m_axi_araddr = 0; assign m_axi_arlen = 0; assign m_axi_arsize = 0;
+	assign m_axi_arburst = 0; assign m_axi_arlock = 0; assign m_axi_arcache = 0;
+	assign m_axi_arprot = 0; assign m_axi_arregion = 0; assign m_axi_arqos = 0;
+	assign m_axi_arvalid = 0; assign m_axi_rready = 0;
+endmodule
+
+module atg_xcku5p_bar2_cc (
+	input wire s_axi_aclk, input wire s_axi_aresetn,
+	input wire [3:0] s_axi_awid, input wire [31:0] s_axi_awaddr, input wire [7:0] s_axi_awlen,
+	input wire [2:0] s_axi_awsize, input wire [1:0] s_axi_awburst, input wire s_axi_awlock,
+	input wire [3:0] s_axi_awcache, input wire [2:0] s_axi_awprot, input wire [3:0] s_axi_awregion,
+	input wire [3:0] s_axi_awqos, input wire s_axi_awvalid, output wire s_axi_awready,
+	input wire [511:0] s_axi_wdata, input wire [63:0] s_axi_wstrb, input wire s_axi_wlast,
+	input wire s_axi_wvalid, output wire s_axi_wready, output wire [3:0] s_axi_bid,
+	output wire [1:0] s_axi_bresp, output wire s_axi_bvalid, input wire s_axi_bready,
+	input wire [3:0] s_axi_arid, input wire [31:0] s_axi_araddr, input wire [7:0] s_axi_arlen,
+	input wire [2:0] s_axi_arsize, input wire [1:0] s_axi_arburst, input wire s_axi_arlock,
+	input wire [3:0] s_axi_arcache, input wire [2:0] s_axi_arprot, input wire [3:0] s_axi_arregion,
+	input wire [3:0] s_axi_arqos, input wire s_axi_arvalid, output wire s_axi_arready,
+	output wire [3:0] s_axi_rid, output wire [511:0] s_axi_rdata, output wire [1:0] s_axi_rresp,
+	output wire s_axi_rlast, output wire s_axi_rvalid, input wire s_axi_rready,
+	input wire m_axi_aclk, input wire m_axi_aresetn,
+	output wire [3:0] m_axi_awid, output wire [31:0] m_axi_awaddr, output wire [7:0] m_axi_awlen,
+	output wire [2:0] m_axi_awsize, output wire [1:0] m_axi_awburst, output wire m_axi_awlock,
+	output wire [3:0] m_axi_awcache, output wire [2:0] m_axi_awprot, output wire [3:0] m_axi_awregion,
+	output wire [3:0] m_axi_awqos, output wire m_axi_awvalid, input wire m_axi_awready,
+	output wire [511:0] m_axi_wdata, output wire [63:0] m_axi_wstrb, output wire m_axi_wlast,
+	output wire m_axi_wvalid, input wire m_axi_wready, input wire [3:0] m_axi_bid,
+	input wire [1:0] m_axi_bresp, input wire m_axi_bvalid, output wire m_axi_bready,
+	output wire [3:0] m_axi_arid, output wire [31:0] m_axi_araddr, output wire [7:0] m_axi_arlen,
+	output wire [2:0] m_axi_arsize, output wire [1:0] m_axi_arburst, output wire m_axi_arlock,
+	output wire [3:0] m_axi_arcache, output wire [2:0] m_axi_arprot, output wire [3:0] m_axi_arregion,
+	output wire [3:0] m_axi_arqos, output wire m_axi_arvalid, input wire m_axi_arready,
+	input wire [3:0] m_axi_rid, input wire [511:0] m_axi_rdata, input wire [1:0] m_axi_rresp,
+	input wire m_axi_rlast, input wire m_axi_rvalid, output wire m_axi_rready
+);
+	assign s_axi_awready = 0; assign s_axi_wready = 0; assign s_axi_bid = 0;
+	assign s_axi_bresp = 0; assign s_axi_bvalid = 0; assign s_axi_arready = 0;
+	assign s_axi_rid = 0; assign s_axi_rdata = 0; assign s_axi_rresp = 0;
+	assign s_axi_rlast = 0; assign s_axi_rvalid = 0;
+	assign m_axi_awid = 0; assign m_axi_awaddr = 0; assign m_axi_awlen = 0; assign m_axi_awsize = 0;
+	assign m_axi_awburst = 0; assign m_axi_awlock = 0; assign m_axi_awcache = 0;
+	assign m_axi_awprot = 0; assign m_axi_awregion = 0; assign m_axi_awqos = 0;
+	assign m_axi_awvalid = 0; assign m_axi_wdata = 0; assign m_axi_wstrb = 0;
+	assign m_axi_wlast = 0; assign m_axi_wvalid = 0; assign m_axi_bready = 0;
+	assign m_axi_arid = 0; assign m_axi_araddr = 0; assign m_axi_arlen = 0; assign m_axi_arsize = 0;
+	assign m_axi_arburst = 0; assign m_axi_arlock = 0; assign m_axi_arcache = 0;
+	assign m_axi_arprot = 0; assign m_axi_arregion = 0; assign m_axi_arqos = 0;
+	assign m_axi_arvalid = 0; assign m_axi_rready = 0;
+endmodule
+
+module atg_xcku5p_bar2_up (
+	input wire s_axi_aclk, input wire s_axi_aresetn,
+	input wire [3:0] s_axi_awid, input wire [31:0] s_axi_awaddr, input wire [7:0] s_axi_awlen,
+	input wire [2:0] s_axi_awsize, input wire [1:0] s_axi_awburst, input wire s_axi_awlock,
+	input wire [3:0] s_axi_awcache, input wire [2:0] s_axi_awprot, input wire [3:0] s_axi_awregion,
+	input wire [3:0] s_axi_awqos, input wire s_axi_awvalid, output wire s_axi_awready,
+	input wire [127:0] s_axi_wdata, input wire [15:0] s_axi_wstrb, input wire s_axi_wlast,
+	input wire s_axi_wvalid, output wire s_axi_wready, output wire [3:0] s_axi_bid,
+	output wire [1:0] s_axi_bresp, output wire s_axi_bvalid, input wire s_axi_bready,
+	input wire [3:0] s_axi_arid, input wire [31:0] s_axi_araddr, input wire [7:0] s_axi_arlen,
+	input wire [2:0] s_axi_arsize, input wire [1:0] s_axi_arburst, input wire s_axi_arlock,
+	input wire [3:0] s_axi_arcache, input wire [2:0] s_axi_arprot, input wire [3:0] s_axi_arregion,
+	input wire [3:0] s_axi_arqos, input wire s_axi_arvalid, output wire s_axi_arready,
+	output wire [3:0] s_axi_rid, output wire [127:0] s_axi_rdata, output wire [1:0] s_axi_rresp,
+	output wire s_axi_rlast, output wire s_axi_rvalid, input wire s_axi_rready,
+	output wire [31:0] m_axi_awaddr, output wire [7:0] m_axi_awlen, output wire [2:0] m_axi_awsize,
+	output wire [1:0] m_axi_awburst, output wire m_axi_awlock, output wire [3:0] m_axi_awcache,
+	output wire [2:0] m_axi_awprot, output wire [3:0] m_axi_awregion, output wire [3:0] m_axi_awqos,
+	output wire m_axi_awvalid, input wire m_axi_awready, output wire [511:0] m_axi_wdata,
+	output wire [63:0] m_axi_wstrb, output wire m_axi_wlast, output wire m_axi_wvalid,
+	input wire m_axi_wready, input wire [1:0] m_axi_bresp, input wire m_axi_bvalid,
+	output wire m_axi_bready, output wire [31:0] m_axi_araddr, output wire [7:0] m_axi_arlen,
+	output wire [2:0] m_axi_arsize, output wire [1:0] m_axi_arburst, output wire m_axi_arlock,
+	output wire [3:0] m_axi_arcache, output wire [2:0] m_axi_arprot, output wire [3:0] m_axi_arregion,
+	output wire [3:0] m_axi_arqos, output wire m_axi_arvalid, input wire m_axi_arready,
+	input wire [511:0] m_axi_rdata, input wire [1:0] m_axi_rresp, input wire m_axi_rlast,
+	input wire m_axi_rvalid, output wire m_axi_rready
+);
+	assign s_axi_awready = 0; assign s_axi_wready = 0; assign s_axi_bid = 0;
+	assign s_axi_bresp = 0; assign s_axi_bvalid = 0; assign s_axi_arready = 0;
+	assign s_axi_rid = 0; assign s_axi_rdata = 0; assign s_axi_rresp = 0;
+	assign s_axi_rlast = 0; assign s_axi_rvalid = 0;
+	assign m_axi_awaddr = 0; assign m_axi_awlen = 0; assign m_axi_awsize = 0;
+	assign m_axi_awburst = 0; assign m_axi_awlock = 0; assign m_axi_awcache = 0;
+	assign m_axi_awprot = 0; assign m_axi_awregion = 0; assign m_axi_awqos = 0;
+	assign m_axi_awvalid = 0; assign m_axi_wdata = 0; assign m_axi_wstrb = 0;
+	assign m_axi_wlast = 0; assign m_axi_wvalid = 0; assign m_axi_bready = 0;
+	assign m_axi_araddr = 0; assign m_axi_arlen = 0; assign m_axi_arsize = 0;
+	assign m_axi_arburst = 0; assign m_axi_arlock = 0; assign m_axi_arcache = 0;
+	assign m_axi_arprot = 0; assign m_axi_arregion = 0; assign m_axi_arqos = 0;
+	assign m_axi_arvalid = 0; assign m_axi_rready = 0;
+endmodule
+
+module atg_xcku5p_mem_xbar (
+	input wire aclk, input wire aresetn,
+	input wire [1:0] s_axi_awid, input wire [63:0] s_axi_awaddr, input wire [15:0] s_axi_awlen,
+	input wire [5:0] s_axi_awsize, input wire [3:0] s_axi_awburst, input wire [1:0] s_axi_awlock,
+	input wire [7:0] s_axi_awcache, input wire [5:0] s_axi_awprot, input wire [7:0] s_axi_awqos,
+	input wire [1:0] s_axi_awvalid, output wire [1:0] s_axi_awready,
+	input wire [1023:0] s_axi_wdata, input wire [127:0] s_axi_wstrb, input wire [1:0] s_axi_wlast,
+	input wire [1:0] s_axi_wvalid, output wire [1:0] s_axi_wready, output wire [1:0] s_axi_bid,
+	output wire [3:0] s_axi_bresp, output wire [1:0] s_axi_bvalid, input wire [1:0] s_axi_bready,
+	input wire [1:0] s_axi_arid, input wire [63:0] s_axi_araddr, input wire [15:0] s_axi_arlen,
+	input wire [5:0] s_axi_arsize, input wire [3:0] s_axi_arburst, input wire [1:0] s_axi_arlock,
+	input wire [7:0] s_axi_arcache, input wire [5:0] s_axi_arprot, input wire [7:0] s_axi_arqos,
+	input wire [1:0] s_axi_arvalid, output wire [1:0] s_axi_arready, output wire [1:0] s_axi_rid,
+	output wire [1023:0] s_axi_rdata, output wire [3:0] s_axi_rresp, output wire [1:0] s_axi_rlast,
+	output wire [1:0] s_axi_rvalid, input wire [1:0] s_axi_rready,
+	output wire [0:0] m_axi_awid, output wire [31:0] m_axi_awaddr, output wire [7:0] m_axi_awlen,
+	output wire [2:0] m_axi_awsize, output wire [1:0] m_axi_awburst, output wire m_axi_awlock,
+	output wire [3:0] m_axi_awcache, output wire [2:0] m_axi_awprot, output wire [3:0] m_axi_awregion,
+	output wire [3:0] m_axi_awqos, output wire m_axi_awvalid, input wire m_axi_awready,
+	output wire [511:0] m_axi_wdata, output wire [63:0] m_axi_wstrb, output wire m_axi_wlast,
+	output wire m_axi_wvalid, input wire m_axi_wready, input wire [0:0] m_axi_bid,
+	input wire [1:0] m_axi_bresp, input wire m_axi_bvalid, output wire m_axi_bready,
+	output wire [0:0] m_axi_arid, output wire [31:0] m_axi_araddr, output wire [7:0] m_axi_arlen,
+	output wire [2:0] m_axi_arsize, output wire [1:0] m_axi_arburst, output wire m_axi_arlock,
+	output wire [3:0] m_axi_arcache, output wire [2:0] m_axi_arprot, output wire [3:0] m_axi_arregion,
+	output wire [3:0] m_axi_arqos, output wire m_axi_arvalid, input wire m_axi_arready,
+	input wire [0:0] m_axi_rid, input wire [511:0] m_axi_rdata, input wire [1:0] m_axi_rresp,
+	input wire m_axi_rlast, input wire m_axi_rvalid, output wire m_axi_rready
+);
+	assign s_axi_awready = 0; assign s_axi_wready = 0; assign s_axi_bid = 0;
+	assign s_axi_bresp = 0; assign s_axi_bvalid = 0; assign s_axi_arready = 0;
+	assign s_axi_rid = 0; assign s_axi_rdata = 0; assign s_axi_rresp = 0;
+	assign s_axi_rlast = 0; assign s_axi_rvalid = 0;
+	assign m_axi_awid = 0; assign m_axi_awaddr = 0; assign m_axi_awlen = 0; assign m_axi_awsize = 0;
+	assign m_axi_awburst = 0; assign m_axi_awlock = 0; assign m_axi_awcache = 0;
+	assign m_axi_awprot = 0; assign m_axi_awregion = 0; assign m_axi_awqos = 0;
+	assign m_axi_awvalid = 0; assign m_axi_wdata = 0; assign m_axi_wstrb = 0;
+	assign m_axi_wlast = 0; assign m_axi_wvalid = 0; assign m_axi_bready = 0;
+	assign m_axi_arid = 0; assign m_axi_araddr = 0; assign m_axi_arlen = 0; assign m_axi_arsize = 0;
+	assign m_axi_arburst = 0; assign m_axi_arlock = 0; assign m_axi_arcache = 0;
+	assign m_axi_arprot = 0; assign m_axi_arregion = 0; assign m_axi_arqos = 0;
+	assign m_axi_arvalid = 0; assign m_axi_rready = 0;
+endmodule
+
+module atg_xcku5p_axi_dn (
+	input wire s_axi_aclk, input wire s_axi_aresetn,
+	input wire [0:0] s_axi_awid, input wire [31:0] s_axi_awaddr, input wire [7:0] s_axi_awlen,
+	input wire [2:0] s_axi_awsize, input wire [1:0] s_axi_awburst, input wire s_axi_awlock,
+	input wire [3:0] s_axi_awcache, input wire [2:0] s_axi_awprot, input wire [3:0] s_axi_awregion,
+	input wire [3:0] s_axi_awqos, input wire s_axi_awvalid, output wire s_axi_awready,
+	input wire [511:0] s_axi_wdata, input wire [63:0] s_axi_wstrb, input wire s_axi_wlast,
+	input wire s_axi_wvalid, output wire s_axi_wready, output wire [0:0] s_axi_bid,
+	output wire [1:0] s_axi_bresp, output wire s_axi_bvalid, input wire s_axi_bready,
+	input wire [0:0] s_axi_arid, input wire [31:0] s_axi_araddr, input wire [7:0] s_axi_arlen,
+	input wire [2:0] s_axi_arsize, input wire [1:0] s_axi_arburst, input wire s_axi_arlock,
+	input wire [3:0] s_axi_arcache, input wire [2:0] s_axi_arprot, input wire [3:0] s_axi_arregion,
+	input wire [3:0] s_axi_arqos, input wire s_axi_arvalid, output wire s_axi_arready,
+	output wire [0:0] s_axi_rid, output wire [511:0] s_axi_rdata, output wire [1:0] s_axi_rresp,
+	output wire s_axi_rlast, output wire s_axi_rvalid, input wire s_axi_rready,
+	output wire [31:0] m_axi_awaddr, output wire [7:0] m_axi_awlen, output wire [2:0] m_axi_awsize,
+	output wire [1:0] m_axi_awburst, output wire m_axi_awlock, output wire [3:0] m_axi_awcache,
+	output wire [2:0] m_axi_awprot, output wire [3:0] m_axi_awregion, output wire [3:0] m_axi_awqos,
+	output wire m_axi_awvalid, input wire m_axi_awready, output wire [255:0] m_axi_wdata,
+	output wire [31:0] m_axi_wstrb, output wire m_axi_wlast, output wire m_axi_wvalid,
+	input wire m_axi_wready, input wire [1:0] m_axi_bresp, input wire m_axi_bvalid,
+	output wire m_axi_bready, output wire [31:0] m_axi_araddr, output wire [7:0] m_axi_arlen,
+	output wire [2:0] m_axi_arsize, output wire [1:0] m_axi_arburst, output wire m_axi_arlock,
+	output wire [3:0] m_axi_arcache, output wire [2:0] m_axi_arprot, output wire [3:0] m_axi_arregion,
+	output wire [3:0] m_axi_arqos, output wire m_axi_arvalid, input wire m_axi_arready,
+	input wire [255:0] m_axi_rdata, input wire [1:0] m_axi_rresp, input wire m_axi_rlast,
+	input wire m_axi_rvalid, output wire m_axi_rready
+);
+	assign s_axi_awready = 0; assign s_axi_wready = 0; assign s_axi_bid = 0;
+	assign s_axi_bresp = 0; assign s_axi_bvalid = 0; assign s_axi_arready = 0;
+	assign s_axi_rid = 0; assign s_axi_rdata = 0; assign s_axi_rresp = 0;
+	assign s_axi_rlast = 0; assign s_axi_rvalid = 0;
+	assign m_axi_awaddr = 0; assign m_axi_awlen = 0; assign m_axi_awsize = 0;
+	assign m_axi_awburst = 0; assign m_axi_awlock = 0; assign m_axi_awcache = 0;
+	assign m_axi_awprot = 0; assign m_axi_awregion = 0; assign m_axi_awqos = 0;
+	assign m_axi_awvalid = 0; assign m_axi_wdata = 0; assign m_axi_wstrb = 0;
+	assign m_axi_wlast = 0; assign m_axi_wvalid = 0; assign m_axi_bready = 0;
+	assign m_axi_araddr = 0; assign m_axi_arlen = 0; assign m_axi_arsize = 0;
+	assign m_axi_arburst = 0; assign m_axi_arlock = 0; assign m_axi_arcache = 0;
+	assign m_axi_arprot = 0; assign m_axi_arregion = 0; assign m_axi_arqos = 0;
+	assign m_axi_arvalid = 0; assign m_axi_rready = 0;
+endmodule
+
+module atg_xcku5p_axi_cc (
+	input wire s_axi_aclk, input wire s_axi_aresetn,
+	input wire [0:0] s_axi_awid, input wire [31:0] s_axi_awaddr, input wire [7:0] s_axi_awlen,
+	input wire [2:0] s_axi_awsize, input wire [1:0] s_axi_awburst, input wire s_axi_awlock,
+	input wire [3:0] s_axi_awcache, input wire [2:0] s_axi_awprot, input wire [3:0] s_axi_awregion,
+	input wire [3:0] s_axi_awqos, input wire s_axi_awvalid, output wire s_axi_awready,
+	input wire [511:0] s_axi_wdata, input wire [63:0] s_axi_wstrb, input wire s_axi_wlast,
+	input wire s_axi_wvalid, output wire s_axi_wready, output wire [0:0] s_axi_bid,
+	output wire [1:0] s_axi_bresp, output wire s_axi_bvalid, input wire s_axi_bready,
+	input wire [0:0] s_axi_arid, input wire [31:0] s_axi_araddr, input wire [7:0] s_axi_arlen,
+	input wire [2:0] s_axi_arsize, input wire [1:0] s_axi_arburst, input wire s_axi_arlock,
+	input wire [3:0] s_axi_arcache, input wire [2:0] s_axi_arprot, input wire [3:0] s_axi_arregion,
+	input wire [3:0] s_axi_arqos, input wire s_axi_arvalid, output wire s_axi_arready,
+	output wire [0:0] s_axi_rid, output wire [511:0] s_axi_rdata, output wire [1:0] s_axi_rresp,
+	output wire s_axi_rlast, output wire s_axi_rvalid, input wire s_axi_rready,
+	input wire m_axi_aclk, input wire m_axi_aresetn,
+	output wire [0:0] m_axi_awid, output wire [31:0] m_axi_awaddr, output wire [7:0] m_axi_awlen,
+	output wire [2:0] m_axi_awsize, output wire [1:0] m_axi_awburst, output wire [0:0] m_axi_awlock,
+	output wire [3:0] m_axi_awcache, output wire [2:0] m_axi_awprot, output wire [3:0] m_axi_awregion,
+	output wire [3:0] m_axi_awqos, output wire m_axi_awvalid, input wire m_axi_awready,
+	output wire [511:0] m_axi_wdata, output wire [63:0] m_axi_wstrb, output wire m_axi_wlast,
+	output wire m_axi_wvalid, input wire m_axi_wready, input wire [0:0] m_axi_bid,
+	input wire [1:0] m_axi_bresp, input wire m_axi_bvalid, output wire m_axi_bready,
+	output wire [0:0] m_axi_arid, output wire [31:0] m_axi_araddr, output wire [7:0] m_axi_arlen,
+	output wire [2:0] m_axi_arsize, output wire [1:0] m_axi_arburst, output wire [0:0] m_axi_arlock,
+	output wire [3:0] m_axi_arcache, output wire [2:0] m_axi_arprot, output wire [3:0] m_axi_arregion,
+	output wire [3:0] m_axi_arqos, output wire m_axi_arvalid, input wire m_axi_arready,
+	input wire [0:0] m_axi_rid, input wire [511:0] m_axi_rdata, input wire [1:0] m_axi_rresp,
+	input wire m_axi_rlast, input wire m_axi_rvalid, output wire m_axi_rready
+);
+	assign s_axi_awready = 0; assign s_axi_wready = 0; assign s_axi_bid = 0;
+	assign s_axi_bresp = 0; assign s_axi_bvalid = 0; assign s_axi_arready = 0;
+	assign s_axi_rid = 0; assign s_axi_rdata = 0; assign s_axi_rresp = 0;
+	assign s_axi_rlast = 0; assign s_axi_rvalid = 0;
+	assign m_axi_awid = 0; assign m_axi_awaddr = 0; assign m_axi_awlen = 0; assign m_axi_awsize = 0;
+	assign m_axi_awburst = 0; assign m_axi_awlock = 0; assign m_axi_awcache = 0;
+	assign m_axi_awprot = 0; assign m_axi_awregion = 0; assign m_axi_awqos = 0;
+	assign m_axi_awvalid = 0; assign m_axi_wdata = 0; assign m_axi_wstrb = 0;
+	assign m_axi_wlast = 0; assign m_axi_wvalid = 0; assign m_axi_bready = 0;
+	assign m_axi_arid = 0; assign m_axi_araddr = 0; assign m_axi_arlen = 0; assign m_axi_arsize = 0;
+	assign m_axi_arburst = 0; assign m_axi_arlock = 0; assign m_axi_arcache = 0;
+	assign m_axi_arprot = 0; assign m_axi_arregion = 0; assign m_axi_arqos = 0;
+	assign m_axi_arvalid = 0; assign m_axi_rready = 0;
+endmodule
+
+module atg_xcku5p_ddr4 (
+	input wire sys_rst,
+	input wire c0_sys_clk_i,
+	output wire c0_init_calib_complete,
+	output wire c0_ddr4_ui_clk,
+	output wire c0_ddr4_ui_clk_sync_rst,
+	input wire c0_ddr4_aresetn,
+	inout wire [31:0] c0_ddr4_dq,
+	inout wire [3:0] c0_ddr4_dqs_c,
+	inout wire [3:0] c0_ddr4_dqs_t,
+	inout wire [3:0] c0_ddr4_dm_dbi_n,
+	output wire [16:0] c0_ddr4_adr,
+	output wire [1:0] c0_ddr4_ba,
+	output wire [0:0] c0_ddr4_bg,
+	output wire c0_ddr4_act_n,
+	output wire c0_ddr4_reset_n,
+	output wire [0:0] c0_ddr4_ck_c,
+	output wire [0:0] c0_ddr4_ck_t,
+	output wire [0:0] c0_ddr4_cke,
+	output wire [0:0] c0_ddr4_cs_n,
+	output wire [0:0] c0_ddr4_odt,
+	input wire [3:0] c0_ddr4_s_axi_awid,
+	input wire [29:0] c0_ddr4_s_axi_awaddr,
+	input wire [7:0] c0_ddr4_s_axi_awlen,
+	input wire [2:0] c0_ddr4_s_axi_awsize,
+	input wire [1:0] c0_ddr4_s_axi_awburst,
+	input wire [0:0] c0_ddr4_s_axi_awlock,
+	input wire [3:0] c0_ddr4_s_axi_awcache,
+	input wire [2:0] c0_ddr4_s_axi_awprot,
+	input wire [3:0] c0_ddr4_s_axi_awqos,
+	input wire c0_ddr4_s_axi_awvalid,
+	output wire c0_ddr4_s_axi_awready,
+	input wire [255:0] c0_ddr4_s_axi_wdata,
+	input wire [31:0] c0_ddr4_s_axi_wstrb,
+	input wire c0_ddr4_s_axi_wlast,
+	input wire c0_ddr4_s_axi_wvalid,
+	output wire c0_ddr4_s_axi_wready,
+	input wire c0_ddr4_s_axi_bready,
+	output wire [3:0] c0_ddr4_s_axi_bid,
+	output wire [1:0] c0_ddr4_s_axi_bresp,
+	output wire c0_ddr4_s_axi_bvalid,
+	input wire [3:0] c0_ddr4_s_axi_arid,
+	input wire [29:0] c0_ddr4_s_axi_araddr,
+	input wire [7:0] c0_ddr4_s_axi_arlen,
+	input wire [2:0] c0_ddr4_s_axi_arsize,
+	input wire [1:0] c0_ddr4_s_axi_arburst,
+	input wire [0:0] c0_ddr4_s_axi_arlock,
+	input wire [3:0] c0_ddr4_s_axi_arcache,
+	input wire [2:0] c0_ddr4_s_axi_arprot,
+	input wire [3:0] c0_ddr4_s_axi_arqos,
+	input wire c0_ddr4_s_axi_arvalid,
+	output wire c0_ddr4_s_axi_arready,
+	input wire c0_ddr4_s_axi_rready,
+	output wire [3:0] c0_ddr4_s_axi_rid,
+	output wire [255:0] c0_ddr4_s_axi_rdata,
+	output wire [1:0] c0_ddr4_s_axi_rresp,
+	output wire c0_ddr4_s_axi_rlast,
+	output wire c0_ddr4_s_axi_rvalid,
+	output wire dbg_clk,
+	output wire [511:0] dbg_bus
+);
+	assign c0_init_calib_complete = 0;
+	assign c0_ddr4_ui_clk = c0_sys_clk_i;
+	assign c0_ddr4_ui_clk_sync_rst = 0;
+	assign dbg_clk = 0;
+	assign dbg_bus = 0;
+	assign c0_ddr4_adr = 0; assign c0_ddr4_ba = 0; assign c0_ddr4_bg = 0;
+	assign c0_ddr4_act_n = 1; assign c0_ddr4_reset_n = 1;
+	assign c0_ddr4_ck_c = 0; assign c0_ddr4_ck_t = 0;
+	assign c0_ddr4_cke = 0; assign c0_ddr4_cs_n = 1; assign c0_ddr4_odt = 0;
+	assign c0_ddr4_s_axi_awready = 0; assign c0_ddr4_s_axi_wready = 0;
+	assign c0_ddr4_s_axi_bid = 0; assign c0_ddr4_s_axi_bresp = 0; assign c0_ddr4_s_axi_bvalid = 0;
+	assign c0_ddr4_s_axi_arready = 0; assign c0_ddr4_s_axi_rid = 0;
+	assign c0_ddr4_s_axi_rdata = 0; assign c0_ddr4_s_axi_rresp = 0;
+	assign c0_ddr4_s_axi_rlast = 0; assign c0_ddr4_s_axi_rvalid = 0;
 endmodule
 /* verilator lint_on UNUSEDPARAM */
 /* verilator lint_on DECLFILENAME */

@@ -1,15 +1,14 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
  */
 
 /*
- * ghci_packets.h: LEGACY pre-1.0 / CP-firmware-internal packet envelope
- * (class N micro-operations and class V gpu-op wrapper). Kept only for
- * internal CP firmware and pre-overhaul test harnesses; NOT part of the
- * public GHCI 1.0 contract (see ghci.md §7 and ghci_cmd.h).
+ * ghci_packets.h: the GHCI command ring's packet envelope (version 3) and
+ * the class N micro-operations (docs/ghci.md section 7).  Class V packets
+ * carry zedBSD's GPU command protocol (gpu-op) for the CP's firmware.
  */
 
 #ifndef GHCI_PACKETS_H
@@ -49,15 +48,15 @@
 #define GHCI_OP_INVALIDATE 12u	/* 0; flags: [0] D$ [1] T$ [2] constants [3] I$ */
 #define GHCI_OP_RESULT 13u	/* 3: addr, status, aux */
 #define GHCI_OP_QUERY 14u	/* 1: addr; flags [0] clear only, [1] clear after (CAPS[30], draft) */
-#define GHCI_OP_DISP_SET 15u	/* (offset, value) pairs; flags[0]: wait for STATUS.idle (legacy DISP, draft) */
-#define GHCI_OP_FLIP 16u	/* 4: plane, base, record, value; flags[0]: COMPLETE (legacy DISP, draft) */
+#define GHCI_OP_DISP_SET 15u	/* (offset, value) pairs; flags[0]: wait for STATUS.idle (DISP2, draft) */
+#define GHCI_OP_FLIP 16u	/* 4: plane, base, record, value; flags[0]: COMPLETE (DISP2, draft) */
 #define GHCI_FENCE_IRQ 0x01u	/* FENCE flags */
 #define GHCI_BLIT_WAIT 0x01u	/* BLIT flags */
 #define GHCI_DISP_SET_WAIT_IDLE 0x01u	/* DISP_SET flags */
 #define GHCI_FLIP_COMPLETE 0x01u	/* FLIP flags */
 #define GHCI_FLIP_CANCELLED 0x80000000u	/* a flip record's value: taken as cancelled */
 
-/* Lumiere's legacy vendor micro-ops (class 1). */
+/* Amaterrace's vendor micro-ops (class 1). */
 #define ATG_VOP_DRAW_RAW 0u	/* 9: three vertices x, y, z */
 #define ATG_VOP_DBG_MARK 1u	/* 1: STATE[0x1FF] = payload */
 

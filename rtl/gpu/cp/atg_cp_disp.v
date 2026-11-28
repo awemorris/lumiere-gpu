@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -190,9 +190,11 @@ module atg_cp_disp #(
 	reg [31:0] taken0, taken1;
 	reg [31:0] fc0, fc1;
 	reg idle_req;
+	reg dc_idle_r;
 
+	reg st_plane_ok_r;
 	wire sp = st_plane[0];
-	wire plane_ok = st_plane < NPLANES;
+	wire plane_ok = st_plane_ok_r;
 	wire busy_p = sp ? dc_pending[1] || slot_v[1] || due[1] : dc_pending[0] || slot_v[0] || due[0];
 
 	wire base_bad = st_base < aperture_base || st_base >= aperture_limit ||
@@ -214,7 +216,7 @@ module atg_cp_disp #(
 	assign flip_plane = sp;
 	assign flip_base = st_base;
 
-	assign disp_wait = active && (st_v && plane_ok && busy_p || idle_req && !dc_idle || hb_v);
+	assign disp_wait = active && (st_v && plane_ok && busy_p || idle_req && !dc_idle_r || hb_v);
 
 	/* The record writer. */
 	localparam [1:0] R_IDLE = 2'd0;
@@ -238,11 +240,13 @@ module atg_cp_disp #(
 			taken0 <= 32'd0;
 			taken1 <= 32'd0;
 			idle_req <= 1'b0;
+			dc_idle_r <= 1'b1;
 			rs <= R_IDLE;
 			rp <= 1'b0;
 			ev_q <= 1'b0;
 			err_q <= 1'b0;
 			st_plane <= 32'd0;
+			st_plane_ok_r <= 1'b1;
 			st_base <= 32'd0;
 			st_record <= 32'd0;
 			st_value <= 32'd0;
@@ -253,11 +257,15 @@ module atg_cp_disp #(
 			fc0 <= 32'd0;
 			fc1 <= 32'd0;
 		end else begin
+			dc_idle_r <= dc_idle;
 			ev_q <= take_nr || rec_done;
 			err_q <= rec_done && rsp_error;
 			if (s_stage) begin
 				case (uop_idx[1:0])
-				2'd0: st_plane <= uop_wdata;
+				2'd0: begin
+					st_plane <= uop_wdata;
+					st_plane_ok_r <= (uop_wdata < NPLANES);
+				end
 				2'd1: st_base <= uop_wdata;
 				2'd2: st_record <= uop_wdata;
 				default: st_value <= uop_wdata;
@@ -278,7 +286,7 @@ module atg_cp_disp #(
 				end
 			end
 			/* kick_idle: wait for the controller's idle. */
-			if (!active || dc_idle)
+			if (!active || dc_idle_r)
 				idle_req <= 1'b0;
 			if (active && kick_idle)
 				idle_req <= 1'b1;

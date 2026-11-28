@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -58,7 +58,7 @@ module atg_cp_indirect (
 	                 S_EMIT      = 3'd5,
 	                 S_WAIT_DRAW = 3'd6;
 
-	reg [2:0] st;
+	(* max_fanout = 12, extract_enable = "no" *) reg [2:0] st;
 	reg [31:0] cur_addr;
 	reg [31:0] eff_stride;
 	reg [31:0] draw_idx;

@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -20,19 +20,16 @@
 `default_nettype none
 
 module atg_tu_fword (
-	input wire [127:0] i_rn,	/* the four conversions */
-	input wire [127:0] i_lt,	/* the lane's texels */
-	input wire [31:0] i_vw,	/* the lane's tc_value word */
-	input wire [3:0] i_ok,	/* the compares */
-	input wire [49:0] i_ctl,
-	input wire [7:0] i_ctl_c13,
-	input wire i_mk,
-	output reg [127:0] o_res
+	input wire clk,
+	input wire [127:0] i_rn,	/* the four conversions (P19) */
+	input wire [127:0] i_lt18,	/* the lane's texels (P18) */
+	input wire [31:0] i_vw18,	/* the lane's tc_value word (P18) */
+	input wire [3:0] i_ok18,	/* the compares (P18) */
+	input wire [49:0] i_ctl18,
+	input wire i_mk18,
+	output wire [127:0] o_res
 );
-	integer c;
-
-	/* The component that swizzle code 3-6 (R, G, B, A) takes, by its bits
-	 * 1:0. */
+	/* The component that swizzle code 3-6 (R, G, B, A) takes, by its bits 1:0. */
 	function [1:0] zsrc;
 		input [1:0] s;
 		case (s)
@@ -43,119 +40,155 @@ module atg_tu_fword (
 		endcase
 	endfunction
 
-	/* The component swizzle of four fp32 components. */
-	function [127:0] swz4;
-		input [127:0] v;
-		input [11:0] z;
-		integer j;
-		reg [2:0] sc;
-		begin
-			for (j = 0; j < 4; j = j + 1) begin
-				sc = z[3*j +: 3];
-				swz4[j*32 +: 32] = sc == 3'd1 ? 32'd0 : sc == 3'd2 ? 32'h3F800000 :
-					sc >= 3'd3 && sc <= 3'd6 ? v[{zsrc(sc[1:0]), 5'd0} +: 32] : v[j*32 +: 32];
-			end
-		end
-	endfunction
-
 	/* The texel of word g of a gather: 2, 3, 1, 0. */
 	function [1:0] gtx;
 		input [1:0] g;
 		gtx = g == 2'd0 ? 2'd2 : g == 2'd1 ? 2'd3 : g == 2'd2 ? 2'd1 : 2'd0;
 	endfunction
 
-	(* dont_touch = "true" *) wire [15:0] mk_h = {16{i_mk}};
-	(* dont_touch = "true" *) wire [15:0] ctl2_h = {16{i_ctl[2]}};
-	(* dont_touch = "true" *) wire [15:0] ctl16_h = {16{i_ctl[16]}};
-	(* dont_touch = "true" *) wire [11:0] swz_z0 = i_ctl[47:36];
-	(* dont_touch = "true" *) wire [11:0] swz_z1 = i_ctl[47:36];
-	(* dont_touch = "true" *) wire [11:0] swz_z2 = i_ctl[47:36];
-	(* dont_touch = "true" *) wire [11:0] swz_z3 = i_ctl[47:36];
+	/* P17 -> P18 pre-stage (from dl[18]): swizzle + gsw/gsrc decode, registered to P18_mid */
+	wire d_nocomp18    = i_ctl18[8] && !i_ctl18[9];
+	wire d32_sel18     = i_ctl18[1];
+	wire rgb565_texf18 = i_ctl18[19] && i_ctl18[3];
 
-	(* keep = "true" *) wire [127:0] o_base;
-	genvar gb;
+	wire [3:0] base_use_rn;
+	assign base_use_rn[0] = !(d_nocomp18 && d32_sel18);
+	assign base_use_rn[1] = !d_nocomp18;
+	assign base_use_rn[2] = !d_nocomp18;
+	assign base_use_rn[3] = !(d_nocomp18 || rgb565_texf18);
+
+	wire [2:0] gsw_m18 = (i_ctl18[15:14] == 2'd0) ? i_ctl18[38:36] :
+	                     (i_ctl18[15:14] == 2'd1) ? i_ctl18[41:39] :
+	                     (i_ctl18[15:14] == 2'd2) ? i_ctl18[44:42] : i_ctl18[47:45];
+	wire [1:0] gsrc_m18 = (gsw_m18 >= 3'd3 && gsw_m18 <= 3'd6) ? zsrc(gsw_m18[1:0]) : i_ctl18[15:14];
+
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [2:0]  gsw_r19 [0:3];
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [1:0]  gsrc_r19 [0:3];
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [3:0] c13_r19_lo, c13_r19_hi, c9_r19_lo, c9_r19_hi;
+	(* extract_reset = "no" *) reg        c8_r19, c1_r19;
+	(* keep = "true", equivalent_register_removal = "no", extract_reset = "no" *) reg [3:0] q_mode_r19, s_mode_r19_lo, s_mode_r19_hi, mk_r19;
+	(* extract_reset = "no" *) reg [3:0]  ok_r19;
+	(* extract_reset = "no" *) reg [31:0] vw_r19;
+
+	integer kc19;
+	always @(posedge clk) begin
+		for (kc19 = 0; kc19 < 4; kc19 = kc19 + 1) begin
+			gsw_r19[kc19]  <= gsw_m18;
+			gsrc_r19[kc19] <= gsrc_m18;
+		end
+		c13_r19_lo    <= {4{i_ctl18[13]}};
+		c13_r19_hi    <= {4{i_ctl18[13]}};
+		c9_r19_lo     <= {4{i_ctl18[9]}};
+		c9_r19_hi     <= {4{i_ctl18[9]}};
+		c8_r19        <= i_ctl18[8];
+		c1_r19        <= i_ctl18[1];
+		q_mode_r19    <= {4{i_ctl18[2] &&  i_ctl18[16]}};
+		s_mode_r19_lo <= {4{i_ctl18[2] && !i_ctl18[16]}};
+		s_mode_r19_hi <= {4{i_ctl18[2] && !i_ctl18[16]}};
+		mk_r19        <= {4{i_mk18}};
+		ok_r19        <= i_ok18;
+		vw_r19        <= i_vw18;
+	end
+
+	(* extract_reset = "no" *) reg        swz_use_rn_r19 [0:3];
+	(* extract_reset = "no" *) reg [1:0]  swz_src_r19    [0:3];
+	(* extract_reset = "no" *) reg [31:0] swz_alt_r19    [0:3];
+	(* extract_reset = "no" *) reg [31:0] gw_m_r19       [0:3];
+
+	(* keep = "true", equivalent_register_removal = "no" *) reg        use_rn_lo_q [0:3], use_rn_hi_q [0:3];
+	(* keep = "true", equivalent_register_removal = "no" *) reg [1:0]  sel_rn_lo_q [0:3], sel_rn_hi_q [0:3];
+	(* extract_reset = "no" *) reg [15:0] alt_val_lo_q [0:3], alt_val_hi_q [0:3];
+	(* extract_reset = "no" *) reg        msb_ovr_q   [0:1];
+	(* extract_reset = "no" *) reg        msb_val_q   [0:1];
+
+	genvar gc;
 	generate
-	for (gb = 0; gb < 8; gb = gb + 1) begin : g_base
-		(* dont_touch = "true" *) wire d_nocomp = i_ctl[8] && !i_ctl[9];
-		(* dont_touch = "true" *) wire d32_sel = i_ctl[1];
-		(* dont_touch = "true" *) wire rgb565_texf = i_ctl[19] && i_ctl[3];
-		if (gb == 0) begin : g_b0
-			assign o_base[15:0] = d_nocomp ? (d32_sel ? i_lt[15:0] : i_rn[15:0]) : i_rn[15:0];
-		end else if (gb == 1) begin : g_b1
-			assign o_base[31:16] = d_nocomp ? (d32_sel ? i_lt[31:16] : i_rn[31:16]) : i_rn[31:16];
-		end else if (gb < 6) begin : g_b2_5
-			assign o_base[gb*16 +: 16] = d_nocomp ? 16'd0 : i_rn[gb*16 +: 16];
-		end else if (gb == 6) begin : g_b6
-			assign o_base[111:96] = (d_nocomp || rgb565_texf) ? 16'h0000 : i_rn[111:96];
-		end else begin : g_b7
-			assign o_base[127:112] = (d_nocomp || rgb565_texf) ? 16'h3F80 : i_rn[127:112];
+	for (gc = 0; gc < 4; gc = gc + 1) begin : g_ch
+		localparam [1:0] CH = gc;
+		wire [2:0] sc = i_ctl18[36 + 3*gc +: 3];
+		wire [1:0] swz_src = (sc >= 3'd3 && sc <= 3'd6) ? zsrc(sc[1:0]) : CH;
+		wire swz_const_zero = (sc == 3'd1);
+		wire swz_const_one  = (sc == 3'd2);
+		wire swz_use_rn = !swz_const_zero && !swz_const_one && base_use_rn[swz_src];
+		wire [31:0] swz_alt = swz_const_zero ? 32'd0 :
+		                      swz_const_one  ? 32'h3F800000 :
+		                      (swz_src == 2'd0) ? i_lt18[31:0] :
+		                      (swz_src == 2'd3) ? 32'h3F800000 : 32'd0;
+
+		always @(posedge clk) begin
+			swz_use_rn_r19[gc] <= swz_use_rn;
+			swz_src_r19[gc]    <= swz_src;
+			swz_alt_r19[gc]    <= swz_alt;
+			gw_m_r19[gc]       <= i_lt18[gtx(CH)*32 +: 32];
+		end
+
+		/* P18_mid -> P19 (<= 7 cmos3) */
+		wire c13_use_rn = !c9_r19_lo[gc] && (gsw_r19[gc] != 3'd1) && (gsw_r19[gc] != 3'd2) && (!c8_r19 || (gsrc_r19[gc] == 2'd0 && !c1_r19));
+		wire [15:0] c13_alt_lo = c9_r19_lo[gc] ? 16'd0 :
+		                         (gsw_r19[gc] == 3'd1) ? 16'd0 :
+		                         (gsw_r19[gc] == 3'd2) ? 16'd0 :
+		                         (gsrc_r19[gc] == 2'd0) ? gw_m_r19[gc][15:0] : 16'd0;
+		wire [15:0] c13_alt_hi = c9_r19_hi[gc] ? (ok_r19[gtx(CH)] ? 16'h3F80 : 16'd0) :
+		                         (gsw_r19[gc] == 3'd1) ? 16'd0 :
+		                         (gsw_r19[gc] == 3'd2) ? 16'h3F80 :
+		                         (gsrc_r19[gc] == 2'd0) ? gw_m_r19[gc][31:16] :
+		                         (gsrc_r19[gc] == 2'd3) ? 16'h3F80 : 16'd0;
+
+		wire mid_use_rn = c13_r19_lo[gc] ? c13_use_rn : swz_use_rn_r19[gc];
+		wire [1:0] mid_sel = c13_r19_lo[gc] ? CH : swz_src_r19[gc];
+		wire [15:0] mid_alt_lo = c13_r19_lo[gc] ? c13_alt_lo : swz_alt_r19[gc][15:0];
+		wire [15:0] mid_alt_hi = c13_r19_hi[gc] ? c13_alt_hi : swz_alt_r19[gc][31:16];
+
+		wire fin_use_rn = mk_r19[gc] && (q_mode_r19[gc] ? (gc < 2) : (!s_mode_r19_lo[gc] && mid_use_rn));
+		wire [1:0] fin_sel = q_mode_r19[gc] ? CH : mid_sel;
+		(* dont_touch = "true" *) wire fin_zero_lo_a = !mk_r19[gc] || q_mode_r19[gc];
+		(* dont_touch = "true" *) wire fin_zero_lo_b = !mk_r19[gc] || q_mode_r19[gc];
+		(* dont_touch = "true" *) wire fin_zero_hi_a = !mk_r19[gc] || q_mode_r19[gc];
+		(* dont_touch = "true" *) wire fin_zero_hi_b = !mk_r19[gc] || q_mode_r19[gc];
+		wire [15:0] fin_alt_lo = {
+			fin_zero_lo_b ? 8'd0 : (s_mode_r19_lo[gc] ? ((gc == 0) ? vw_r19[15:8] : 8'd0) : mid_alt_lo[15:8]),
+			fin_zero_lo_a ? 8'd0 : (s_mode_r19_lo[gc] ? ((gc == 0) ? vw_r19[7:0]  : 8'd0) : mid_alt_lo[7:0])
+		};
+		wire [15:0] fin_alt_hi = {
+			fin_zero_hi_b ? 8'd0 : (s_mode_r19_hi[gc] ? ((gc == 0) ? vw_r19[31:24] : 8'd0) : mid_alt_hi[15:8]),
+			fin_zero_hi_a ? 8'd0 : (s_mode_r19_hi[gc] ? ((gc == 0) ? vw_r19[23:16] : 8'd0) : mid_alt_hi[7:0])
+		};
+
+		always @(posedge clk) begin
+			use_rn_lo_q[gc]  <= fin_use_rn;
+			use_rn_hi_q[gc]  <= fin_use_rn;
+			sel_rn_lo_q[gc]  <= fin_sel;
+			sel_rn_hi_q[gc]  <= fin_sel;
+			alt_val_lo_q[gc] <= fin_alt_lo;
+			alt_val_hi_q[gc] <= fin_alt_hi;
+		end
+
+		if (gc < 2) begin : g_q_msb
+			always @(posedge clk) begin
+				msb_ovr_q[gc] <= mk_r19[gc] && q_mode_r19[gc];
+				msb_val_q[gc] <= (gc == 0) ? vw_r19[15] : vw_r19[31];
+			end
+		end
+
+		wire [31:0] rn_lo_w = (sel_rn_lo_q[gc] == 2'd0) ? i_rn[31:0]   :
+		                      (sel_rn_lo_q[gc] == 2'd1) ? i_rn[63:32]  :
+		                      (sel_rn_lo_q[gc] == 2'd2) ? i_rn[95:64]  : i_rn[127:96];
+		wire [31:0] rn_hi_w = (sel_rn_hi_q[gc] == 2'd0) ? i_rn[31:0]   :
+		                      (sel_rn_hi_q[gc] == 2'd1) ? i_rn[63:32]  :
+		                      (sel_rn_hi_q[gc] == 2'd2) ? i_rn[95:64]  : i_rn[127:96];
+		assign o_res[gc*32 +: 16]      = use_rn_lo_q[gc] ? rn_lo_w[15:0]  : alt_val_lo_q[gc];
+		assign o_res[gc*32 + 16 +: 15] = use_rn_hi_q[gc] ? rn_hi_w[30:16] : alt_val_hi_q[gc][14:0];
+		if (gc < 2) begin : g_msb31
+			assign o_res[gc*32 + 31] = msb_ovr_q[gc] ? msb_val_q[gc] :
+			                           (use_rn_hi_q[gc] ? rn_hi_w[31] : alt_val_hi_q[gc][15]);
+		end else begin : g_nomsb31
+			assign o_res[gc*32 + 31] = use_rn_hi_q[gc] ? rn_hi_w[31] : alt_val_hi_q[gc][15];
 		end
 	end
 	endgenerate
 
-	reg [127:0] o_swz_r;
-	reg [2:0] sc0, sc1, sc2, sc3;
-	always @(*) begin
-		for (c = 0; c < 4; c = c + 1) begin
-			sc0 = swz_z0[3*c +: 3];
-			sc1 = swz_z1[3*c +: 3];
-			sc2 = swz_z2[3*c +: 3];
-			sc3 = swz_z3[3*c +: 3];
-			o_swz_r[c*32 +: 8] = sc0 == 3'd1 ? 8'd0 : sc0 == 3'd2 ? 8'h00 :
-				sc0 >= 3'd3 && sc0 <= 3'd6 ? o_base[{zsrc(sc0[1:0]), 5'd0} +: 8] : o_base[c*32 +: 8];
-			o_swz_r[c*32 + 8 +: 8] = sc1 == 3'd1 ? 8'd0 : sc1 == 3'd2 ? 8'h00 :
-				sc1 >= 3'd3 && sc1 <= 3'd6 ? o_base[{zsrc(sc1[1:0]), 5'd8} +: 8] : o_base[c*32 + 8 +: 8];
-			o_swz_r[c*32 + 16 +: 8] = sc2 == 3'd1 ? 8'd0 : sc2 == 3'd2 ? 8'h80 :
-				sc2 >= 3'd3 && sc2 <= 3'd6 ? o_base[{zsrc(sc2[1:0]), 5'd16} +: 8] : o_base[c*32 + 16 +: 8];
-			o_swz_r[c*32 + 24 +: 8] = sc3 == 3'd1 ? 8'd0 : sc3 == 3'd2 ? 8'h3F :
-				sc3 >= 3'd3 && sc3 <= 3'd6 ? o_base[{zsrc(sc3[1:0]), 5'd24} +: 8] : o_base[c*32 + 24 +: 8];
-		end
-	end
-	(* keep = "true" *) wire [127:0] o_swz = o_swz_r;
-
-	(* keep = "true" *) wire [127:0] o_mid;
-	generate
-	for (gb = 0; gb < 8; gb = gb + 1) begin : g_mid
-		localparam [1:0] MC = gb[2:1];
-		localparam       HI = gb[0];
-		(* dont_touch = "true" *) wire c13 = i_ctl_c13[gb];
-		(* dont_touch = "true" *) wire c9  = i_ctl[9];
-		(* dont_touch = "true" *) wire c8  = i_ctl[8];
-		(* dont_touch = "true" *) wire c1  = i_ctl[1];
-		(* keep = "true" *) wire [2:0] gsw_m = (i_ctl[15:14] == 2'd0) ? i_ctl[38:36] :
-		                                       (i_ctl[15:14] == 2'd1) ? i_ctl[41:39] :
-		                                       (i_ctl[15:14] == 2'd2) ? i_ctl[44:42] : i_ctl[47:45];
-		(* keep = "true" *) wire [1:0] gsrc_m = (gsw_m >= 3'd3 && gsw_m <= 3'd6) ? zsrc(gsw_m[1:0]) : i_ctl[15:14];
-		wire [31:0] gw_m = i_lt[gtx(MC)*32 +: 32];
-		if (!HI) begin : g_m_lo
-			assign o_mid[gb*16 +: 16] = !c13 ? o_swz[gb*16 +: 16] :
-				(c9 || gsw_m == 3'd1 || gsw_m == 3'd2) ? 16'd0 :
-				c8 ? (gsrc_m == 2'd0 ? (c1 ? gw_m[15:0] : i_rn[gb*16 +: 16]) : 16'd0) :
-				i_rn[gb*16 +: 16];
-		end else begin : g_m_hi
-			assign o_mid[gb*16 +: 16] = !c13 ? o_swz[gb*16 +: 16] :
-				c9 ? (i_ok[gtx(MC)] ? 16'h3F80 : 16'd0) :
-				(gsw_m == 3'd1 || gsw_m == 3'd2) ? (gsw_m == 3'd2 ? 16'h3F80 : 16'd0) :
-				c8 ? (gsrc_m == 2'd0 ? (c1 ? gw_m[31:16] : i_rn[gb*16 +: 16]) :
-				      gsrc_m == 2'd3 ? 16'h3F80 : 16'd0) :
-				i_rn[gb*16 +: 16];
-		end
-	end
-	endgenerate
-	wire [127:0] q_val = {64'd0, i_vw[31], i_rn[62:32], i_vw[15], i_rn[30:0]};
-	wire [127:0] s_val = {96'd0, i_vw};
-	integer h;
-	always @(*) begin
-		for (h = 0; h < 16; h = h + 1) begin
-			o_res[h*8 +: 8] = !mk_h[h] ? 8'd0 :
-				ctl2_h[h] ? (ctl16_h[h] ? q_val[h*8 +: 8] : s_val[h*8 +: 8]) :
-				o_mid[h*8 +: 8];
-		end
-	end
-
-
-	wire unused_ok = &{1'b0, i_ctl[49:48], i_ctl[35:20], i_ctl[18:17], i_ctl[12:10],
-		i_ctl[7:4], i_ctl[0]};
+	wire unused_ok = &{1'b0, i_ctl18[49:48], i_ctl18[35:20], i_ctl18[18:17], i_ctl18[12:10],
+		i_ctl18[7:4], i_ctl18[0]};
 endmodule
 
 `default_nettype wire

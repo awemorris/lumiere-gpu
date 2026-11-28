@@ -30,7 +30,7 @@ SCHEMA = [
                 "type": "choice",
                 "choices": ["fpga", "asic"],
                 "default": "fpga",
-                "help": "fpga: Flat crossbar (NSU in {1,2}, USE_NOC_FABRIC=0). asic: Fat-Tree NoC (NSU in 1..128, USE_NOC_FABRIC=1).",
+                "help": "fpga: FPGA target (NSU in {1,2}, USE_NOC_FABRIC=0 or 1). asic: Fat-Tree NoC (NSU in 1..128, USE_NOC_FABRIC=1).",
             },
             {
                 "key": "CONFIG_NSU",
@@ -42,10 +42,10 @@ SCHEMA = [
             },
             {
                 "key": "CONFIG_USE_NOC_FABRIC",
-                "label": "Unified 2D Fat-Tree NoC Fabric (Auto)",
+                "label": "Unified 2D Fat-Tree NoC Fabric",
                 "type": "bool",
-                "default": "0",
-                "help": "Automatically forced: 0 (Flat Crossbar) on FPGA, 1 (Fat-Tree NoC) on ASIC.",
+                "default": "1",
+                "help": "1: Use Fat-Tree NoC routers (atg_mc_noc / atg_su_fabric) + inter-unit repeaters. 0: Flat crossbar (legacy).",
             },
             {
                 "key": "TARGET_PRESET",
@@ -508,7 +508,8 @@ def enforce_platform_constraints(cfg):
     """Enforces FPGA vs ASIC rules on USE_NOC_FABRIC and NSU."""
     plat = cfg.get("CONFIG_TARGET_PLATFORM", "fpga")
     if plat == "fpga":
-        cfg["CONFIG_USE_NOC_FABRIC"] = "0"
+        if cfg.get("CONFIG_USE_NOC_FABRIC", "0") not in ("0", "1"):
+            cfg["CONFIG_USE_NOC_FABRIC"] = "1"
         if cfg.get("CONFIG_NSU", "1") not in ("1", "2"):
             cfg["CONFIG_NSU"] = "2"
     else:

@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -54,44 +54,51 @@ module atg_blt_favg (
 
 	reg [3:0] st;
 	reg [511:0] s_in;
-	reg [2:0] m_fmt, m_psl, m_n;
-	reg [1:0] p;		/* the pixel */
-	reg [2:0] j;		/* its channel */
+	(* max_fanout = 16 *) reg [2:0] m_fmt, m_psl;
+	reg [2:0] m_n;
+	(* max_fanout = 16 *) reg [1:0] p;		/* the pixel */
+	(* max_fanout = 16 *) reg [2:0] j;		/* its channel */
 	reg [2:0] step_d;
-	reg [1:0] step;
-	reg [3:0] fma_wait;
+	(* max_fanout = 16 *) reg [1:0] step;
+	reg [4:0] fma_wait;
 	reg [31:0] r01, r23, sm, r_final;
 	reg [31:0] r_fa, r_fb, r_fc;
-	reg [31:0] r_xa, r_xc;
-	reg [31:0] ia_s_r, ic_s_r, ia_h_r, ic_h_r, ia_f_r, ic_f_r;
+	reg        r_fa_nrm;
+	reg [31:0] r_dec_a, r_dec_c;
+	reg [127:0] r_xa_128, r_xc_128;
+	(* max_fanout = 16 *) reg [31:0] r_xa, r_xc;
+	(* dont_touch = "true" *) reg [31:0] r_srgb_a_rom, r_srgb_c_rom;
+	(* dont_touch = "true" *) reg [31:0] r_srgb_a, r_srgb_c;
+	reg [39:0] aq_s_r, aq_c_r;
+	reg [31:0] aq_r;
+	reg        r_ha_exp_sp0, r_ha_zero0, r_ha_sign0, r_hc_exp_sp0, r_hc_zero0, r_hc_sign0;
+	reg [9:0]  r_ha_man0, r_hc_man0;
+	reg [3:0]  r_ha_lz0, r_hc_lz0;
+	reg [4:0]  r_ha_exp0, r_hc_exp0;
+	(* equivalent_register_removal = "no" *) reg [15:0] ca_sl_rep, cc_sl_rep;
+	reg [5:0] ia_s_r, ic_s_r;
+	reg [4:0] ia_h_r, ic_h_r;
+	reg [3:0] ia_f_r, ic_f_r;
+	reg [2:0] cpp_last_r, n_last_r;
 
 	/* The pixel's bytes, 2^psl in 5 bits (0 from 32 bytes), by table. */
-	reg [4:0] ps;
-
-	always @(*)
-		case (m_psl)
-		3'd0: ps = 5'd1;
-		3'd1: ps = 5'd2;
-		3'd2: ps = 5'd4;
-		3'd3: ps = 5'd8;
-		3'd4: ps = 5'd16;
-		default: ps = 5'd0;
+	function [4:0] psl_to_ps;
+		input [2:0] pl;
+		case (pl)
+		3'd0: psl_to_ps = 5'd1;
+		3'd1: psl_to_ps = 5'd2;
+		3'd2: psl_to_ps = 5'd4;
+		3'd3: psl_to_ps = 5'd8;
+		3'd4: psl_to_ps = 5'd16;
+		default: psl_to_ps = 5'd0;
 		endcase
-
-	/* Channels of a pixel: sRGB 3, fp16 ps / 2, fp32 ps / 4. */
-	wire [2:0] cpp = m_fmt == 3'd3 ? 3'd3 : m_fmt == 3'd4 ? ps[3:1] : ps[4:2];
-
-	/*
-	 * The bit places of sample sn of channel j of pixel p in the samples:
-	 * sRGB at byte 4 (4 p + sn) + j, fp16 and fp32 at byte ps (4 p + sn)
-	 * plus 2 j or 4 j.  ps (4 p + sn) is (4 p + sn) << psl, or 0 for a ps of
-	 * 0 (the 5-bit 2^psl wrapped).
-	 */
-	function [31:0] at_ps;	/* t x ps, by a shift */
-		input [31:0] shifted;
-		input [4:0] pz;
-		at_ps = pz == 5'd0 ? 32'd0 : shifted;
 	endfunction
+	wire [4:0] ps_in = psl_to_ps(psl);
+	wire [2:0] cpp_in = (fmt == 3'd3) ? 3'd3 : (fmt == 3'd4) ? ps_in[3:1] : ps_in[4:2];
+	wire [2:0] cpp_last_in, n_last_in;
+	wire [1:0] last_co_unused;
+	am_sub #(.W(3)) s_cpp (.a(cpp_in), .b(3'd1), .bi(1'b0), .d(cpp_last_in), .bo(last_co_unused[0]));
+	am_sub #(.W(3)) s_n (.a(npx), .b(3'd1), .bi(1'b0), .d(n_last_in), .bo(last_co_unused[1]));
 
 	/* Steps 0 and 1 add two samples each: (s0 + s1), then (s2 + s3); only
 	 * those two samples are decoded. */
@@ -102,37 +109,101 @@ module atg_blt_favg (
 	wire [1:0] sn_a = step == 2'd1 ? 2'd2 : 2'd0;
 	wire [1:0] sn_c = step == 2'd1 ? 2'd3 : 2'd1;
 `endif
-	wire [31:0] ta_sh, tc_sh, ta_ps, tc_ps, ia_s, ic_s, ia_h, ic_h, ia_f, ic_f;
+	wire [5:0] ta_sh, tc_sh, ta_ps, tc_ps, ia_s, ic_s;
+	wire [4:0] ia_h, ic_h;
+	wire [3:0] ia_f, ic_f;
 	wire [5:0] idx_co_unused;
 
-	am_shift #(.W(32), .SW(3)) h_ta (.a({28'd0, p, sn_a}), .amt(m_psl), .left(1'b1), .arith(1'b0), .y(ta_sh));
-	am_shift #(.W(32), .SW(3)) h_tc (.a({28'd0, p, sn_c}), .amt(m_psl), .left(1'b1), .arith(1'b0), .y(tc_sh));
-	assign ta_ps = at_ps(ta_sh, ps);
-	assign tc_ps = at_ps(tc_sh, ps);
-	am_add #(.W(32)) a_ias (.a({26'd0, p, sn_a, 2'b00}), .b({29'd0, j}), .ci(1'b0), .s(ia_s), .co(idx_co_unused[0]));
-	am_add #(.W(32)) a_ics (.a({26'd0, p, sn_c, 2'b00}), .b({29'd0, j}), .ci(1'b0), .s(ic_s), .co(idx_co_unused[1]));
-	am_add #(.W(32)) a_iah (.a({ta_ps[28:0], 3'b000}), .b({25'd0, j, 4'b0000}), .ci(1'b0), .s(ia_h), .co(idx_co_unused[2]));
-	am_add #(.W(32)) a_ich (.a({tc_ps[28:0], 3'b000}), .b({25'd0, j, 4'b0000}), .ci(1'b0), .s(ic_h), .co(idx_co_unused[3]));
-	am_add #(.W(32)) a_iaf (.a({ta_ps[28:0], 3'b000}), .b({24'd0, j, 5'b00000}), .ci(1'b0), .s(ia_f), .co(idx_co_unused[4]));
-	am_add #(.W(32)) a_icf (.a({tc_ps[28:0], 3'b000}), .b({24'd0, j, 5'b00000}), .ci(1'b0), .s(ic_f), .co(idx_co_unused[5]));
+	am_shift #(.W(6), .SW(3)) h_ta (.a({2'd0, p, sn_a}), .amt(m_psl), .left(1'b1), .arith(1'b0), .y(ta_sh));
+	am_shift #(.W(6), .SW(3)) h_tc (.a({2'd0, p, sn_c}), .amt(m_psl), .left(1'b1), .arith(1'b0), .y(tc_sh));
+	assign ta_ps = (m_psl > 3'd4) ? 6'd0 : ta_sh;
+	assign tc_ps = (m_psl > 3'd4) ? 6'd0 : tc_sh;
+	am_add #(.W(6)) a_ias (.a({p, sn_a, 2'b00}), .b({3'd0, j}), .ci(1'b0), .s(ia_s), .co(idx_co_unused[0]));
+	am_add #(.W(6)) a_ics (.a({p, sn_c, 2'b00}), .b({3'd0, j}), .ci(1'b0), .s(ic_s), .co(idx_co_unused[1]));
+	am_add #(.W(5)) a_iah (.a(ta_ps[5:1]), .b({2'd0, j}), .ci(1'b0), .s(ia_h), .co(idx_co_unused[2]));
+	am_add #(.W(5)) a_ich (.a(tc_ps[5:1]), .b({2'd0, j}), .ci(1'b0), .s(ic_h), .co(idx_co_unused[3]));
+	am_add #(.W(4)) a_iaf (.a(ta_ps[5:2]), .b({1'd0, j}), .ci(1'b0), .s(ia_f), .co(idx_co_unused[4]));
+	am_add #(.W(4)) a_icf (.a(tc_ps[5:2]), .b({1'd0, j}), .ci(1'b0), .s(ic_f), .co(idx_co_unused[5]));
 
-	/* Sample sn of channel j of pixel p: Stage A extracts raw slice from s_in; Stage B decodes (u_ha/atg_srgb_dec). */
-	wire [31:0] raw_xa = (m_fmt == 3'd3) ? {24'd0, s_in[{ia_s_r[5:0], 3'b000} +: 8]} :
-	                     (m_fmt == 3'd4) ? {16'd0, s_in[{ia_h_r[8:4], 4'b0000} +: 16]} :
-	                                       s_in[{ia_f_r[8:5], 5'b00000} +: 32];
-	wire [31:0] raw_xc = (m_fmt == 3'd3) ? {24'd0, s_in[{ic_s_r[5:0], 3'b000} +: 8]} :
-	                     (m_fmt == 3'd4) ? {16'd0, s_in[{ic_h_r[8:4], 4'b0000} +: 16]} :
-	                                       s_in[{ic_f_r[8:5], 5'b00000} +: 32];
-	wire [31:0] ha, hc;	/* the two fp16 samples as fp32, from registered 16-bit slice */
-	am_fp_h2f #(.DENORM(1), .LAT(0)) u_ha (.h(r_xa[15:0]), .f(ha));
-	am_fp_h2f #(.DENORM(1), .LAT(0)) u_hc (.h(r_xc[15:0]), .f(hc));
-	wire [31:0] xa = (m_fmt == 3'd3) ? atg_srgb_dec(r_xa[7:0]) : (m_fmt == 3'd4) ? ha : r_xa;
-	wire [31:0] xc = (m_fmt == 3'd3) ? atg_srgb_dec(r_xc[7:0]) : (m_fmt == 3'd4) ? hc : r_xc;
+	/* Sample sn of channel j of pixel p: Stage 1 selects 128b chunk (with replicated selector); Stage 2 extracts; Stage 3 decodes in 2 cycles. */
+	wire [1:0] chk_a_n = (m_fmt == 3'd3) ? ia_s[5:4] : (m_fmt == 3'd4) ? ia_h[4:3] : ia_f[3:2];
+	wire [1:0] chk_c_n = (m_fmt == 3'd3) ? ic_s[5:4] : (m_fmt == 3'd4) ? ic_h[4:3] : ic_f[3:2];
+	wire [127:0] raw_xa_128, raw_xc_128;
+	genvar gc128;
+	generate
+		for (gc128 = 0; gc128 < 8; gc128 = gc128 + 1) begin : g_chk128
+			reg [15:0] xas_m, xcs_m;
+			wire [1:0] ca_s_l = ca_sl_rep[gc128*2 +: 2];
+			wire [1:0] cc_s_l = cc_sl_rep[gc128*2 +: 2];
+			always @(*) begin
+				case (ca_s_l)
+				2'd0: xas_m = s_in[  0 + gc128*16 +: 16];
+				2'd1: xas_m = s_in[128 + gc128*16 +: 16];
+				2'd2: xas_m = s_in[256 + gc128*16 +: 16];
+				default: xas_m = s_in[384 + gc128*16 +: 16];
+				endcase
+				case (cc_s_l)
+				2'd0: xcs_m = s_in[  0 + gc128*16 +: 16];
+				2'd1: xcs_m = s_in[128 + gc128*16 +: 16];
+				2'd2: xcs_m = s_in[256 + gc128*16 +: 16];
+				default: xcs_m = s_in[384 + gc128*16 +: 16];
+				endcase
+			end
+			assign raw_xa_128[gc128*16 +: 16] = xas_m;
+			assign raw_xc_128[gc128*16 +: 16] = xcs_m;
+		end
+	endgenerate
+
+	wire [31:0] raw_xa = (m_fmt == 3'd3) ? {24'd0, r_xa_128[{ia_s_r[3:0], 3'b000} +: 8]} :
+	                     (m_fmt == 3'd4) ? {16'd0, r_xa_128[{ia_h_r[2:0], 4'b0000} +: 16]} :
+	                                       r_xa_128[{ia_f_r[1:0], 5'b00000} +: 32];
+	wire [31:0] raw_xc = (m_fmt == 3'd3) ? {24'd0, r_xc_128[{ic_s_r[3:0], 3'b000} +: 8]} :
+	                     (m_fmt == 3'd4) ? {16'd0, r_xc_128[{ic_h_r[2:0], 4'b0000} +: 16]} :
+	                                       r_xc_128[{ic_f_r[1:0], 5'b00000} +: 32];
+
+	/* 2-stage fp16 -> fp32 with denormal normalization (<= 8 cmos3 per stage). */
+	function [3:0] fp16_lz;
+		input [9:0] m;
+		casez (m)
+		10'b1?????????: fp16_lz = 4'd0;
+		10'b01????????: fp16_lz = 4'd1;
+		10'b001???????: fp16_lz = 4'd2;
+		10'b0001??????: fp16_lz = 4'd3;
+		10'b00001?????: fp16_lz = 4'd4;
+		10'b000001????: fp16_lz = 4'd5;
+		10'b0000001???: fp16_lz = 4'd6;
+		10'b00000001??: fp16_lz = 4'd7;
+		10'b000000001?: fp16_lz = 4'd8;
+		default:        fp16_lz = 4'd9;
+		endcase
+	endfunction
+	wire [3:0] ha_lz_w = fp16_lz(r_xa[9:0]);
+	wire [3:0] hc_lz_w = fp16_lz(r_xc[9:0]);
+	wire [3:0] ha_lz1_w, hc_lz1_w;
+	wire [9:0] ha_fr_w, hc_fr_w;
+	wire [7:0] ha_ed_w, ha_en_w, hc_ed_w, hc_en_w;
+	wire [5:0] h2f_co_unused;
+	am_add #(.W(4)) u_halz (.a(r_ha_lz0), .b(4'd0), .ci(1'b1), .s(ha_lz1_w), .co(h2f_co_unused[0]));
+	am_shift #(.W(10), .SW(4), .DIR(2)) u_hafr (.a(r_ha_man0), .amt(ha_lz1_w), .left(1'b1), .arith(1'b0), .y(ha_fr_w));
+	am_sub #(.W(8)) u_haed (.a(8'd112), .b({4'd0, r_ha_lz0}), .bi(1'b0), .d(ha_ed_w), .bo(h2f_co_unused[1]));
+	am_add #(.W(8)) u_haen (.a({3'd0, r_ha_exp0}), .b(8'd112), .ci(1'b0), .s(ha_en_w), .co(h2f_co_unused[2]));
+	am_add #(.W(4)) u_hclz (.a(r_hc_lz0), .b(4'd0), .ci(1'b1), .s(hc_lz1_w), .co(h2f_co_unused[3]));
+	am_shift #(.W(10), .SW(4), .DIR(2)) u_hcfr (.a(r_hc_man0), .amt(hc_lz1_w), .left(1'b1), .arith(1'b0), .y(hc_fr_w));
+	am_sub #(.W(8)) u_hced (.a(8'd112), .b({4'd0, r_hc_lz0}), .bi(1'b0), .d(hc_ed_w), .bo(h2f_co_unused[4]));
+	am_add #(.W(8)) u_hcen (.a({3'd0, r_hc_exp0}), .b(8'd112), .ci(1'b0), .s(hc_en_w), .co(h2f_co_unused[5]));
+	wire [31:0] ha = r_ha_exp_sp0 ? ((r_ha_man0 != 10'd0) ? 32'h7FC00000 : {r_ha_sign0, 31'h7F800000}) :
+		r_ha_zero0 ? ((r_ha_man0 == 10'd0) ? {r_ha_sign0, 31'd0} : {r_ha_sign0, ha_ed_w, ha_fr_w, 13'd0}) :
+		{r_ha_sign0, ha_en_w, r_ha_man0, 13'd0};
+	wire [31:0] hc = r_hc_exp_sp0 ? ((r_hc_man0 != 10'd0) ? 32'h7FC00000 : {r_hc_sign0, 31'h7F800000}) :
+		r_hc_zero0 ? ((r_hc_man0 == 10'd0) ? {r_hc_sign0, 31'd0} : {r_hc_sign0, hc_ed_w, hc_fr_w, 13'd0}) :
+		{r_hc_sign0, hc_en_w, r_hc_man0, 13'd0};
+	wire [31:0] xa = (m_fmt == 3'd3) ? r_srgb_a : (m_fmt == 3'd4) ? ha : r_xa;
+	wire [31:0] xc = (m_fmt == 3'd3) ? r_srgb_c : (m_fmt == 3'd4) ? hc : r_xc;
 	/* The fma: fb is 1.0 or 0.25 (a significand of 2^23), so the product of
 	 * the significands is fa's shifted (no multiplier). */
 	wire [31:0] fr;
-	am_fp_fma_p #(.LAT(6)) u_fma (.clk(clk), .rst_n(rst_n), .en(1'b1), .a0(r_fa), .b0(r_fb), .c0(r_fc), .rm(3'd0), .noc(1'b0),
-		.p({1'b0, r_fa[30:23] != 8'd0 ? {1'b1, r_fa[22:0]} : 24'd0, 23'd0}), .r(fr));
+	am_fp_fma_p #(.LAT(16)) u_fma (.clk(clk), .rst_n(rst_n), .en(1'b1), .a0(r_fa), .b0(r_fb), .c0(r_fc), .rm(3'd0), .noc(1'b0),
+		.p({1'b0, r_fa_nrm ? {1'b1, r_fa[22:0]} : 24'd0, 23'd0}), .r(fr));
 
 	/*
 	 * 4-cycle pipelined fp32 -> fp16 conversion (exact match to am_fp_f2h)
@@ -176,13 +247,8 @@ module atg_blt_favg (
 			{fh0_sign_r, fh1_ex_r[4:0], fh0_q_r[11:10] != 2'b01 ? 10'd0 : fh0_q_r[9:0]}) :
 		fh0_le101_r ? {fh0_sign_r, 15'd0} : {fh0_sign_r, fh3_dr_w};
 	wire [15:0] fh = fh_r;
-	wire [2:0] cpp_last, n_last;
-	wire [1:0] last_co_unused;
-
-	am_sub #(.W(3)) s_cpp (.a(cpp), .b(3'd1), .bi(1'b0), .d(cpp_last), .bo(last_co_unused[0]));
-	am_sub #(.W(3)) s_n (.a(m_n), .b(3'd1), .bi(1'b0), .d(n_last), .bo(last_co_unused[1]));
-	wire lastj = j == cpp_last;
-	wire lastp = {1'b0, p} == n_last;
+	wire lastj = j == cpp_last_r;
+	wire lastp = {1'b0, p} == n_last_r;
 
 	/* The sRGB encoder. */
 	wire e_ready, e_valid;
@@ -192,8 +258,9 @@ module atg_blt_favg (
 		.i_ready(e_ready), .i_x(r_final), .o_valid(e_valid), .o_ready(st == ENC), .o_code(e_code)
 	);
 
-	/* sRGB alpha: byte 3, the UNORM8 average of the four samples, ties to even. */
-	wire [31:0] aq;	/* pixel q's at bits 8 q */
+	/* sRGB alpha: byte 3, 2-stage pipelined UNORM8 average of the four samples, ties to even. */
+	wire [39:0] ac2_s_w, ac2_c_w;
+	wire [31:0] aq_w;	/* pixel q's at bits 8 q */
 
 	genvar q;
 	generate
@@ -204,15 +271,17 @@ module atg_blt_favg (
 			wire [9:0] aw3 = {2'd0, s_in[8 * (4 * (4 * q + 3) + 3) +: 8]};
 			wire [9:0] ac1_s = aw0 ^ aw1 ^ aw2;
 			wire [9:0] ac1_c = {((aw0[8:0] & aw1[8:0]) | (aw1[8:0] & aw2[8:0]) | (aw0[8:0] & aw2[8:0])), 1'b0};
-			wire [9:0] ac2_s = ac1_s ^ ac1_c ^ aw3;
-			wire [9:0] ac2_c = {((ac1_s[8:0] & ac1_c[8:0]) | (ac1_c[8:0] & aw3[8:0]) | (ac1_s[8:0] & aw3[8:0])), 1'b0};
+			assign ac2_s_w[q*10 +: 10] = ac1_s ^ ac1_c ^ aw3;
+			assign ac2_c_w[q*10 +: 10] = {((ac1_s[8:0] & ac1_c[8:0]) | (ac1_c[8:0] & aw3[8:0]) | (ac1_s[8:0] & aw3[8:0])), 1'b0};
+			wire [9:0] ac2_s = aq_s_r[q*10 +: 10];
+			wire [9:0] ac2_c = aq_c_r[q*10 +: 10];
 			wire [9:0] asum, asum_p4;
 			wire [1:0] a_co_unused;
 			am_add #(.W(10)) a_s (.a(ac2_s), .b(ac2_c), .ci(1'b0), .s(asum), .co(a_co_unused[0]));
 			wire [7:0] ap4_s = ac2_s[9:2] ^ ac2_c[9:2] ^ 8'd1;
 			wire [7:0] ap4_c = {((ac2_s[8:2] & ac2_c[8:2]) | (ac2_s[8:2] & 7'd1) | (ac2_c[8:2] & 7'd1)), 1'b0};
 			am_add #(.W(10)) a_sp4 (.a({ap4_s, ac2_s[1:0]}), .b({ap4_c, ac2_c[1:0]}), .ci(1'b0), .s(asum_p4), .co(a_co_unused[1]));
-			assign aq[8 * q +: 8] = (asum[1] && (asum[0] || asum[2])) ? asum_p4[9:2] : asum[9:2];
+			assign aq_w[8 * q +: 8] = (asum[1] && (asum[0] || asum[2])) ? asum_p4[9:2] : asum[9:2];
 
 			wire unused_ok = &{1'b0, a_co_unused, asum_p4[1:0]};
 		end
@@ -239,31 +308,75 @@ module atg_blt_favg (
 	                   (m_psl == 3'd3) ? {p[0], j[0]} :
 	                   j[1:0];
 
+	/* Datapath registers without rst_n on CE (cuts Check 5 & Rule 2 s_in CE fanout). */
+	wire s_in_load = (st == IDLE) && i_valid;
+	genvar gsin;
+	generate
+		for (gsin = 0; gsin < 32; gsin = gsin + 1) begin : g_sin_sl
+			(* keep = "true" *) wire s_in_ce = s_in_load;
+			always @(posedge clk) begin
+				if (s_in_ce)
+					s_in[gsin*16 +: 16] <= in_s[gsin*16 +: 16];
+			end
+		end
+	endgenerate
+
+	always @(posedge clk) begin
+		r_xa_128 <= raw_xa_128;
+		r_xc_128 <= raw_xc_128;
+		r_srgb_a_rom <= atg_srgb_dec(r_xa[7:0]);
+		r_srgb_c_rom <= atg_srgb_dec(r_xc[7:0]);
+		r_srgb_a <= r_srgb_a_rom;
+		r_srgb_c <= r_srgb_c_rom;
+		aq_s_r <= ac2_s_w;
+		aq_c_r <= ac2_c_w;
+		aq_r <= aq_w;
+		r_ha_exp_sp0 <= (r_xa[14:10] == 5'd31);
+		r_ha_zero0   <= (r_xa[14:10] == 5'd0);
+		r_ha_sign0   <= r_xa[15];
+		r_ha_man0    <= r_xa[9:0];
+		r_ha_exp0    <= r_xa[14:10];
+		r_ha_lz0     <= ha_lz_w;
+		r_hc_exp_sp0 <= (r_xc[14:10] == 5'd31);
+		r_hc_zero0   <= (r_xc[14:10] == 5'd0);
+		r_hc_sign0   <= r_xc[15];
+		r_hc_man0    <= r_xc[9:0];
+		r_hc_exp0    <= r_xc[14:10];
+		r_hc_lz0     <= hc_lz_w;
+		r_dec_a  <= xa;
+		r_dec_c  <= xc;
+	end
+
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
 			st <= IDLE;
 			m_fmt <= 3'd0;
 			m_psl <= 3'd0;
 			m_n <= 3'd0;
+			cpp_last_r <= 3'd0;
+			n_last_r <= 3'd0;
 			p <= 2'd0;
 			j <= 3'd0;
 			step <= 2'd0;
-			fma_wait <= 4'd0;
+			fma_wait <= 5'd0;
 			r01 <= 32'd0;
 			r23 <= 32'd0;
 			sm <= 32'd0;
 			r_final <= 32'd0;
 			r_fa <= 32'd0;
+			r_fa_nrm <= 1'b0;
 			r_fb <= 32'd0;
 			r_fc <= 32'd0;
 			r_xa <= 32'd0;
 			r_xc <= 32'd0;
-			ia_s_r <= 32'd0;
-			ic_s_r <= 32'd0;
-			ia_h_r <= 32'd0;
-			ic_h_r <= 32'd0;
-			ia_f_r <= 32'd0;
-			ic_f_r <= 32'd0;
+			ia_s_r <= 6'd0;
+			ic_s_r <= 6'd0;
+			ia_h_r <= 5'd0;
+			ic_h_r <= 5'd0;
+			ia_f_r <= 4'd0;
+			ic_f_r <= 4'd0;
+			ca_sl_rep <= 16'd0;
+			cc_sl_rep <= 16'd0;
 			fh0_sign_r <= 1'b0;
 			fh0_ef_r <= 1'b0;
 			fh0_mnz_r <= 1'b0;
@@ -285,46 +398,78 @@ module atg_blt_favg (
 		end else begin
 			case (st)
 			IDLE: if (i_valid) begin
-				s_in <= in_s;
 				m_fmt <= fmt;
 				m_psl <= psl;
 				m_n <= npx;
+				cpp_last_r <= cpp_last_in;
+				n_last_r <= n_last_in;
 				p <= 2'd0;
 				j <= 3'd0;
 				step <= 2'd0;
-				fma_wait <= 4'd0;
+				fma_wait <= 5'd0;
 				st <= RUN;
 			end
 			RUN: begin
 				case (fma_wait)
-				4'd0: begin
+				5'd0: begin
 					ia_s_r <= ia_s;
 					ic_s_r <= ic_s;
 					ia_h_r <= ia_h;
 					ic_h_r <= ic_h;
 					ia_f_r <= ia_f;
 					ic_f_r <= ic_f;
-					fma_wait <= 4'd1;
+					ca_sl_rep <= {8{chk_a_n}};
+					cc_sl_rep <= {8{chk_c_n}};
+					fma_wait <= 5'd1;
 				end
-				4'd1: begin
+				5'd1: begin
+					/* r_xa_128 / r_xc_128 capture 128b chunk this edge */
+					fma_wait <= 5'd2;
+				end
+				5'd2: begin
 					r_xa <= raw_xa;
 					r_xc <= raw_xc;
-					fma_wait <= 4'd2;
+					fma_wait <= 5'd3;
 				end
-				4'd2: begin
-					r_fa <= step[1] ? (step[0] ? sm : r01) : xa;
+				5'd3: begin
+					/* r_srgb_*_rom and r_h*_0 capture this edge */
+					fma_wait <= 5'd4;
+				end
+				5'd4: begin
+					/* r_srgb_* <= r_srgb_*_rom and ha/hc ready on this edge */
+					fma_wait <= 5'd5;
+				end
+				5'd5: begin
+					/* r_dec_a / r_dec_c capture decoded fp32 this edge */
+					fma_wait <= 5'd6;
+				end
+				5'd6: begin : b_load_fma
+					reg [31:0] nxt_fa;
+					nxt_fa = step[1] ? (step[0] ? sm : r01) : r_dec_a;
+					r_fa <= nxt_fa;
+					r_fa_nrm <= (nxt_fa[30:23] != 8'd0);
 					r_fb <= step == 2'd3 ? QUARTER : ONE;
-					r_fc <= step[1] ? (step[0] ? 32'h80000000 : r23) : xc;
-					fma_wait <= 4'd3;
+					r_fc <= step[1] ? (step[0] ? 32'h80000000 : r23) : r_dec_c;
+					fma_wait <= 5'd7;
 				end
-				4'd3: fma_wait <= 4'd4;
-				4'd4: fma_wait <= 4'd5;
-				4'd5: fma_wait <= 4'd6;
-				4'd6: fma_wait <= 4'd7;
-				4'd7: fma_wait <= 4'd8;
-				4'd8: fma_wait <= 4'd9;
-				4'd9: begin
-					fma_wait <= 4'd0;
+				5'd7:  fma_wait <= 5'd8;
+				5'd8:  fma_wait <= 5'd9;
+				5'd9:  fma_wait <= 5'd10;
+				5'd10: fma_wait <= 5'd11;
+				5'd11: fma_wait <= 5'd12;
+				5'd12: fma_wait <= 5'd13;
+				5'd13: fma_wait <= 5'd14;
+				5'd14: fma_wait <= 5'd15;
+				5'd15: fma_wait <= 5'd16;
+				5'd16: fma_wait <= 5'd17;
+				5'd17: fma_wait <= 5'd18;
+				5'd18: fma_wait <= 5'd19;
+				5'd19: fma_wait <= 5'd20;
+				5'd20: fma_wait <= 5'd21;
+				5'd21: fma_wait <= 5'd22;
+				5'd22: fma_wait <= 5'd23;
+				5'd23: begin
+					fma_wait <= 5'd0;
 					if (step == 2'd0) begin
 						r01 <= fr;
 						step <= step_inc;
@@ -345,7 +490,7 @@ module atg_blt_favg (
 							st <= COMMIT;
 					end
 				end
-				default: fma_wait <= 4'd0;
+				default: fma_wait <= 5'd0;
 				endcase
 			end
 			FH0: begin
@@ -388,7 +533,7 @@ module atg_blt_favg (
 			end
 			endcase
 			if (take) begin
-				fma_wait <= 4'd0;
+				fma_wait <= 5'd0;
 				if (m_fmt == 3'd3)
 					out_p[8 * {p, j[1:0]} +: 8] <= e_code;
 				else if (m_fmt == 3'd4)
@@ -404,18 +549,15 @@ module atg_blt_favg (
 					if (m_fmt == 3'd3)
 						for (k = 0; k < 4; k = k + 1)
 							if (k < m_n)
-								out_p[8 * (4 * k + 3) +: 8] <= aq[8 * k +: 8];
+								out_p[8 * (4 * k + 3) +: 8] <= aq_r[8 * k +: 8];
 				end else
 					st <= RUN;
 			end
 		end
 	end
 
-	wire unused_ok = &{1'b0, e_ready, idx_co_unused, last_co_unused, out_co_unused, fh_co_unused,
-		fh_ds_w[23:15], ta_ps[31:29], tc_ps[31:29],
-		ia_s_r[31:6], ic_s_r[31:6], ia_h_r[31:9], ic_h_r[31:9], ia_h_r[3:0], ic_h_r[3:0],
-		ia_f_r[31:9], ic_f_r[31:9], ia_f_r[4:0], ic_f_r[4:0],
-		ia_h[31:9], ic_h[31:9], ps};
+	wire unused_ok = &{1'b0, e_ready, idx_co_unused, last_co_unused, out_co_unused, fh_co_unused, h2f_co_unused,
+		fh_ds_w[23:15], ta_ps[0], tc_ps[0], m_n, ps_in[0]};
 endmodule
 
 `default_nettype wire

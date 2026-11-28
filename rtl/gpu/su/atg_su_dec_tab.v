@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -18,7 +18,9 @@
 `timescale 1ns / 1ps
 `default_nettype none
 
-module atg_su_dec_tab (
+module atg_su_dec_tab #(
+	parameter OTHER_ONLY = 0
+) (
 	input wire [6:0] opc,
 	input wire [2:0] f3,
 	input wire [6:0] f7,
@@ -64,7 +66,7 @@ module atg_su_dec_tab (
 		need_sa = 1'b0;
 		tex = 1'b0;
 		case (opc)
-		7'b0110011: begin	/* OP */
+		7'b0110011: if (OTHER_ONLY == 0) begin	/* OP */
 			use1 = 1'b1;
 			use2 = 1'b1;
 			wrd = 1'b1;
@@ -118,7 +120,7 @@ module atg_su_dec_tab (
 			default: ;
 			endcase
 		end
-		7'b0010011: begin	/* OP-IMM */
+		7'b0010011: if (OTHER_ONLY == 0) begin	/* OP-IMM */
 			fmt = FM_I;
 			use1 = 1'b1;
 			wrd = 1'b1;
@@ -175,7 +177,7 @@ module atg_su_dec_tab (
 			use1 = f3 <= 3'd2;
 			def = f3 <= 3'd5;
 		end
-		7'b1010011: begin	/* OP-FP */
+		7'b1010011: if (OTHER_ONLY == 0) begin	/* OP-FP */
 			unit = ATG_UNIT_FPU;
 			cls = ATG_CLS_F;
 			use1 = 1'b1;

@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -69,8 +69,27 @@ module atg_mmu_walker #(
 
 	(* max_fanout = 16 *) reg [2:0] st;
 	(* max_fanout = 16 *) reg [1:0] r_lvl;
-	(* max_fanout = 16 *) reg [1:0] r_access_type;
-	(* max_fanout = 16 *) reg [VPN_BITS-1:0] r_vpn;
+	(* keep = "true", equivalent_register_removal = "no", max_fanout = 16 *) reg [1:0] r_access_type;
+	(* keep = "true", equivalent_register_removal = "no", max_fanout = 16 *) reg [1:0] r_access_type_f;
+	localparam integer VPN_MID = VPN_BITS / 2;
+	(* keep = "true", max_fanout = 12 *) reg [VPN_MID-1:0] r_vpn_lo;
+	(* keep = "true", max_fanout = 12 *) reg [VPN_BITS-1:VPN_MID] r_vpn_hi;
+	wire [VPN_BITS-1:0] r_vpn = {r_vpn_hi, r_vpn_lo};
+`ifdef SYNTH_KINTEX7
+	(* DONT_TOUCH = "TRUE" *) wire start_meta_lo, start_meta_hi, start_meta_at;
+	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sm_lo (.I0(start_meta), .O(start_meta_lo));
+	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sm_hi (.I0(start_meta), .O(start_meta_hi));
+	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sm_at (.I0(start_meta), .O(start_meta_at));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* DONT_TOUCH = "TRUE" *) wire start_meta_lo, start_meta_hi, start_meta_at;
+	assign start_meta_lo = start_meta;
+	assign start_meta_hi = start_meta;
+	assign start_meta_at = start_meta;
+`else
+	(* keep = "true" *) wire start_meta_lo = start_meta;
+	(* keep = "true" *) wire start_meta_hi = start_meta;
+	(* keep = "true" *) wire start_meta_at = start_meta;
+`endif
 	(* max_fanout = 16 *) reg [PPN_BITS-11:0] r_base_hi;
 	(* max_fanout = 16 *) reg [9:0]           r_base_lo;
 	wire [PPN_BITS-1:0] r_base = {r_base_hi, r_base_lo};
@@ -147,6 +166,9 @@ module atg_mmu_walker #(
 `ifdef SYNTH_KINTEX7
 	LUT1 #(.INIT(2'h2)) u_b_ce_hi (.I0(ce_req_raw), .O(ce_req_hi));
 	LUT1 #(.INIT(2'h2)) u_b_ce_lo (.I0(ce_req_raw), .O(ce_req_lo));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign ce_req_hi = ce_req_raw;
+	assign ce_req_lo = ce_req_raw;
 `else
 	assign ce_req_hi = ce_req_raw;
 	assign ce_req_lo = ce_req_raw;
@@ -180,14 +202,36 @@ module atg_mmu_walker #(
 
 	always @(posedge clk_wlk or posedge rst_wlk_int) begin
 		if (rst_wlk_int) begin
+			r_access_type   <= 2'd0;
+			r_access_type_f <= 2'd0;
+		end else if (st == ST_IDLE && start_meta_at) begin
+			r_access_type   <= access_type;
+			r_access_type_f <= access_type;
+		end
+	end
+
+	always @(posedge clk_wlk or posedge rst_wlk_int) begin
+		if (rst_wlk_int)
+			r_vpn_lo <= {VPN_MID{1'b0}};
+		else if (st == ST_IDLE && start_meta_lo)
+			r_vpn_lo <= vpn[VPN_MID-1:0];
+	end
+
+	always @(posedge clk_wlk or posedge rst_wlk_int) begin
+		if (rst_wlk_int)
+			r_vpn_hi <= {(VPN_BITS-VPN_MID){1'b0}};
+		else if (st == ST_IDLE && start_meta_hi)
+			r_vpn_hi <= vpn[VPN_BITS-1:VPN_MID];
+	end
+
+	always @(posedge clk_wlk or posedge rst_wlk_int) begin
+		if (rst_wlk_int) begin
 			done          <= 1'b0;
 			fault         <= 1'b0;
 			st            <= ST_IDLE;
 			r_lvl         <= 2'd0;
 			req_valid     <= 1'b0;
-			fault_kind    <= FAULT_NONE;
-			r_access_type <= 2'd0;
-			r_vpn         <= {VPN_BITS{1'b0}};
+			fault_kind      <= FAULT_NONE;
 			r_base_hi     <= {(PPN_BITS-10){1'b0}};
 			r_base_lo     <= 10'd0;
 		end else begin
@@ -199,10 +243,6 @@ module atg_mmu_walker #(
 					req_valid <= 1'b1;
 					r_lvl     <= 2'd0;
 					st        <= ST_READ;
-				end
-				if (start_meta) begin
-					r_access_type <= access_type;
-					r_vpn         <= vpn;
 				end
 			end
 
@@ -230,8 +270,8 @@ module atg_mmu_walker #(
 						if (!pte_v) begin
 							fault_kind <= FAULT_PAGE_FAULT;
 							st         <= ST_FAULT;
-						end else if ((r_access_type == 2'd1 && !pte_w) ||
-						             (r_access_type == 2'd2 && !pte_x)) begin
+						end else if ((r_access_type_f == 2'd1 && !pte_w) ||
+						             (r_access_type_f == 2'd2 && !pte_x)) begin
 							fault_kind <= FAULT_PERM_VIOLATION;
 							st         <= ST_FAULT;
 						end else begin

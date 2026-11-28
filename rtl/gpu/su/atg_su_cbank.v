@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -122,26 +122,32 @@ module atg_su_cbank #(
 	reg req_valid_r;
 	(* max_fanout = 12 *) reg valid, lc_pend;
 	reg [31:0] s_region, s_addr, s_words;
+	reg s_region_z_r, s_words_nz_r;
+	reg [CW:0] nw_clamp_r;
+	reg nw_clamp_eq1_r;
 	/* Load. */
 	(* max_fanout = 12 *) reg [31:0] ladr;	/* byte address of the next word */
 	(* max_fanout = 12 *) reg [CW:0] wi, nw;	/* next word, words */
+	reg [CW:0] wi_rem;
+	reg wi_last_r, wi_lt32_r;
 	wire [LB-1:0] lbuf;
 	/* lwc. */
 	wire [NPHYS*CW-1:0] ridx;
 	wire [DW-1:0] res;
 	(* max_fanout = 12 *) reg [NPHYS-1:0] lanes;
 	reg [6:0] rrd;
-	reg [WARP_W-1:0] rwarp;
-	reg [GRP_W-1:0] rgrp;
+	(* dont_touch = "true" *) reg [WARP_W-1:0] rwarp;
+	(* dont_touch = "true" *) reg [WARP_W-1:0] rwarp_ws;
+	(* dont_touch = "true" *) reg [GRP_W-1:0] rgrp;
 	reg rlast;
-	reg [SBE_W:0] rsbe;
+	(* dont_touch = "true" *) reg [SBE_W:0] rsbe;
 	(* shreg_extract = "no", max_fanout = 12 *) reg [LW-1:0] li, pli, pli_d, pli_d2;
 	(* shreg_extract = "no", max_fanout = 12 *) reg pval, pval_d, pval_d2;
 	(* dont_touch = "true" *) reg [CW-1:0] ra_r;
 	reg [31:0] q;
 	(* dont_touch = "true" *) reg [31:0] q_pipe;
 	wire [95:0] crq;
-	reg b_we_r, cw_we_r;
+	reg b_we_r, cw_we_r, st_idle_r;
 	(* dont_touch = "true" *) reg [CW-1:0] b_wa_r;
 	reg [4:0] cw_wa_r;
 	reg [31:0] b_wd_r;
@@ -150,26 +156,46 @@ module atg_su_cbank #(
 	wire [31:0] imm = x_uop[ATG_UOP_IMM +: 32];
 	wire [WW-1:0] lwo = ladr[2 +: WW];
 	wire [31:0] lword = lbuf[lwo*32 +: 32];
-	assign x_ready = st == IDLE && !lc_pend && !lc_kick && !b_we_r;
+	assign x_ready = st_idle_r && !lc_pend && !lc_kick && !b_we_r;
 
-	wire sc_on;
+	wire sc_on_raw, sc_on_busy, sc_on;
 	wire [CW-1:0] sc_a;
+	wire scrub_sc, scrub_ctl, scrub_wd;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_cbsc_s  (.I0(scrub),     .O(scrub_sc));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_cbsc_c  (.I0(scrub),     .O(scrub_ctl));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_cbsc_w  (.I0(scrub),     .O(scrub_wd));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_cbsn_bs (.I0(sc_on_raw), .O(sc_on_busy));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_cbsn_ct (.I0(sc_on_raw), .O(sc_on));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign scrub_sc = scrub;
+	assign scrub_ctl = scrub;
+	assign scrub_wd = scrub;
+	assign sc_on_busy = sc_on_raw;
+	assign sc_on = sc_on_raw;
+`else
+	assign scrub_sc   = scrub;
+	assign scrub_ctl  = scrub;
+	assign scrub_wd   = scrub;
+	assign sc_on_busy = sc_on_raw;
+	assign sc_on      = sc_on_raw;
+`endif
 
 	atg_su_scrub #(.DEPTH(CONST_WORDS), .AW(CW)) sc (
-		.clk(clk), .rst_n(rst_n), .start(scrub), .on(sc_on), .a(sc_a)
+		.clk(clk), .rst_n(rst_n), .start(scrub_sc), .on(sc_on_raw), .a(sc_a)
 	);
 
 	wire [CW-1:0] sc_a_next;
 	wire sc_a_co_unused;
 	am_add #(.W(CW)) u_sc_a_next (.a(sc_a), .b({CW{1'b0}}), .ci(1'b1), .s(sc_a_next), .co(sc_a_co_unused));
 
-	assign scrub_busy = sc_on;
+	assign scrub_busy = sc_on_busy;
 	wire sc_done = ({{(32-CW){1'b0}}, sc_a} == CONST_WORDS - 1);
-	wire cw_we_next = scrub ? 1'b1 : sc_on ? (!sc_done && ({{(32-CW){1'b0}}, sc_a_next} < 32)) :
-		(st == LWR) ? (wi < 32) : 1'b0;
-	wire [4:0] cw_wa_next = scrub ? 5'd0 : sc_on ? sc_a_next[4:0] : wi[4:0];
+	wire cw_we_next = scrub_ctl ? 1'b1 : sc_on ? (!sc_done && ({{(32-CW){1'b0}}, sc_a_next} < 32)) :
+		(st == LWR) ? wi_lt32_r : 1'b0;
+	wire [4:0] cw_wa_next = scrub_ctl ? 5'd0 : sc_on ? sc_a_next[4:0] : wi[4:0];
 	wire valid_next = inv ? 1'b0 :
-		(st == IDLE && lc_pend && s_region == 32'd0 && s_words != 32'd0) ? 1'b1 : valid;
+		(st == IDLE && lc_pend && s_region_z_r && s_words_nz_r) ? 1'b1 : valid;
 
 	/* Sliced distributed RAM cw (8 x 4-bit slices) so each address/WE net drives <= 12 RAM primitives */
 	wire [14:0] cr_idx_g [0:3];
@@ -179,6 +205,8 @@ module atg_su_cbank #(
 			for (gcb = 0; gcb < 15; gcb = gcb + 1) begin : g_cr_bit
 `ifdef SYNTH_KINTEX7
 				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_cr (.I0(cr_idx[gcb]), .O(cr_idx_g[gcg][gcb]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				assign cr_idx_g[gcg][gcb] = cr_idx[gcb];
 `else
 				assign cr_idx_g[gcg][gcb] = cr_idx[gcb];
 `endif
@@ -199,6 +227,11 @@ module atg_su_cbank #(
 		for (gwa = 0; gwa < 5; gwa = gwa + 1) begin : g_cw_wa_buf
 			(* dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_buf_wa (.O(cw_wa_sl_buf[gwa]), .I0(cw_wa_sl_r[gwa]));
 		end
+`elsif SYNTH_KINTEX_ULTRASCALE
+		genvar gwa;
+		for (gwa = 0; gwa < 5; gwa = gwa + 1) begin : g_cw_wa_buf
+			assign cw_wa_sl_buf[gwa] = cw_wa_sl_r[gwa];
+		end
 `else
 		assign cw_wa_sl_buf = cw_wa_sl_r;
 `endif
@@ -210,6 +243,8 @@ module atg_su_cbank #(
 		wire cw_wa_ce_s;
 `ifdef SYNTH_KINTEX7
 		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wace (.I0(cw_wa_ce_raw), .O(cw_wa_ce_s));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign cw_wa_ce_s = cw_wa_ce_raw;
 `else
 		assign cw_wa_ce_s = cw_wa_ce_raw;
 `endif
@@ -246,17 +281,30 @@ module atg_su_cbank #(
 	endgenerate
 
 	/* The next word of a load, its address, and the next lane. */
-	wire [CW:0] wi_next;
+	wire [CW:0] wi_next, wi_rem_next, nw_clamp;
 	wire [31:0] ladr_next;
 	wire [LW-1:0] li_next;
-	wire wi_co_unused, la_co_unused, li_co_unused;
+	wire wi_co_unused, wr_bo_unused, la_co_unused, li_co_unused;
 	am_add #(.W(CW + 1)) u_wi (.a(wi), .b({(CW + 1){1'b0}}), .ci(1'b1), .s(wi_next), .co(wi_co_unused));
+	am_sub #(.W(CW + 1)) u_wi_rem (.a(wi_rem), .b({(CW + 1){1'b0}}), .bi(1'b1), .d(wi_rem_next), .bo(wr_bo_unused));
 	am_add #(.W(32)) u_ladr (.a(ladr), .b(32'd4), .ci(1'b0), .s(ladr_next), .co(la_co_unused));
 	am_add #(.W(LW)) u_li (.a(li), .b({LW{1'b0}}), .ci(1'b1), .s(li_next), .co(li_co_unused));
+	assign nw_clamp = (s_words > CONST_WORDS) ? CONST_WORDS[CW:0] : s_words[CW:0];
 
 	/* Sliced wide registers res, lbuf, ridx, crq to bound CE fanout <= 16 */
 	wire res_clr_raw = (st == IDLE) && !lc_pend && mine;
-	wire [NPHYS-1:0] res_clr_lane = {NPHYS{res_clr_raw}};
+	wire res_clr_g0, res_clr_g1;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rcg0 (.I0(res_clr_raw), .O(res_clr_g0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rcg1 (.I0(res_clr_raw), .O(res_clr_g1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign res_clr_g0 = res_clr_raw;
+	assign res_clr_g1 = res_clr_raw;
+`else
+	assign res_clr_g0 = res_clr_raw;
+	assign res_clr_g1 = res_clr_raw;
+`endif
+	wire [NPHYS-1:0] res_clr_lane = {{(NPHYS - NPHYS/2){res_clr_g1}}, {(NPHYS/2){res_clr_g0}}};
 
 	wire lbuf_we_raw = (st == LWAIT) && rsp_valid;
 	wire lbuf_we_h0 = lbuf_we_raw, lbuf_we_h1 = lbuf_we_raw;
@@ -264,16 +312,32 @@ module atg_su_cbank #(
 	generate
 	for (gcl = 0; gcl < NPHYS; gcl = gcl + 1) begin : g_cb_res
 		(* shreg_extract = "no" *) reg [CW-1:0] ridx_l;
-		wire ridx_we_l = (st == IDLE) && !lc_pend && mine;
+		wire ridx_we_l;
+`ifdef SYNTH_KINTEX7
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rxwe (.I0((st == IDLE) && !lc_pend && mine), .O(ridx_we_l));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign ridx_we_l = (st == IDLE) && !lc_pend && mine;
+`else
+		assign ridx_we_l = (st == IDLE) && !lc_pend && mine;
+`endif
 		always @(posedge clk)
 			if (ridx_we_l)
 				ridx_l <= xidx[gcl*CW +: CW];
 		assign ridx[gcl*CW +: CW] = ridx_l;
 		for (gch = 0; gch < 2; gch = gch + 1) begin : g_cb_res_h
-			(* shreg_extract = "no" *) reg [15:0] res_h;
-			reg valid_res_h;
-			wire res_clr_h = res_clr_lane[gcl];
-			wire res_we_h = pval_d2 && (pli_d2 == gcl[LW-1:0]);
+			(* shreg_extract = "no", dont_touch = "true" *) reg [15:0] res_h;
+			(* dont_touch = "true" *) reg valid_res_h;
+			wire res_clr_h, res_we_h;
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rclr (.I0(res_clr_lane[gcl]),                     .O(res_clr_h));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rwe  (.I0(pval_d2 && (pli_d2 == gcl[LW-1:0])), .O(res_we_h));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign res_clr_h = res_clr_lane[gcl];
+			assign res_we_h = pval_d2 && (pli_d2 == gcl[LW-1:0]);
+`else
+			assign res_clr_h = res_clr_lane[gcl];
+			assign res_we_h  = pval_d2 && (pli_d2 == gcl[LW-1:0]);
+`endif
 			always @(posedge clk or posedge rst_p) begin
 				if (rst_p)
 					valid_res_h <= 1'b0;
@@ -290,18 +354,32 @@ module atg_su_cbank #(
 		end
 	end
 	for (gcl = 0; gcl < LB / 16; gcl = gcl + 1) begin : g_cb_lbuf
-		(* shreg_extract = "no" *) reg [15:0] lbuf_s;
-		wire lbuf_we_s = (gcl < 8) ? lbuf_we_h0 : lbuf_we_h1;
+		(* shreg_extract = "no", dont_touch = "true" *) reg [15:0] lbuf_s;
+		wire lbuf_we_s;
+`ifdef SYNTH_KINTEX7
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_lbwe (.I0((gcl < 8) ? lbuf_we_h0 : lbuf_we_h1), .O(lbuf_we_s));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign lbuf_we_s = (gcl < 8) ? lbuf_we_h0 : lbuf_we_h1;
+`else
+		assign lbuf_we_s = (gcl < 8) ? lbuf_we_h0 : lbuf_we_h1;
+`endif
 		always @(posedge clk)
 			if (lbuf_we_s)
 				lbuf_s <= rsp_rdata[gcl*16 +: 16];
 		assign lbuf[gcl*16 +: 16] = lbuf_s;
 	end
 	for (gcl = 0; gcl < 6; gcl = gcl + 1) begin : g_cb_crq
-		(* shreg_extract = "no" *) reg [15:0] crq_s;
-		reg valid_crq_s;
-		reg crq_rdy_s;
-		wire crq_we_s = cr_en && crq_rdy_s;
+		(* shreg_extract = "no", dont_touch = "true" *) reg [15:0] crq_s;
+		(* dont_touch = "true" *) reg valid_crq_s;
+		(* dont_touch = "true" *) reg crq_rdy_s;
+		wire crq_we_s;
+`ifdef SYNTH_KINTEX7
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_crqwe (.I0(cr_en && crq_rdy_s), .O(crq_we_s));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign crq_we_s = cr_en && crq_rdy_s;
+`else
+		assign crq_we_s = cr_en && crq_rdy_s;
+`endif
 		always @(posedge clk or posedge rst_p) begin
 			if (rst_p) begin
 				valid_crq_s <= 1'b0;
@@ -319,13 +397,54 @@ module atg_su_cbank #(
 	end
 	endgenerate
 
-	wire s_reg_we_lo = st_we && (st_idx == GHCI_S_LC_REGION);
-	wire s_reg_we_hi = st_we && (st_idx == GHCI_S_LC_REGION);
-	wire s_adr_we_lo = st_we && (st_idx == GHCI_S_LC_ADDR);
-	wire s_adr_we_hi = st_we && (st_idx == GHCI_S_LC_ADDR);
-	wire s_wrd_we_lo = st_we && (st_idx == GHCI_S_LC_WORDS);
-	wire s_wrd_we_hi = st_we && (st_idx == GHCI_S_LC_WORDS);
-	wire [3:0] ladr_we_b = {4{(st == IDLE && lc_pend) || (st == LWR)}};
+	wire s_reg_we_lo, s_reg_we_hi;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_srw_lo (.I0(st_we && (st_idx == GHCI_S_LC_REGION)), .O(s_reg_we_lo));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_srw_hi (.I0(st_we && (st_idx == GHCI_S_LC_REGION)), .O(s_reg_we_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign s_reg_we_lo = st_we && (st_idx == GHCI_S_LC_REGION);
+	assign s_reg_we_hi = st_we && (st_idx == GHCI_S_LC_REGION);
+`else
+	assign s_reg_we_lo = st_we && (st_idx == GHCI_S_LC_REGION);
+	assign s_reg_we_hi = st_we && (st_idx == GHCI_S_LC_REGION);
+`endif
+	wire s_adr_we_lo, s_adr_we_hi0, s_adr_we_hi1, s_wrd_we_lo0, s_wrd_we_lo1, s_wrd_we_hi;
+	wire [3:0] ladr_we_b;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_saw_lo (.I0(st_we && (st_idx == GHCI_S_LC_ADDR)),  .O(s_adr_we_lo));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_saw_h0 (.I0(st_we && (st_idx == GHCI_S_LC_ADDR)),  .O(s_adr_we_hi0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_saw_h1 (.I0(st_we && (st_idx == GHCI_S_LC_ADDR)),  .O(s_adr_we_hi1));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_sww_l0 (.I0(st_we && (st_idx == GHCI_S_LC_WORDS)), .O(s_wrd_we_lo0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_sww_l1 (.I0(st_we && (st_idx == GHCI_S_LC_WORDS)), .O(s_wrd_we_lo1));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_sww_hi (.I0(st_we && (st_idx == GHCI_S_LC_WORDS)), .O(s_wrd_we_hi));
+	genvar glw;
+	generate
+		for (glw = 0; glw < 4; glw = glw + 1) begin : g_lwe_b
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_lweb (.I0((st == IDLE && lc_pend) || (st == LWR)), .O(ladr_we_b[glw]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign s_adr_we_lo = st_we && (st_idx == GHCI_S_LC_ADDR);
+	assign s_adr_we_hi0 = st_we && (st_idx == GHCI_S_LC_ADDR);
+	assign s_adr_we_hi1 = st_we && (st_idx == GHCI_S_LC_ADDR);
+	assign s_wrd_we_lo0 = st_we && (st_idx == GHCI_S_LC_WORDS);
+	assign s_wrd_we_lo1 = st_we && (st_idx == GHCI_S_LC_WORDS);
+	assign s_wrd_we_hi = st_we && (st_idx == GHCI_S_LC_WORDS);
+	genvar glw;
+	generate
+		for (glw = 0; glw < 4; glw = glw + 1) begin : g_lwe_b
+			assign ladr_we_b[glw] = (st == IDLE && lc_pend) || (st == LWR);
+		end
+	endgenerate
+`else
+	assign s_adr_we_lo  = st_we && (st_idx == GHCI_S_LC_ADDR);
+	assign s_adr_we_hi0 = st_we && (st_idx == GHCI_S_LC_ADDR);
+	assign s_adr_we_hi1 = st_we && (st_idx == GHCI_S_LC_ADDR);
+	assign s_wrd_we_lo0 = st_we && (st_idx == GHCI_S_LC_WORDS);
+	assign s_wrd_we_lo1 = st_we && (st_idx == GHCI_S_LC_WORDS);
+	assign s_wrd_we_hi  = st_we && (st_idx == GHCI_S_LC_WORDS);
+	assign ladr_we_b    = {4{(st == IDLE && lc_pend) || (st == LWR)}};
+`endif
 	wire [31:0] ladr_mux = (st == IDLE) ? {s_addr[31:2], 2'b00} : ladr_next;
 
 	always @(posedge clk) begin
@@ -338,12 +457,17 @@ module atg_su_cbank #(
 	always @(posedge clk or posedge rst_p) begin
 		if (rst_p) begin
 			st <= IDLE;
+			st_idle_r <= 1'b1;
 			req_valid_r <= 1'b0;
 			valid <= 1'b0;
 			lc_pend <= 1'b0;
 			s_region <= 32'd0;
 			s_addr <= 32'd0;
 			s_words <= 32'd0;
+			s_region_z_r <= 1'b1;
+			s_words_nz_r <= 1'b0;
+			nw_clamp_r <= {(CW+1){1'b0}};
+			nw_clamp_eq1_r <= 1'b0;
 			pval <= 1'b0;
 			pval_d <= 1'b0;
 			pval_d2 <= 1'b0;
@@ -354,19 +478,29 @@ module atg_su_cbank #(
 			ra_r <= {CW{1'b0}};
 			wi <= {(CW+1){1'b0}};
 			nw <= {(CW+1){1'b0}};
+			wi_rem <= {(CW+1){1'b0}};
+			wi_last_r <= 1'b0;
+			wi_lt32_r <= 1'b1;
 			lanes <= {NPHYS{1'b0}};
 			rrd <= 7'd0;
 			rwarp <= {WARP_W{1'b0}};
+			rwarp_ws <= {WARP_W{1'b0}};
 			rgrp <= {GRP_W{1'b0}};
 			rlast <= 1'b0;
 			rsbe <= {(SBE_W+1){1'b0}};
 		end else begin
 			if (s_reg_we_lo) s_region[15:0]  <= st_wdata[15:0];
 			if (s_reg_we_hi) s_region[31:16] <= st_wdata[31:16];
-			if (s_adr_we_lo) s_addr[15:0]    <= st_wdata[15:0];
-			if (s_adr_we_hi) s_addr[31:16]   <= st_wdata[31:16];
-			if (s_wrd_we_lo) s_words[15:0]   <= st_wdata[15:0];
-			if (s_wrd_we_hi) s_words[31:16]  <= st_wdata[31:16];
+			if (s_adr_we_lo)  s_addr[15:0]    <= st_wdata[15:0];
+			if (s_adr_we_hi0) s_addr[23:16]   <= st_wdata[23:16];
+			if (s_adr_we_hi1) s_addr[31:24]   <= st_wdata[31:24];
+			if (s_wrd_we_lo0) s_words[7:0]    <= st_wdata[7:0];
+			if (s_wrd_we_lo1) s_words[15:8]   <= st_wdata[15:8];
+			if (s_wrd_we_hi)  s_words[31:16]  <= st_wdata[31:16];
+			s_region_z_r   <= (s_region == 32'd0);
+			s_words_nz_r   <= (s_words != 32'd0);
+			nw_clamp_r     <= nw_clamp;
+			nw_clamp_eq1_r <= (nw_clamp == {{CW{1'b0}}, 1'b1});
 			if (lc_kick)
 				lc_pend <= 1'b1;
 			pval <= 1'b0;
@@ -379,21 +513,27 @@ module atg_su_cbank #(
 				if (lc_pend) begin
 					lc_pend <= lc_kick;
 					wi <= {(CW+1){1'b0}};
-					nw <= s_words > CONST_WORDS ? CONST_WORDS[CW:0] : s_words[CW:0];
-					if (s_region == 32'd0 && s_words != 32'd0) begin
+					nw <= nw_clamp_r;
+					wi_rem <= nw_clamp_r;
+					wi_last_r <= nw_clamp_eq1_r;
+					wi_lt32_r <= 1'b1;
+					if (s_region_z_r && s_words_nz_r) begin
 						valid <= 1'b1;
 						st <= LREQ;
+						st_idle_r <= 1'b0;
 						req_valid_r <= 1'b1;
 					end
 				end else if (mine) begin
 					lanes <= x_mask[NPHYS-1:0];
 					rrd <= x_uop[ATG_UOP_RD +: 7];
 					rwarp <= x_warp;
+					rwarp_ws <= x_warp;
 					rgrp <= x_grp;
 					rlast <= x_last;
 					rsbe <= x_sbe;
 					li <= {LW{1'b0}};
 					st <= x_mask[NPHYS-1:0] == {NPHYS{1'b0}} ? BEAT : ACCESS;
+					st_idle_r <= 1'b0;
 				end
 			LREQ: if (req_ready) begin
 				st <= LWAIT;
@@ -401,12 +541,17 @@ module atg_su_cbank #(
 			end
 			LWAIT: if (rsp_valid) begin
 				st <= rsp_error ? IDLE : LWR;
+				st_idle_r <= rsp_error;
 			end
 			LWR: begin
 				wi <= wi_next;
-				if (wi_next == nw)
+				wi_rem <= wi_rem_next;
+				wi_last_r <= (wi_rem == {{(CW-1){1'b0}}, 2'd2});
+				wi_lt32_r <= (wi[CW:5] == {(CW-4){1'b0}}) && (wi[4:0] != 5'h1F);
+				if (wi_last_r) begin
 					st <= IDLE;
-				else if (&lwo) begin
+					st_idle_r <= 1'b1;
+				end else if (&lwo) begin
 					st <= LREQ;
 					req_valid_r <= 1'b1;
 				end
@@ -422,9 +567,14 @@ module atg_su_cbank #(
 			DRAIN: st <= DRAIN2;
 			DRAIN2: st <= DRAIN3;
 			DRAIN3: st <= BEAT;
-			BEAT: if (l_ready)
+			BEAT: if (l_ready) begin
 				st <= IDLE;
-			default: st <= IDLE;
+				st_idle_r <= 1'b1;
+			end
+			default: begin
+				st <= IDLE;
+				st_idle_r <= 1'b1;
+			end
 			endcase
 			if (inv)
 				valid <= 1'b0;
@@ -439,10 +589,13 @@ module atg_su_cbank #(
 		for (gbw = 0; gbw < 4; gbw = gbw + 1) begin : g_bwd_we
 `ifdef SYNTH_KINTEX7
 			(* dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_buf_bwd_we (.O(b_wd_we_b[gbw]), .I0(b_wd_we_raw));
-			(* dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_buf_bwd_z  (.O(b_wd_zero_b[gbw]), .I0(scrub || sc_on));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_buf_bwd_z  (.O(b_wd_zero_b[gbw]), .I0(scrub_wd || sc_on));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign b_wd_we_b[gbw] = b_wd_we_raw;
+			assign b_wd_zero_b[gbw] = scrub_wd || sc_on;
 `else
 			assign b_wd_we_b[gbw] = b_wd_we_raw;
-			assign b_wd_zero_b[gbw] = scrub || sc_on;
+			assign b_wd_zero_b[gbw] = scrub_wd || sc_on;
 `endif
 		end
 	endgenerate
@@ -479,7 +632,7 @@ module atg_su_cbank #(
 			cw_we_r <= 1'b0;
 			b_wa_r  <= {CW{1'b0}};
 			cw_wa_r <= 5'd0;
-		end else if (scrub) begin
+		end else if (scrub_ctl) begin
 			b_we_r  <= 1'b1;
 			cw_we_r <= 1'b1;
 			b_wa_r  <= {CW{1'b0}};
@@ -514,7 +667,7 @@ module atg_su_cbank #(
 	assign cr_data = crq;
 	assign busy = st == LREQ || st == LWAIT || st == LWR || lc_pend || (b_we_r && !sc_on);
 	assign req_valid = req_valid_r;
-	wire [1:0] cur_stage = warp_stage[rwarp * 2 +: 2];
+	wire [1:0] cur_stage = warp_stage[rwarp_ws * 2 +: 2];
 	wire [63:0] ladr_ext = {32'd0, ladr};
 	assign req_write = 1'b0;
 	assign req_line = ladr_ext[ADDR_W-1:LINE_SHIFT];
@@ -524,7 +677,23 @@ module atg_su_cbank #(
 
 	assign l_valid = st == BEAT;
 	assign l_warp = rwarp;
+`ifdef SYNTH_KINTEX7
+	genvar glgp;
+	generate
+		for (glgp = 0; glgp < GRP_W; glgp = glgp + 1) begin : g_lgrp_buf
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_lgrp (.I0(rgrp[glgp]), .O(l_grp[glgp]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar glgp;
+	generate
+		for (glgp = 0; glgp < GRP_W; glgp = glgp + 1) begin : g_lgrp_buf
+			assign l_grp[glgp] = rgrp[glgp];
+		end
+	endgenerate
+`else
 	assign l_grp = rgrp;
+`endif
 	assign l_rd = rrd;
 	assign l_data = res;
 	assign l_lanes = lanes;
@@ -534,7 +703,7 @@ module atg_su_cbank #(
 	assign l_cls = ATG_CLS_M;
 
 	wire unused_ok = &{1'b0, x_pc, x_b, x_c, x_mask[2*NPHYS-1:NPHYS], x_info, x_uop, imm, x_a,
-		rsp_write, rsp_tag, sc_a_co_unused, (NWARPS != 0), ladr[1:0], s_addr[1:0], cw_we_r, cw_wa_r};
+		rsp_write, rsp_tag, sc_a_co_unused, wr_bo_unused, (NWARPS != 0), ladr[1:0], s_addr[1:0], cw_we_r, cw_wa_r};
 endmodule
 
 `default_nettype wire

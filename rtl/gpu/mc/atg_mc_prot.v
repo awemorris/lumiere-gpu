@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -224,7 +224,34 @@ module atg_mc_prot #(
 	wire [GW:0] g1 = g1_r;
 	wire tb_on = tb_on_r;
 
-	/* A write into the table without tbl (with HAS_PROT and a table). */
+	localparam integer CMP_NC = (ADDR_W + 1 + 4) / 5;
+
+	/* A write into the table without tbl (with HAS_PROT and a table); chunked compare <= 8 cmos3. */
+	function cmp_lt_chunked;
+		input [ADDR_W:0] lhs;
+		input [ADDR_W:0] rhs;
+		integer ci, bi, ri;
+		reg [4:0] lc, rc;
+		reg res;
+		begin
+			res = 1'b0;
+			for (ci = 0; ci < CMP_NC; ci = ci + 1) begin
+				bi = ci * 5;
+				lc = 5'd0;
+				rc = 5'd0;
+				for (ri = 0; ri < 5; ri = ri + 1) begin
+					if ((bi + ri) <= ADDR_W) begin
+						lc[ri] = lhs[bi + ri];
+						rc[ri] = rhs[bi + ri];
+					end
+				end
+				if (lc != rc)
+					res = (lc < rc);
+			end
+			cmp_lt_chunked = res;
+		end
+	endfunction
+
 	function tw_bad_of;
 		input [LB-1:0] h;
 		input [LA_W-1:0] line;
@@ -234,7 +261,8 @@ module atg_mc_prot #(
 `ifdef MUT_PROT_TBL
 			tw_bad_of = 1'b0;
 `else
-			tw_bad_of = tb_on && h[1] && !h[HW] && a >= {1'b0, tbase_r} && a < tend_r;
+			tw_bad_of = tb_on && h[1] && !h[HW] &&
+				!cmp_lt_chunked(a, {1'b0, tbase_r}) && cmp_lt_chunked(a, tend_r);
 `endif
 		end
 	endfunction
@@ -264,22 +292,35 @@ module atg_mc_prot #(
 
 	/* ------------------------------------------------ J and P */
 
-	reg j_v;
+	reg j_v, j_write_r;
 	reg [HPW-1:0] j_head;
 	reg [LB-1:0] j_data;
 	reg [LA_W-1:0] j_line;
 	reg [GW-1:0] j_idx, p_idx;
 	reg j_rng, p_rng;
-	reg p_v, p_walk, p_stale, p_err, inv_pend;
+	reg p_v, p_walk, p_stale, p_err, p_write_r, inv_pend;
 	reg [HPW-1:0] p_head;
 	reg [LB-1:0] p_data;
 	reg [LA_W-1:0] p_line;
+
+	/* Stage 1 pipeline registers (decouples J/P muxing from PLB & CAM lookup) */
+	reg s1_v, s1_src_p, s1_p_err, s1_rng, s1_write;
+	reg [HPW-1:0] s1_head;
+	reg [LB-1:0] s1_data;
+	reg [LA_W-1:0] s1_line;
+	reg [GW-1:0] s1_idx;
+
+	/* Stage 0->1 invalidation & w_valid skid tracking */
+	reg inv_v_r, p_chk_inv_r;
+	reg w_hld_v, w_hld_err;
+	reg [LB-1:0] w_hld_data;
 
 	/* ------------------------------------------- Stage 2 registers */
 
 	reg j2_v;
 	reg j2_src_p;
 	reg j2_p_err;
+	reg j2_write_r;
 	reg [HPW-1:0] j2_head;
 	reg [LB-1:0] j2_data;
 	reg [LA_W-1:0] j2_line;
@@ -292,31 +333,39 @@ module atg_mc_prot #(
 	wire [7:0] a_client = a_head[19:12];
 	wire [7:0] j_client = j_head[19:12];
 	wire [7:0] p_client = p_head[19:12];
+	wire [7:0] s1_client = s1_head[19:12];
 	wire [7:0] j2_client = j2_head[19:12];
 
-	/* Stage 1: P when ready, else J. Neither is presented if already in Stage 2. */
-	wire j1_has_p = p_v && !p_walk && !(j2_v && j2_src_p);
-	wire j_blocked = p_v && p_client == j_client;
-	wire j1_has_j = j_v && !j_blocked && !(j2_v && !j2_src_p);
+	/* Stage 1 arbiter: P when ready, else J. */
+	wire j1_has_p = p_v && !p_walk && !(s1_v && s1_src_p) && !(j2_v && j2_src_p);
+	wire j_blocked = (p_v && p_client == j_client) || (s1_v && s1_src_p && s1_client == j_client);
+	wire j1_has_j = j_v && !j_blocked && !(s1_v && !s1_src_p) && !(j2_v && !j2_src_p);
 	wire src_p = j1_has_p;
 	wire j1_valid = P && (j1_has_p || j1_has_j);
 
-	wire [HPW-1:0] s_head = src_p ? p_head : j_head;
-	wire [LA_W-1:0] s_line = src_p ? p_line : j_line;
-	wire s_write = s_head[1] || rmw_of(s_head[19:12]);
-	wire [5:0] s_slot = s_head[HW+1 +: 6];
-	wire [GW-1:0] s_g = s_line[LA_W-1:GS];
-	wire s_rng = src_p ? p_rng : j_rng;
-	wire [GW-1:0] s_idx = src_p ? p_idx : j_idx;
-	wire [TAGW-1:0] s_tag = s_idx[GW-1:LINE_SHIFT];
-	wire [LINE_SHIFT-1:0] s_byte = s_idx[LINE_SHIFT-1:0];
+	wire [HPW-1:0] j1_head = src_p ? p_head : j_head;
+	wire [LA_W-1:0] j1_line = src_p ? p_line : j_line;
+	wire j1_write = src_p ? p_write_r : j_write_r;
+	wire j1_rng = src_p ? p_rng : j_rng;
+	wire [GW-1:0] j1_idx = src_p ? p_idx : j_idx;
+
+	/* Stage 1 lookup inputs (all pure FFs from s1_*) */
+	wire [5:0] s_slot = s1_head[HW+1 +: 6];
+	wire [GW-1:0] s_g = s1_line[LA_W-1:GS];
+	wire s_write = s1_write;
+	wire [TAGW-1:0] s_tag = s1_idx[GW-1:LINE_SHIFT];
+	wire [LINE_SHIFT-1:0] s_byte = s1_idx[LINE_SHIFT-1:0];
 
 	/* The PLB (the walk's line: p_tag, below). */
 	wire pl_hit, p_inv;
 	wire [7:0] s_b;
 	wire [TAGW-1:0] p_tag;
-	wire fill;
+	wire fill, fill_raw;
 	wire s_cam;
+
+	wire w_v_eff = !inv_valid && (w_valid || w_hld_v);
+	wire w_err_eff = w_hld_v ? w_hld_err : w_error;
+	wire [LB-1:0] w_rdata_eff = w_hld_v ? w_hld_data : w_rdata;
 
 	generate
 	if (P) begin : g_prot
@@ -326,7 +375,7 @@ module atg_mc_prot #(
 		) plb (
 			.clk(clk), .rst_n(rst_n), .flush(flush), .en(P), .g0(g0), .tag(s_tag),
 			.byte_idx(s_byte), .hit(pl_hit), .data(), .byte_data(s_b),
-			.fill(fill), .fill_tag(p_tag), .fill_data(w_rdata),
+			.fill(fill), .fill_data_en(fill_raw), .fill_tag(p_tag), .fill_data(w_rdata_eff),
 			.inv_valid(inv_valid), .inv_g(inv_g), .inv_n(inv_n), .w_tag(p_tag), .w_inv(p_inv)
 		);
 
@@ -353,7 +402,7 @@ module atg_mc_prot #(
 	endgenerate
 
 	/* Stage 2 evaluation */
-	wire j2_write = j2_head[1] || rmw_of(j2_head[19:12]);
+	wire j2_write = j2_write_r;
 	wire [5:0] j2_slot = j2_head[HW+1 +: 6];
 `ifdef MUT_PROT_RO
 	wire s_own = j2_slot != 6'd0 && j2_b[5:0] == j2_slot;
@@ -370,7 +419,7 @@ module atg_mc_prot #(
 	wire chg = 1'b0;
 	wire chg_rev = 1'b0;
 `else
-	wire chg_rev = inv_valid || gw_valid;
+	wire chg_rev = inv_valid || inv_v_r || gw_valid;
 	wire chg = fill_raw || chg_rev;
 `endif
 
@@ -382,8 +431,8 @@ module atg_mc_prot #(
 	wire x_walk = x_valid && j2_src_p && !j2_p_err && s_miss;
 	wire j_to_p = x_valid && !j2_src_p && s_miss && !p_v;
 
-	wire a_blocked = j_v && j_client == a_client || p_v && p_client == a_client ||
-		j2_v && j2_client == a_client;
+	wire a_blocked = (j_v && j_client == a_client) || (s1_v && s1_client == a_client) ||
+		(p_v && p_client == a_client) || (j2_v && j2_client == a_client);
 	wire a_axi = a_valid && a_direct && !a_isbad && !a_blocked;
 	wire a_bad = a_valid && a_direct && a_isbad && !a_blocked;
 
@@ -431,7 +480,8 @@ module atg_mc_prot #(
 	assign done_chk = fired_x || fired_a && a_chk;
 
 	wire j2_done = fired_x || (g_fire && sel_w) || j_to_p;
-	wire j1_advance = j1_valid && !chg && (!j2_v || j2_done);
+	wire s1_advance = s1_v && !chg && (!j2_v || j2_done);
+	wire j1_advance = j1_valid && !chg && (!s1_v || s1_advance);
 
 	wire j_leave = fired_x && !j2_src_p || j_to_p;
 	wire a_to_j = P && a_valid && !a_direct && !j_v;
@@ -439,30 +489,65 @@ module atg_mc_prot #(
 
 	/* ------------------------------------------- invalidation */
 
-	wire fill_raw = P && w_valid && !w_error && !p_stale;
-	wire w_stale = p_stale || p_inv;
-	assign fill = fill_raw && !p_inv;
+	assign fill_raw = P && w_v_eff && !w_err_eff && !p_stale;
+	wire w_stale = p_stale || (inv_v_r && p_inv);
+	assign fill = fill_raw && !(inv_v_r && p_inv);
 	assign inv_pending = inv_pend;
 
 	/* ------------------------------------------- Pipeline control */
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
+			s1_v <= 1'b0;
 			j2_v <= 1'b0;
+			inv_v_r <= 1'b0;
+			p_chk_inv_r <= 1'b0;
+			w_hld_v <= 1'b0;
+			w_hld_err <= 1'b0;
 		end else if (flush || !P) begin
+			s1_v <= 1'b0;
 			j2_v <= 1'b0;
+			inv_v_r <= 1'b0;
+			p_chk_inv_r <= 1'b0;
+			w_hld_v <= 1'b0;
 		end else begin
+			inv_v_r <= inv_valid;
+			p_chk_inv_r <= p_walk && inv_valid;
+			if (inv_valid && w_valid) begin
+				w_hld_v <= 1'b1;
+				w_hld_err <= w_error;
+			end else if (w_hld_v) begin
+				w_hld_v <= 1'b0;
+			end
+
+			if (chg) begin
+				s1_v <= 1'b0;
+			end else if (j1_advance) begin
+				s1_v <= 1'b1;
+				s1_src_p <= src_p;
+				s1_p_err <= src_p && p_err;
+				s1_head <= j1_head;
+				s1_data <= src_p ? p_data : j_data;
+				s1_line <= j1_line;
+				s1_idx <= j1_idx;
+				s1_rng <= j1_rng;
+				s1_write <= j1_write;
+			end else if (s1_advance) begin
+				s1_v <= 1'b0;
+			end
+
 			if (j2_v && (chg_rev || (fill_raw && !(s_ok || s_refuse)))) begin
 				j2_v <= 1'b0;
-			end else if (j1_advance) begin
+			end else if (s1_advance) begin
 				j2_v <= 1'b1;
-				j2_src_p <= src_p;
-				j2_p_err <= src_p && p_err;
-				j2_head <= s_head;
-				j2_data <= src_p ? p_data : j_data;
-				j2_line <= s_line;
-				j2_idx <= s_idx;
-				j2_rng <= s_rng;
+				j2_src_p <= s1_src_p;
+				j2_p_err <= s1_p_err;
+				j2_write_r <= s1_write;
+				j2_head <= s1_head;
+				j2_data <= s1_data;
+				j2_line <= s1_line;
+				j2_idx <= s1_idx;
+				j2_rng <= s1_rng;
 				j2_b <= s_b;
 				j2_hit <= pl_hit;
 				j2_cam <= s_cam;
@@ -470,6 +555,11 @@ module atg_mc_prot #(
 				j2_v <= 1'b0;
 			end
 		end
+	end
+
+	always @(posedge clk) begin
+		if (inv_valid && w_valid)
+			w_hld_data <= w_rdata;
 	end
 
 	/* ------------------------------------------- J and P registers */
@@ -506,13 +596,17 @@ module atg_mc_prot #(
 				p_walk <= 1'b1;
 				p_stale <= 1'b0;
 			end
-			if (p_walk && p_inv) begin
-				p_stale <= 1'b1;
+			if (p_walk && inv_valid) begin
 				inv_pend <= 1'b1;
+			end else if (p_chk_inv_r) begin
+				if (p_inv)
+					p_stale <= 1'b1;
+				else if (!p_stale && !(fired_x && j2_src_p) && !(w_v_eff && !w_stale))
+					inv_pend <= 1'b0;
 			end
-			if (w_valid) begin
+			if (w_v_eff) begin
 				p_walk <= 1'b0;
-				p_err <= w_error;
+				p_err <= w_err_eff;
 				if (!w_stale)
 					inv_pend <= 1'b0;
 			end
@@ -526,6 +620,7 @@ module atg_mc_prot #(
 			j_line <= a_line;
 			j_idx <= a_idx;
 			j_rng <= a_rng;
+			j_write_r <= a_head[1] || rmw_of(a_head[19:12]);
 		end
 		if (j_to_p) begin
 			p_head <= j2_head;
@@ -533,12 +628,13 @@ module atg_mc_prot #(
 			p_line <= j2_line;
 			p_idx <= j2_idx;
 			p_rng <= j2_rng;
+			p_write_r <= j2_write_r;
 		end
 	end
 
-	wire unused_ok = &{1'b0, a_head, d_head, g_head, b_head, j_head, s_head, lim_up, tgran,
+	wire unused_ok = &{1'b0, a_head, d_head, g_head, b_head, j_head, s1_head, lim_up, tgran,
 		p_idx, tend, a_idx_bo, w_line_co, lim_up_co, g_diff_bo, tgran_co, tend_co,
-		j2_head, j2_idx, aperture_base[11:0]};
+		j2_head, j2_idx, aperture_base[11:0], inv_v_r};
 endmodule
 
 `default_nettype wire

@@ -218,6 +218,61 @@ module atg_rop #(
 		end
 	end
 	wire unused_rmux = &{1'b0, rmux_k_leaf[23], ds_req_tag[7], wb_req_tag[7]};
+`elsif SYNTH_KINTEX_ULTRASCALE
+	reg rmux_lock, rmux_lock_k;
+	wire rmux_pick = !ds_req_valid && wb_req_valid;
+	wire rmux_any = ds_req_valid || wb_req_valid;
+	wire rmux_k = rmux_lock ? rmux_lock_k : rmux_pick;
+
+	wire [1:0] rmux_k_mid;
+	wire [23:0] rmux_k_leaf;
+	genvar g_rk;
+	generate
+	for (g_rk = 0; g_rk < 2; g_rk = g_rk + 1) begin : g_rmux_k_mid
+		assign rmux_k_mid[g_rk] = rmux_k;
+	end
+	for (g_rk = 0; g_rk < 24; g_rk = g_rk + 1) begin : g_rmux_k_leaf
+		assign rmux_k_leaf[g_rk] = rmux_k_mid[g_rk / 12];
+	end
+	for (g_rk = 0; g_rk < 16; g_rk = g_rk + 1) begin : g_rmux_wdata
+		assign req_wdata[16 * g_rk +: 16] = rmux_k_leaf[g_rk] ?
+			wb_req_wdata[16 * g_rk +: 16] : ds_req_wdata[16 * g_rk +: 16];
+	end
+	for (g_rk = 0; g_rk < 2; g_rk = g_rk + 1) begin : g_rmux_be
+		assign req_be[16 * g_rk +: 16] = rmux_k_leaf[16 + g_rk] ?
+			wb_req_be[16 * g_rk +: 16] : ds_req_be[16 * g_rk +: 16];
+	end
+	endgenerate
+
+	localparam SLA_W = ADDR_W - LINE_SHIFT;
+	assign req_line[15:0] = rmux_k_leaf[18] ? wb_req_line[15:0] : ds_req_line[15:0];
+	assign req_line[SLA_W-1:16] = rmux_k_leaf[19] ? wb_req_line[SLA_W-1:16] : ds_req_line[SLA_W-1:16];
+	assign req_write = rmux_k_leaf[20] ? wb_req_write : ds_req_write;
+	assign req_tag = {rmux_k_leaf[20], rmux_k_leaf[20] ? wb_req_tag[6:0] : ds_req_tag[6:0]};
+	assign req_valid = rmux_lock ? 1'b1 : rmux_any;
+	assign ds_req_ready = req_valid && req_ready && !rmux_k_leaf[21];
+	assign wb_req_ready = req_valid && req_ready && rmux_k_leaf[21];
+	assign ds_rsp_valid = rsp_valid && !rsp_tag[7];
+	assign wb_rsp_valid = rsp_valid && rsp_tag[7];
+	assign ds_rsp_write = rsp_write;
+	assign wb_rsp_write = rsp_write;
+	assign ds_rsp_tag = {1'b0, rsp_tag[6:0]};
+	assign wb_rsp_tag = {1'b0, rsp_tag[6:0]};
+	assign ds_rsp_rdata = rsp_rdata;
+	assign wb_rsp_rdata = rsp_rdata;
+	assign ds_rsp_error = rsp_error;
+	assign wb_rsp_error = rsp_error;
+
+	always @(posedge clk or posedge rst_sync) begin
+		if (rst_sync) begin
+			rmux_lock <= 1'b0;
+			rmux_lock_k <= 1'b0;
+		end else begin
+			rmux_lock <= req_valid && !req_ready;
+			rmux_lock_k <= rmux_k_leaf[22];
+		end
+	end
+	wire unused_rmux = &{1'b0, rmux_k_leaf[23], ds_req_tag[7], wb_req_tag[7]};
 `else
 	localparam ROP_SLA_W = ADDR_W - LINE_SHIFT;
 	localparam ROP_SLB = LINE_BYTES * 8;
@@ -240,7 +295,7 @@ module atg_rop #(
 		.o_rsp_valid(rsp_valid), .o_rsp_write(rsp_write), .o_rsp_tag(rsp_tag),
 		.o_rsp_rdata(rsp_rdata), .o_rsp_error(rsp_error)
 	);
-	am_skid #(.WIDTH(1 + ROP_SLA_W + LINE_BYTES + ROP_SLB + 8)) u_req_skid (
+	atg_rop_skid #(.W(1 + ROP_SLA_W + LINE_BYTES + ROP_SLB + 8)) u_req_skid (
 		.clk(clk), .rst_n(rst_n_net),
 		.in_valid(rmux_req_valid), .in_ready(rmux_req_ready),
 		.in_data({rmux_req_write, rmux_req_line, rmux_req_be, rmux_req_wdata, rmux_req_tag}),
@@ -280,6 +335,33 @@ module atg_rop #(
 		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wd_oc (.I0(st_wdata[g_st]), .O(occ_st_wdata[g_st]));
 		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wd_bl (.I0(st_wdata[g_st]), .O(blend_st_wdata[g_st]));
 		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wd_wb (.I0(st_wdata[g_st]), .O(wb_st_wdata[g_st]));
+	end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire ms_st_we, ds_st_we, occ_st_we, blend_st_we, wb_st_we;
+	assign ms_st_we = st_we;
+	assign ds_st_we = st_we;
+	assign occ_st_we = st_we;
+	assign blend_st_we = st_we;
+	assign wb_st_we = st_we;
+
+	wire [8:0] ms_st_idx, ds_st_idx, occ_st_idx, blend_st_idx, wb_st_idx;
+	wire [31:0] ms_st_wdata, ds_st_wdata, occ_st_wdata, blend_st_wdata, wb_st_wdata;
+	genvar g_st;
+	generate
+	for (g_st = 0; g_st < 9; g_st = g_st + 1) begin : g_buf_st_idx
+		assign ms_st_idx[g_st] = st_idx[g_st];
+		assign ds_st_idx[g_st] = st_idx[g_st];
+		assign occ_st_idx[g_st] = st_idx[g_st];
+		assign blend_st_idx[g_st] = st_idx[g_st];
+		assign wb_st_idx[g_st] = st_idx[g_st];
+	end
+	for (g_st = 0; g_st < 32; g_st = g_st + 1) begin : g_buf_st_wdata
+		assign ms_st_wdata[g_st] = st_wdata[g_st];
+		assign ds_st_wdata[g_st] = st_wdata[g_st];
+		assign occ_st_wdata[g_st] = st_wdata[g_st];
+		assign blend_st_wdata[g_st] = st_wdata[g_st];
+		assign wb_st_wdata[g_st] = st_wdata[g_st];
 	end
 	endgenerate
 `else
@@ -353,25 +435,34 @@ module atg_rop #(
 	wire [2:0] d_pop4_2 = pop4_lut(d_smask[11:8]);
 	wire [2:0] d_pop4_3 = pop4_lut(d_smask[15:12]);
 	wire [3:0] pop_s01, pop_s23;
-	wire [4:0] d_pop;
-	wire [2:0] d_pop_co_unused;
+	wire [1:0] d_pop_co_unused;
 	am_add #(.W(4)) u_add_pop01 (.a({1'b0, d_pop4_0}), .b({1'b0, d_pop4_1}), .ci(1'b0), .s(pop_s01), .co(d_pop_co_unused[0]));
 	am_add #(.W(4)) u_add_pop23 (.a({1'b0, d_pop4_2}), .b({1'b0, d_pop4_3}), .ci(1'b0), .s(pop_s23), .co(d_pop_co_unused[1]));
-	am_add #(.W(5)) u_add_pop16 (.a({1'b0, pop_s01}), .b({1'b0, pop_s23}), .ci(1'b0), .s(d_pop), .co(d_pop_co_unused[2]));
 
-	reg occ_inc_v;
+	reg occ_v0, occ_inc_v;
+	reg [3:0] occ_p01, occ_p23;
 	reg [4:0] occ_inc_n;
+	wire [4:0] occ_sum;
+	wire occ_sum_co_u;
+	am_add #(.W(5)) u_add_pop16 (.a({1'b0, occ_p01}), .b({1'b0, occ_p23}), .ci(1'b0), .s(occ_sum), .co(occ_sum_co_u));
+	wire rop_pop_unused_ok = &{1'b0, d_pop_co_unused, occ_sum_co_u};
 	always @(posedge clk or posedge rst_sync) begin
 		if (rst_sync) begin
+			occ_v0 <= 1'b0;
+			occ_p01 <= 4'd0;
+			occ_p23 <= 4'd0;
 			occ_inc_v <= 1'b0;
 			occ_inc_n <= 5'd0;
 		end else begin
 `ifdef MUT_OCC_BEAT
-			occ_inc_v <= d_valid && d_ready;
+			occ_v0 <= d_valid && d_ready;
 `else
-			occ_inc_v <= d_valid && d_ready && d_beat[0];
+			occ_v0 <= d_valid && d_ready && d_beat[0];
 `endif
-			occ_inc_n <= d_pop;
+			occ_p01 <= pop_s01;
+			occ_p23 <= pop_s23;
+			occ_inc_v <= occ_v0;
+			occ_inc_n <= occ_sum;
 		end
 	end
 
@@ -382,15 +473,58 @@ module atg_rop #(
 	);
 
 	wire unused_d1_skid_rdy, unused_d1_skid_val;
-	am_skid #(.W(512)) u_d1_skid (
+	wire [41:0] wb_d_skid_rdy_vec;
+`ifdef SYNTH_KINTEX7
+	wire d_valid_d1;
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_dv_d1 (.I0(d_valid), .O(d_valid_d1));
+	atg_rop_skid_rep #(.W(512), .R_W(10)) u_d1_skid (
+		.clk(clk), .rst_n(rst_n_net),
+		.in_valid(d_valid_d1), .in_ready(unused_d1_skid_rdy), .in_data(d_color1),
+		.out_valid(unused_d1_skid_val), .out_ready_vec(wb_d_skid_rdy_vec[9:0]), .out_data(b_src1_skid)
+	);
+
+	reg [511:0] b_src1_s1;
+	integer ibs1;
+	always @(posedge clk) begin
+		for (ibs1 = 0; ibs1 < 32; ibs1 = ibs1 + 1) begin
+			if (wb_d_skid_rdy_vec[10 + ibs1])
+				b_src1_s1[16 * ibs1 +: 16] <= b_src1_skid[16 * ibs1 +: 16];
+		end
+	end
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire d_valid_d1;
+	assign d_valid_d1 = d_valid;
+	atg_rop_skid_rep #(.W(512), .R_W(10)) u_d1_skid (
+		.clk(clk), .rst_n(rst_n_net),
+		.in_valid(d_valid_d1), .in_ready(unused_d1_skid_rdy), .in_data(d_color1),
+		.out_valid(unused_d1_skid_val), .out_ready_vec(wb_d_skid_rdy_vec[9:0]), .out_data(b_src1_skid)
+	);
+
+	reg [511:0] b_src1_s1;
+	integer ibs1;
+	always @(posedge clk) begin
+		for (ibs1 = 0; ibs1 < 32; ibs1 = ibs1 + 1) begin
+			if (wb_d_skid_rdy_vec[10 + ibs1])
+				b_src1_s1[16 * ibs1 +: 16] <= b_src1_skid[16 * ibs1 +: 16];
+		end
+	end
+`else
+	atg_rop_skid #(.W(512)) u_d1_skid (
 		.clk(clk), .rst_n(rst_n_net),
 		.in_valid(d_valid), .in_ready(unused_d1_skid_rdy), .in_data(d_color1),
 		.out_valid(unused_d1_skid_val), .out_ready(wb_d_skid_ready), .out_data(b_src1_skid)
 	);
 
-	atg_rop_blend #(.MRT_COUNT(MRT_COUNT)) blend (
+	reg [511:0] b_src1_s1;
+	always @(posedge clk) begin
+		if (wb_d_skid_ready)
+			b_src1_s1 <= b_src1_skid;
+	end
+`endif
+
+	atg_rop_blend #(.MRT_COUNT(MRT_COUNT), .DST_LATE(1)) blend (
 		.clk(clk), .rst_n(rst_n_net), .st_we(blend_st_we), .st_idx(blend_st_idx), .st_wdata(blend_st_wdata),
-		.b_valid(b_valid), .b_src(b_src), .b_src1(b_src1_skid), .b_has_src1(ex_has_src1),
+		.b_valid(b_valid), .b_src(b_src), .b_src1(b_src1_s1), .b_has_src1(ex_has_src1),
 		.b_dst(b_dst), .b_mask(b_mask), .b_rt(b_rt),
 		.b_rvalid(b_rvalid), .b_pix(b_pix)
 	);
@@ -405,7 +539,7 @@ module atg_rop #(
 		.ENABLE_PACK(ENABLE_PACK)
 	) wb (
 		.clk(clk), .rst_n(rst_n_net), .st_we(wb_st_we), .st_idx(wb_st_idx), .st_wdata(wb_st_wdata),
-		.d_valid(d_valid), .d_ready(d_ready), .d_skid_ready(wb_d_skid_ready), .d_xy(d_xy), .d_smask(d_smask), .d_color(d_color),
+		.d_valid(d_valid), .d_ready(d_ready), .d_skid_ready(wb_d_skid_ready), .d_skid_ready_vec(wb_d_skid_rdy_vec), .d_xy(d_xy), .d_smask(d_smask), .d_color(d_color),
 		.d_rt(d_beat[4:2]), .d_nocol(d_beat[1]),
 		.b_valid(b_valid), .b_src(b_src),
 		.b_dst(b_dst), .b_mask(b_mask), .b_rt(b_rt),
@@ -414,11 +548,13 @@ module atg_rop #(
 	);
 
 	reg busy_r;
+	wire busy_fast_a = ms_busy || ds_busy || wb_busy || ex_valid;
+	wire busy_fast_b = dx_valid || occ_v0 || occ_inc_v;
 	always @(posedge clk or posedge rst_sync) begin
 		if (rst_sync)
 			busy_r <= 1'b0;
 		else
-			busy_r <= order_busy || ms_busy || ds_busy || wb_busy || ex_valid || dx_valid;
+			busy_r <= order_busy || busy_fast_a || busy_fast_b;
 	end
 	assign busy = busy_r;
 	assign fsm = {wb_busy, ms_busy, ds_busy, order_busy};

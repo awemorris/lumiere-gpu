@@ -201,9 +201,59 @@ module atg_rx #(
 	assign fl_pw_addr = r_fl_pw_addr;
 	assign fl_pw_data = r_fl_pw_data;
 
-	wire clip_st_we = st_we, setup_st_we = st_we, scan_st_we = st_we, frag_st_we = st_we;
+`ifdef SYNTH_KINTEX7
+	wire clip_st_we, setup_st_we, scan_st_we, frag_st_we, raw_kick_clip;
+	wire [8:0] clip_st_idx, setup_st_idx, scan_st_idx, frag_st_idx;
+	wire [31:0] clip_st_wdata, setup_st_wdata, scan_st_wdata, frag_st_wdata;
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_swe_c  (.I0(st_we),    .O(clip_st_we));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_swe_su (.I0(st_we),    .O(setup_st_we));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_swe_sc (.I0(st_we),    .O(scan_st_we));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_swe_fg (.I0(st_we),    .O(frag_st_we));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_rk_c   (.I0(raw_kick), .O(raw_kick_clip));
+	genvar g_stb;
+	generate
+	for (g_stb = 0; g_stb < 9; g_stb = g_stb + 1) begin : g_stidx_buf
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_sic  (.I0(st_idx[g_stb]), .O(clip_st_idx[g_stb]));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_sisu (.I0(st_idx[g_stb]), .O(setup_st_idx[g_stb]));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_sisc (.I0(st_idx[g_stb]), .O(scan_st_idx[g_stb]));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_sifg (.I0(st_idx[g_stb]), .O(frag_st_idx[g_stb]));
+	end
+	for (g_stb = 0; g_stb < 32; g_stb = g_stb + 1) begin : g_stwdata_buf
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_swc  (.I0(st_wdata[g_stb]), .O(clip_st_wdata[g_stb]));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_swsu (.I0(st_wdata[g_stb]), .O(setup_st_wdata[g_stb]));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_swsc (.I0(st_wdata[g_stb]), .O(scan_st_wdata[g_stb]));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_swfg (.I0(st_wdata[g_stb]), .O(frag_st_wdata[g_stb]));
+	end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire clip_st_we, setup_st_we, scan_st_we, frag_st_we, raw_kick_clip;
+	wire [8:0] clip_st_idx, setup_st_idx, scan_st_idx, frag_st_idx;
+	wire [31:0] clip_st_wdata, setup_st_wdata, scan_st_wdata, frag_st_wdata;
+	assign clip_st_we = st_we;
+	assign setup_st_we = st_we;
+	assign scan_st_we = st_we;
+	assign frag_st_we = st_we;
+	assign raw_kick_clip = raw_kick;
+	genvar g_stb;
+	generate
+	for (g_stb = 0; g_stb < 9; g_stb = g_stb + 1) begin : g_stidx_buf
+		assign clip_st_idx[g_stb] = st_idx[g_stb];
+		assign setup_st_idx[g_stb] = st_idx[g_stb];
+		assign scan_st_idx[g_stb] = st_idx[g_stb];
+		assign frag_st_idx[g_stb] = st_idx[g_stb];
+	end
+	for (g_stb = 0; g_stb < 32; g_stb = g_stb + 1) begin : g_stwdata_buf
+		assign clip_st_wdata[g_stb] = st_wdata[g_stb];
+		assign setup_st_wdata[g_stb] = st_wdata[g_stb];
+		assign scan_st_wdata[g_stb] = st_wdata[g_stb];
+		assign frag_st_wdata[g_stb] = st_wdata[g_stb];
+	end
+	endgenerate
+`else
+	wire clip_st_we = st_we, setup_st_we = st_we, scan_st_we = st_we, frag_st_we = st_we, raw_kick_clip = raw_kick;
 	wire [8:0] clip_st_idx = st_idx, setup_st_idx = st_idx, scan_st_idx = st_idx, frag_st_idx = st_idx;
 	wire [31:0] clip_st_wdata = st_wdata, setup_st_wdata = st_wdata, scan_st_wdata = st_wdata, frag_st_wdata = st_wdata;
+`endif
 	wire cl_valid_setup = cl_valid;
 	wire dx_ready_scan = dx_ready;
 	wire rst_n_clip = rst_n, rst_n_setup = rst_n, rst_n_scan = rst_n, rst_n_frag = rst_n, rst_n_order = rst_n;
@@ -213,7 +263,7 @@ module atg_rx #(
 		.ENABLE_MULTIVIEWPORT(ENABLE_MULTIVIEWPORT)
 	) clip (
 		.clk(clk), .rst_n(rst_n_clip), .st_we(clip_st_we), .st_idx(clip_st_idx), .st_wdata(clip_st_wdata),
-		.raw_kick(raw_kick),
+		.raw_kick(raw_kick_clip),
 		.prim_valid(prim_c_valid), .prim_ready(prim_c_ready), .prim_vtx(prim_c_vtx),
 		.prim_free(prim_c_free), .prim_last(prim_c_last),
 		.pt_rd(c_pt_rd), .pt_idx(c_pt_idx), .pt_word(c_pt_word), .pt_rdata(pt_rdata),

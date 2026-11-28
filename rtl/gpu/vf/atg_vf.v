@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -85,6 +85,11 @@ module atg_vf #(
 		LUT1 #(.INIT(2'b10)) u_we_fx (.O(st_we_fx), .I0(st_we));
 		(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 		LUT1 #(.INIT(2'b10)) u_we_cv (.O(st_we_cv), .I0(st_we));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign st_we_ix = st_we;
+		assign st_we_as = st_we;
+		assign st_we_fx = st_we;
+		assign st_we_cv = st_we;
 `else
 		assign st_we_ix = st_we;
 		assign st_we_as = st_we;
@@ -101,6 +106,11 @@ module atg_vf #(
 			LUT1 #(.INIT(2'b10)) u_fx (.O(st_idx_fx[gb]), .I0(st_idx[gb]));
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_cv (.O(st_idx_cv[gb]), .I0(st_idx[gb]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign st_idx_ix[gb] = st_idx[gb];
+			assign st_idx_as[gb] = st_idx[gb];
+			assign st_idx_fx[gb] = st_idx[gb];
+			assign st_idx_cv[gb] = st_idx[gb];
 `else
 			assign st_idx_ix[gb] = st_idx[gb];
 			assign st_idx_as[gb] = st_idx[gb];
@@ -118,6 +128,11 @@ module atg_vf #(
 			LUT1 #(.INIT(2'b10)) u_fx (.O(st_wdata_fx[gb]), .I0(st_wdata[gb]));
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_cv (.O(st_wdata_cv[gb]), .I0(st_wdata[gb]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign st_wdata_ix[gb] = st_wdata[gb];
+			assign st_wdata_as[gb] = st_wdata[gb];
+			assign st_wdata_fx[gb] = st_wdata[gb];
+			assign st_wdata_cv[gb] = st_wdata[gb];
 `else
 			assign st_wdata_ix[gb] = st_wdata[gb];
 			assign st_wdata_as[gb] = st_wdata[gb];
@@ -161,7 +176,7 @@ module atg_vf #(
 	wire vmux_pick = !ix_req_valid && fx_req_valid;
 	wire vmux_any  = ix_req_valid || fx_req_valid;
 	wire vmux_k    = vmux_lock ? vmux_lock_k : vmux_pick;
-	wire [1:0] vmux_k_b;
+	wire [5:0] vmux_k_b;
 
 `ifdef SYNTH_KINTEX7
 	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
@@ -169,11 +184,28 @@ module atg_vf #(
 	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 	LUT1 #(.INIT(2'b10)) u_vk1 (.O(vmux_k_b[1]), .I0(vmux_k));
 	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+	LUT1 #(.INIT(2'b10)) u_vk2 (.O(vmux_k_b[2]), .I0(vmux_k));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+	LUT1 #(.INIT(2'b10)) u_vk3 (.O(vmux_k_b[3]), .I0(vmux_k));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+	LUT1 #(.INIT(2'b10)) u_vk4 (.O(vmux_k_b[4]), .I0(vmux_k));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+	LUT1 #(.INIT(2'b10)) u_vk5 (.O(vmux_k_b[5]), .I0(vmux_k));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 	LUT1 #(.INIT(2'b10)) u_re_ix (.O(ix_rsp_error), .I0(r_ix_rsp_error));
 	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 	LUT1 #(.INIT(2'b10)) u_re_fx (.O(fx_rsp_error), .I0(r_fx_rsp_error));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign vmux_k_b[0] = vmux_k;
+	assign vmux_k_b[1] = vmux_k;
+	assign vmux_k_b[2] = vmux_k;
+	assign vmux_k_b[3] = vmux_k;
+	assign vmux_k_b[4] = vmux_k;
+	assign vmux_k_b[5] = vmux_k;
+	assign ix_rsp_error = r_ix_rsp_error;
+	assign fx_rsp_error = r_fx_rsp_error;
 `else
-	assign vmux_k_b     = {2{vmux_k}};
+	assign vmux_k_b     = {6{vmux_k}};
 	assign ix_rsp_error = r_ix_rsp_error;
 	assign fx_rsp_error = r_fx_rsp_error;
 `endif
@@ -191,15 +223,17 @@ module atg_vf #(
 		end
 	end
 
-	wire vmux_out_write = vmux_k_b[1] ? fx_req_write : ix_req_write;
+	wire vmux_out_write = vmux_k_b[5] ? fx_req_write : ix_req_write;
 	wire [LA_W-1:0] vmux_out_line = {
-		vmux_k_b[1] ? fx_req_line[LA_W-1:14] : ix_req_line[LA_W-1:14],
-		vmux_k_b[0] ? fx_req_line[13:0]      : ix_req_line[13:0]
+		vmux_k_b[3] ? fx_req_line[LA_W-1:21] : ix_req_line[LA_W-1:21],
+		vmux_k_b[2] ? fx_req_line[20:14]     : ix_req_line[20:14],
+		vmux_k_b[1] ? fx_req_line[13:7]      : ix_req_line[13:7],
+		vmux_k_b[0] ? fx_req_line[6:0]       : ix_req_line[6:0]
 	};
-	wire [7:0] vmux_out_tag = {vmux_k_b[1], vmux_k_b[1] ? fx_req_tag[6:0] : ix_req_tag[6:0]};
+	wire [7:0] vmux_out_tag = {vmux_k_b[5], vmux_k_b[4] ? fx_req_tag[6:0] : ix_req_tag[6:0]};
 
 	/* Full registered skid buffer on MC request output (Rules 3 & 5) */
-	am_skid #(.W(1 + LA_W + 8)) u_req_skid (
+	am_skid #(.W(1 + LA_W + 8), .RST_DATA(0)) u_req_skid (
 		.clk(clk), .rst_n(rst_n),
 		.in_valid(vmux_out_valid),
 		.in_ready(vmux_out_ready),
@@ -216,7 +250,7 @@ module atg_vf #(
 	 */
 	reg          r_rsp_valid, r_ix_rsp_valid, r_fx_rsp_valid;
 	reg          r_rsp_write, r_ix_rsp_error, r_fx_rsp_error;
-	reg [7:0]    r_rsp_tag;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [7:0] r_ix_rsp_tag, r_fx_rsp_tag;
 	reg [LB-1:0] r_rsp_rdata;
 
 	always @(posedge clk or posedge rst_sync) begin
@@ -225,7 +259,8 @@ module atg_vf #(
 			r_ix_rsp_valid <= 1'b0;
 			r_fx_rsp_valid <= 1'b0;
 			r_rsp_write    <= 1'b0;
-			r_rsp_tag      <= 8'd0;
+			r_ix_rsp_tag   <= 8'd0;
+			r_fx_rsp_tag   <= 8'd0;
 			r_ix_rsp_error <= 1'b0;
 			r_fx_rsp_error <= 1'b0;
 		end else begin
@@ -233,7 +268,8 @@ module atg_vf #(
 			r_ix_rsp_valid <= rsp_valid && !rsp_tag[7];
 			r_fx_rsp_valid <= rsp_valid &&  rsp_tag[7];
 			r_rsp_write    <= rsp_write;
-			r_rsp_tag      <= rsp_tag;
+			r_ix_rsp_tag   <= {1'b0, rsp_tag[6:0]};
+			r_fx_rsp_tag   <= {1'b0, rsp_tag[6:0]};
 			r_ix_rsp_error <= rsp_error;
 			r_fx_rsp_error <= rsp_error;
 		end
@@ -249,13 +285,13 @@ module atg_vf #(
 	assign fx_rsp_valid = r_fx_rsp_valid;
 	assign ix_rsp_write = r_rsp_write;
 	assign fx_rsp_write = r_rsp_write;
-	assign ix_rsp_tag   = {1'b0, r_rsp_tag[6:0]};
-	assign fx_rsp_tag   = {1'b0, r_rsp_tag[6:0]};
+	assign ix_rsp_tag   = r_ix_rsp_tag;
+	assign fx_rsp_tag   = r_fx_rsp_tag;
 	assign ix_rsp_rdata = r_rsp_rdata;
 	assign fx_rsp_rdata = r_rsp_rdata;
 
 	wire unused_amb = &{1'b0, ix_req_be, fx_req_be, ix_req_wdata, fx_req_wdata,
-		ix_req_tag[7], fx_req_tag[7], r_rsp_valid, r_rsp_tag[7], r_ix_rsp_error, r_fx_rsp_error};
+		ix_req_tag[7], fx_req_tag[7], r_rsp_valid, r_ix_rsp_error, r_fx_rsp_error};
 
 	atg_vf_index #(.ADDR_W(ADDR_W), .LINE_BYTES(LINE_BYTES), .LINE_SHIFT(LINE_SHIFT)) index (
 		.clk(clk), .rst_n(rst_n), .st_we(st_we_ix), .st_idx(st_idx_ix), .st_wdata(st_wdata_ix),

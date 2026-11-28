@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -73,9 +73,11 @@ module atg_cp_state (
 		end
 	end
 
-	wire host_locked = !open || (alias_idx < {1'b0, GHCI_S_VF} && blt_busy);
+	/* GHCI_S_VF == 9'h020: alias_idx < {1'b0, GHCI_S_VF} <=> alias_idx[9:5] == 5'd0. */
+	wire alias_lt_vf = (alias_idx[9:5] == 5'd0);
+	wire host_locked = !open || (alias_lt_vf && blt_busy);
 	wire host_take = alias_we && !host_locked && !uop_we;
-	assign lock_fault = alias_we && !host_take;
+	assign lock_fault = alias_we && (!open || uop_we || (alias_lt_vf && blt_busy));
 
 `ifdef SYNTH_KINTEX7
 	wire [4:0] uop_we_b;
@@ -84,6 +86,21 @@ module atg_cp_state (
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_uwb2 (.I0(uop_we), .O(uop_we_b[2]));
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_uwb3 (.I0(uop_we), .O(uop_we_b[3]));
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_uwb4 (.I0(uop_we), .O(uop_we_b[4]));
+	wire w = uop_we_b[0] || host_take;
+	(* keep = "true" *) wire [9:0] widx = uop_we_b[0] ? uop_idx : alias_idx;
+	(* keep = "true" *) wire [31:0] wdata = {
+		uop_we_b[4] ? uop_wdata[31:24] : alias_wdata[31:24],
+		uop_we_b[3] ? uop_wdata[23:16] : alias_wdata[23:16],
+		uop_we_b[2] ? uop_wdata[15:8]  : alias_wdata[15:8],
+		uop_we_b[1] ? uop_wdata[7:0]   : alias_wdata[7:0]
+	};
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [4:0] uop_we_b;
+	assign uop_we_b[0] = uop_we;
+	assign uop_we_b[1] = uop_we;
+	assign uop_we_b[2] = uop_we;
+	assign uop_we_b[3] = uop_we;
+	assign uop_we_b[4] = uop_we;
 	wire w = uop_we_b[0] || host_take;
 	(* keep = "true" *) wire [9:0] widx = uop_we_b[0] ? uop_idx : alias_idx;
 	(* keep = "true" *) wire [31:0] wdata = {
@@ -114,9 +131,18 @@ module atg_cp_state (
 	wire [1:0] rp_rd_b;
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_rpr0 (.I0(rp_rd), .O(rp_rd_b[0]));
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_rpr1 (.I0(rp_rd), .O(rp_rd_b[1]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", dont_touch = "true" *) wire state_rst_high;
+	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h1)) u_st_rst (.I0(rst_n), .O(state_rst_high));
+	wire [1:0] rp_rd_b;
+	assign rp_rd_b[0] = rp_rd;
+	assign rp_rd_b[1] = rp_rd;
 `endif
 
 `ifdef SYNTH_KINTEX7
+	always @(posedge clk or posedge state_rst_high) begin
+		if (state_rst_high) begin
+`elsif SYNTH_KINTEX_ULTRASCALE
 	always @(posedge clk or posedge state_rst_high) begin
 		if (state_rst_high) begin
 `else
@@ -134,6 +160,8 @@ module atg_cp_state (
 				rp_rd <= 1'b1;
 				rp_idx <= 10'd0;
 `ifdef SYNTH_KINTEX7
+			end else if (rp_rd_b[0]) begin
+`elsif SYNTH_KINTEX_ULTRASCALE
 			end else if (rp_rd_b[0]) begin
 `else
 			end else if (rp_rd) begin
@@ -159,6 +187,62 @@ module atg_cp_state (
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_wb0 (.I0(w), .O(w_b[0]));
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_wb1 (.I0(w), .O(w_b[1]));
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_wb2 (.I0(w), .O(w_b[2]));
+
+	always @(posedge clk or posedge state_rst_high) begin
+		if (state_rst_high) begin
+			alias_ridx_r <= 10'd0;
+			b_ridx_r     <= 10'd0;
+			w_r          <= 1'b0;
+			widx_r       <= 10'd0;
+			wdata_r      <= 32'd0;
+		end else begin
+			alias_ridx_r <= alias_ridx;
+			b_ridx_r <= rp_rd_b[1] ? rp_idx : cpu_ridx;
+			w_r <= w;
+			widx_r <= widx;
+			wdata_r <= wdata;
+		end
+	end
+
+	always @(posedge clk) begin
+		if (w_r) begin
+			mem_a[widx_r] <= wdata_r;
+			mem_b[widx_r] <= wdata_r;
+		end
+		a_q <= mem_a[alias_ridx_r];
+		b_q <= mem_b[b_ridx_r];
+	end
+
+	always @(posedge clk or posedge state_rst_high) begin
+		if (state_rst_high) begin
+			a_q_pipe <= 32'd0;
+			b_q_pipe <= 32'd0;
+		end else begin
+			a_q_pipe <= a_q;
+			b_q_pipe <= b_q;
+		end
+	end
+
+	assign alias_rdata = a_q_pipe;
+	assign cpu_rdata = b_q_pipe;
+	assign st_we = w || rp_out;
+	assign st_idx = w_b[0] ? widx : rp_oidx;
+	assign st_wdata = {
+		w_b[2] ? wdata[31:16] : b_q_pipe[31:16],
+		w_b[1] ? wdata[15:0]  : b_q_pipe[15:0]
+	};
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* dont_touch = "true" *) reg [9:0] alias_ridx_r;
+	(* dont_touch = "true" *) reg [9:0] b_ridx_r;
+	(* dont_touch = "true" *) reg [9:0] widx_r;
+	(* dont_touch = "true" *) reg [31:0] wdata_r;
+	(* dont_touch = "true" *) reg w_r;
+	(* dont_touch = "true" *) reg [31:0] a_q_pipe;
+	(* dont_touch = "true" *) reg [31:0] b_q_pipe;
+	wire [2:0] w_b;
+	assign w_b[0] = w;
+	assign w_b[1] = w;
+	assign w_b[2] = w;
 
 	always @(posedge clk or posedge state_rst_high) begin
 		if (state_rst_high) begin

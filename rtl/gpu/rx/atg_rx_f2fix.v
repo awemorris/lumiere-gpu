@@ -100,16 +100,16 @@ endmodule
 	end
 
 	/* Stage 2: Coarse right shift by {r_sh1_hi, 3'b000} (0, 8, 16, 24) - 1 LUT6 level */
-	wire [47:0] in_s2 = {1'b1, r_mant1, 24'd0};
+	wire [71:0] in_s2_pad = {24'd0, 1'b1, r_mant1, 24'd0};
 	wire [47:0] c2_w;
 	genvar gi;
 	generate
 	for (gi = 0; gi < 3; gi = gi + 1) begin : g_c2
 		wire [1:0] sel = r_sh1_hi[gi];
-		wire [15:0] s0 = in_s2[16 * gi +: 16];
-		wire [15:0] s1 = (16 * gi + 8  < 48) ? ((16 * gi + 23 < 48) ? in_s2[16 * gi + 8  +: 16] : {8'd0,  in_s2[47 : 16 * gi + 8]})  : 16'd0;
-		wire [15:0] s2 = (16 * gi + 16 < 48) ? ((16 * gi + 31 < 48) ? in_s2[16 * gi + 16 +: 16] : {16'd0, in_s2[47 : 16 * gi + 16]}) : 16'd0;
-		wire [15:0] s3 = (16 * gi + 24 < 48) ? {8'd0, in_s2[47 : 16 * gi + 24]} : 16'd0;
+		wire [15:0] s0 = in_s2_pad[16 * gi +: 16];
+		wire [15:0] s1 = in_s2_pad[16 * gi + 8  +: 16];
+		wire [15:0] s2 = in_s2_pad[16 * gi + 16 +: 16];
+		wire [15:0] s3 = in_s2_pad[16 * gi + 24 +: 16];
 		assign c2_w[16 * gi +: 16] = (sel == 2'd0) ? s0 : ((sel == 2'd1) ? s1 : ((sel == 2'd2) ? s2 : s3));
 	end
 	endgenerate
@@ -175,29 +175,51 @@ endmodule
 	am_add #(.W(24)) u_rnd (.a(r_unrnd4), .b(24'd0), .ci(r_rup4), .s(rnd_w), .co(rnd_co_unused));
 
 	(* extract_reset = "no" *) reg [23:0] r_rnd5;
-	(* dont_touch = "true", extract_reset = "no" *) reg r_sign5_add, r_sign5_lo, r_sign5_hi;
+	(* dont_touch = "true", extract_reset = "no" *) reg r_sign5_add, r_sign5_lo, r_sign5_hi, r_sign5_sat_lo, r_sign5_sat_hi;
 	(* dont_touch = "true", extract_reset = "no" *) reg r_zero5_lo, r_zero5_hi;
 	(* dont_touch = "true", extract_reset = "no" *) reg r_ovf5_lo, r_ovf5_hi;
 	wire ovf5_w = r_ovf4 || rnd_w[23] || rnd_w[22];
 
 	always @(posedge clk) begin
-		r_rnd5      <= rnd_w;
-		r_sign5_add <= r_sign4;
-		r_sign5_lo  <= r_sign4;
-		r_sign5_hi  <= r_sign4;
-		r_zero5_lo  <= r_zero4;
-		r_zero5_hi  <= r_zero4;
-		r_ovf5_lo   <= ovf5_w;
-		r_ovf5_hi   <= ovf5_w;
+		r_rnd5         <= rnd_w;
+		r_sign5_add    <= r_sign4;
+		r_sign5_lo     <= r_sign4;
+		r_sign5_hi     <= r_sign4;
+		r_sign5_sat_lo <= r_sign4;
+		r_sign5_sat_hi <= r_sign4;
+		r_zero5_lo     <= r_zero4;
+		r_zero5_hi     <= r_zero4;
+		r_ovf5_lo      <= ovf5_w;
+		r_ovf5_hi      <= ovf5_w;
 	end
 
-	/* Stage 6: Sign conversion (am_addsub W=24) & Saturation (1 Post-CARRY4 LUT) */
+	/* Stage 6: Sign conversion (3x 8-bit parallel carry-select negate) & Saturation */
+`ifdef SYNTH_KINTEX7
+	wire [23:0] rs_in_w = {r_sign5_hi ? ~r_rnd5[23:12] : r_rnd5[23:12],
+		r_sign5_lo ? ~r_rnd5[11:0] : r_rnd5[11:0]};
 	wire [23:0] sres_w;
 	wire sres_co_unused;
-	am_addsub #(.W(24)) u_rs (.a(24'd0), .b(r_rnd5), .sub(r_sign5_add), .s(sres_w), .co(sres_co_unused));
+	am_add #(.W(24)) u_rs (.a(rs_in_w), .b(24'd0), .ci(r_sign5_add), .s(sres_w), .co(sres_co_unused));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [23:0] rs_in_w = {r_sign5_hi ? ~r_rnd5[23:12] : r_rnd5[23:12],
+		r_sign5_lo ? ~r_rnd5[11:0] : r_rnd5[11:0]};
+	wire [23:0] sres_w;
+	wire sres_co_unused;
+	am_add #(.W(24)) u_rs (.a(rs_in_w), .b(24'd0), .ci(r_sign5_add), .s(sres_w), .co(sres_co_unused));
+`else
+	wire [7:0] rs_neg_lo, rs_neg_m0, rs_neg_h0;
+	wire rs_nz_lo = |r_rnd5[7:0];
+	wire rs_nz_m  = |r_rnd5[15:8];
+	wire rs_co_un0, rs_co_un1, rs_co_un2;
+	am_add #(.W(8)) u_rs_lo (.a(~r_rnd5[7:0]),   .b(8'd0), .ci(1'b1),                .s(rs_neg_lo), .co(rs_co_un0));
+	am_add #(.W(8)) u_rs_m  (.a(~r_rnd5[15:8]),  .b(8'd0), .ci(!rs_nz_lo),           .s(rs_neg_m0), .co(rs_co_un1));
+	am_add #(.W(8)) u_rs_h  (.a(~r_rnd5[23:16]), .b(8'd0), .ci(!rs_nz_lo && !rs_nz_m), .s(rs_neg_h0), .co(rs_co_un2));
+	wire [23:0] sres_w = r_sign5_add ? {rs_neg_h0, rs_neg_m0, rs_neg_lo} : r_rnd5;
+	wire sres_co_unused = &{1'b0, rs_co_un0, rs_co_un1, rs_co_un2};
+`endif
 
-	wire [15:0] sat_lo = r_sign5_lo ? 16'h0001 : 16'hFFFF;
-	wire [7:0]  sat_hi = r_sign5_hi ? 8'hC0    : 8'h3F;
+	wire [15:0] sat_lo = r_sign5_sat_lo ? 16'h0001 : 16'hFFFF;
+	wire [7:0]  sat_hi = r_sign5_sat_hi ? 8'hC0    : 8'h3F;
 
 	always @(posedge clk) begin
 		o_q[15:0]  <= r_zero5_lo ? 16'd0 : (r_ovf5_lo ? sat_lo : sres_w[15:0]);
@@ -231,7 +253,48 @@ endmodule
 	wire m_co_unused;
 	generate
 	if (SIGNED != 0) begin : g_signed
+`ifdef SYNTH_ASIC
+		/* Pure-gate 3->9->24 prefix-OR abs: m_w[k] = i_v[k] ^ (sign_w & (|i_v[k-1:0])) (<= 7 cmos3) */
+		wire [23:0] iv_pad = {{(24-W){1'b0}}, i_v};
+		wire [7:0] iv_o3 = {
+			|iv_pad[23:21], |iv_pad[20:18], |iv_pad[17:15], |iv_pad[14:12],
+			|iv_pad[11:9],  |iv_pad[8:6],   |iv_pad[5:3],   |iv_pad[2:0]
+		};
+		wire iv_o9_0 = |iv_o3[2:0];
+		wire iv_o9_1 = |iv_o3[5:3];
+		wire [23:0] or_lo;
+		assign or_lo[0]  = 1'b0;
+		assign or_lo[1]  = iv_pad[0];
+		assign or_lo[2]  = iv_pad[0]  | iv_pad[1];
+		assign or_lo[3]  = iv_o3[0];
+		assign or_lo[4]  = iv_o3[0]   | iv_pad[3];
+		assign or_lo[5]  = iv_o3[0]   | iv_pad[3]  | iv_pad[4];
+		assign or_lo[6]  = iv_o3[0]   | iv_o3[1];
+		assign or_lo[7]  = iv_o3[0]   | iv_o3[1]   | iv_pad[6];
+		assign or_lo[8]  = iv_o3[0]   | iv_o3[1]   | iv_pad[6]  | iv_pad[7];
+		assign or_lo[9]  = iv_o9_0;
+		assign or_lo[10] = iv_o9_0    | iv_pad[9];
+		assign or_lo[11] = iv_o9_0    | iv_pad[9]  | iv_pad[10];
+		assign or_lo[12] = iv_o9_0    | iv_o3[3];
+		assign or_lo[13] = iv_o9_0    | iv_o3[3]   | iv_pad[12];
+		assign or_lo[14] = iv_o9_0    | iv_o3[3]   | iv_pad[12] | iv_pad[13];
+		assign or_lo[15] = iv_o9_0    | iv_o3[3]   | iv_o3[4];
+		assign or_lo[16] = iv_o9_0    | iv_o3[3]   | iv_o3[4]   | iv_pad[15];
+		assign or_lo[17] = iv_o9_0    | iv_o3[3]   | iv_o3[4]   | iv_pad[15] | iv_pad[16];
+		assign or_lo[18] = iv_o9_0    | iv_o9_1;
+		assign or_lo[19] = iv_o9_0    | iv_o9_1    | iv_pad[18];
+		assign or_lo[20] = iv_o9_0    | iv_o9_1    | iv_pad[18] | iv_pad[19];
+		assign or_lo[21] = iv_o9_0    | iv_o9_1    | iv_o3[6];
+		assign or_lo[22] = iv_o9_0    | iv_o9_1    | iv_o3[6]   | iv_pad[21];
+		assign or_lo[23] = iv_o9_0    | iv_o9_1    | iv_o3[6]   | iv_pad[21] | iv_pad[22];
+		genvar g_ab;
+		for (g_ab = 0; g_ab < W; g_ab = g_ab + 1) begin : g_abs_bit
+			assign m_w[g_ab] = i_v[g_ab] ^ (sign_w & or_lo[g_ab]);
+		end
+		assign m_co_unused = iv_o3[7] & (&or_lo[23:0]);
+`else
 		am_addsub #(.W(W)) u_m (.a({W{1'b0}}), .b(i_v), .sub(sign_w), .s(m_w), .co(m_co_unused));
+`endif
 	end else begin : g_unsigned
 		assign m_w = i_v;
 		assign m_co_unused = 1'b0;

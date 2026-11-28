@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -124,6 +124,8 @@ module atg_blt_blend #(
 	genvar mxi;
 `ifdef SYNTH_KINTEX7
 	genvar mbi;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar mbi;
 `endif
 	generate
 		for (mxi = 0; mxi < 8; mxi = mxi + 1) begin : g_in_mux
@@ -132,6 +134,11 @@ module atg_blt_blend #(
 			for (mbi = 0; mbi < WS; mbi = mbi + 1) begin : g_bibuf
 				LUT1 #(.INIT(2'b10)) u_bs (.I0(bi[mbi]), .O(bi_s[mbi]));
 				LUT1 #(.INIT(2'b10)) u_bd (.I0(bi[mbi]), .O(bi_d[mbi]));
+			end
+`elsif SYNTH_KINTEX_ULTRASCALE
+			for (mbi = 0; mbi < WS; mbi = mbi + 1) begin : g_bibuf
+				assign bi_s[mbi] = bi[mbi];
+				assign bi_d[mbi] = bi[mbi];
 			end
 `else
 			assign bi_s = bi[WS-1:0];

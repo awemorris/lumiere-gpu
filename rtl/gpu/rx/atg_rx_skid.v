@@ -80,6 +80,16 @@ module atg_rx_skid #(
 			assign ld_out_grp[gi] = ldo_g;
 			assign ld_skid_grp[gi] = lds_g;
 			assign sk_val_grp[gi] = skv_g;
+`elsif SYNTH_KINTEX_ULTRASCALE
+			(* keep = "true", dont_touch = "true" *) wire ldo_g;
+			(* keep = "true", dont_touch = "true" *) wire lds_g;
+			(* keep = "true", dont_touch = "true" *) wire skv_g;
+			assign ldo_g = load_out_raw;
+			assign lds_g = load_skid_raw;
+			assign skv_g = skid_valid;
+			assign ld_out_grp[gi] = ldo_g;
+			assign ld_skid_grp[gi] = lds_g;
+			assign sk_val_grp[gi] = skv_g;
 `else
 			assign ld_out_grp[gi] = load_out_raw;
 			assign ld_skid_grp[gi] = load_skid_raw;
@@ -99,6 +109,13 @@ module atg_rx_skid #(
 			LUT1 #(.INIT(2'b10)) u_ldo (.I0(ld_out_grp[GRP_IDX]), .O(ld_out_b));
 			LUT1 #(.INIT(2'b10)) u_lds (.I0(ld_skid_grp[GRP_IDX]), .O(ld_skid_b));
 			LUT1 #(.INIT(2'b10)) u_skv (.I0(sk_val_grp[GRP_IDX]), .O(sk_valid_b));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			(* keep = "true", dont_touch = "true" *) wire ld_out_b;
+			(* keep = "true", dont_touch = "true" *) wire ld_skid_b;
+			(* keep = "true", dont_touch = "true" *) wire sk_valid_b;
+			assign ld_out_b = ld_out_grp[GRP_IDX];
+			assign ld_skid_b = ld_skid_grp[GRP_IDX];
+			assign sk_valid_b = sk_val_grp[GRP_IDX];
 `else
 			wire ld_out_b = ld_out_grp[GRP_IDX];
 			wire ld_skid_b = ld_skid_grp[GRP_IDX];

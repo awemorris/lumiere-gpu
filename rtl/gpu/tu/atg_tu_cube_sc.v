@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -62,8 +62,8 @@ module atg_tu_cube_sc (
 			k_p1_st0 <= k_w;
 			k_p1_st1 <= k_w;
 			v_zero_p1 <= v[30:23] == 8'd0;
-			sh_gt2_p1 <= !sh_w[8] && sh_w > 9'd2;
-			k_lt24_p1 <= k_w < 9'd24;
+			sh_gt2_p1 <= !sh_w[8] && ((|sh_w[7:2]) || (sh_w[1] && sh_w[0]));
+			k_lt24_p1 <= (k_w[8:5] == 4'd0) && !(k_w[4] && k_w[3]);
 			m3_p1 <= m3;
 		end
 	end
@@ -102,22 +102,30 @@ module atg_tu_cube_sc (
 		vz_s[1] ? 7'd0 : sgt2_s[1] ? m3_p1[13:7]  : !sh8_s[1] ? qs_l[13:7]  : k24_s[1] ? qs_r[13:7]  : 7'd0,
 		vz_s[0] ? 7'd0 : sgt2_s[0] ? m3_p1[6:0]   : !sh8_s[0] ? qs_l[6:0]   : k24_s[0] ? qs_r[6:0]   : 7'd0
 	};
-	reg sticky_w;
-	integer b;
-	always @(*) begin
-		sticky_w = 1'b0;
-		if (!v_zero_p1 && !sh_gt2_p1 && sh_p1[8]) begin
-			if (k_lt24_p1) begin
-				for (b = 0; b < 12; b = b + 1)
-					if (b < k_p1_st0)
-						sticky_w = sticky_w | v_p1[b];
-				for (b = 12; b < 24; b = b + 1)
-					if (b < k_p1_st1)
-						sticky_w = sticky_w | (b == 23 ? 1'b1 : v_p1[b]);
-			end else
-				sticky_w = 1'b1;
-		end
+	/* Parallel 6-nibble sticky evaluation (<= 7 cmos3, zero comparison loops) */
+	wire [23:0] st_v_pad = {1'b1, v_p1[22:0]};
+	wire [5:0]  st_nib;
+	wire [5:0]  st_nib_gt;
+	assign st_nib_gt[0] = |k_p1_st0[4:2];
+	assign st_nib_gt[1] = k_p1_st0[4] || k_p1_st0[3];
+	assign st_nib_gt[2] = k_p1_st0[4] || (k_p1_st0[3] && k_p1_st0[2]);
+	assign st_nib_gt[3] = k_p1_st1[4];
+	assign st_nib_gt[4] = k_p1_st1[4] && k_p1_st1[2];
+	assign st_nib_gt[5] = 1'b0;
+	genvar gb_st;
+	generate
+	for (gb_st = 0; gb_st < 6; gb_st = gb_st + 1) begin : g_st_nib
+		wire [3:0] nib   = st_v_pad[gb_st*4 +: 4];
+		wire [4:0] k_sel = (gb_st < 3) ? k_p1_st0[4:0] : k_p1_st1[4:0];
+		wire nib_all     = |nib;
+		wire nib_part    = (k_sel[1:0] == 2'd1) ? nib[0] :
+		                   (k_sel[1:0] == 2'd2) ? (|nib[1:0]) :
+		                   (k_sel[1:0] == 2'd3) ? (|nib[2:0]) : 1'b0;
+		assign st_nib[gb_st] = (st_nib_gt[gb_st] && nib_all) || ((k_sel[4:2] == gb_st[2:0]) && nib_part);
 	end
+	endgenerate
+	wire sticky_w = !v_zero_p1 && !sh_gt2_p1 && sh_p1[8] && (!k_lt24_p1 || (|st_nib));
+	wire unused_k_st_hi = &{1'b0, k_p1_st0[8:5], k_p1_st1[8:5]};
 
 	reg [26:0] q_p2, m3_p2;
 	reg sticky_p2, ng_p2, v_zero_p2;
@@ -212,7 +220,7 @@ module atg_tu_cube_sc (
 	assign o_mux[26:21] = v_zero_p4[3] ? m3_p4[26:21] : (ng_p4[3] && !qst_lt_m3_s[3]) ? 6'd0 : r_p4[26:21];
 	assign o = o_mux;
 
-	wire unused_ok = &{1'b0, carry_unused, sh_p1[7:2], k_p1_sh_lo[8:5], k_p1_sh_hi[8:5], qs_r_lo[26:14], qs_r_hi[13:0], qm_d_unused, qst_cmp_unused};
+	wire unused_ok = &{1'b0, unused_k_st_hi, carry_unused, sh_p1[7:2], k_p1_sh_lo[8:5], k_p1_sh_hi[8:5], qs_r_lo[26:14], qs_r_hi[13:0], qm_d_unused, qst_cmp_unused};
 endmodule
 
 `default_nettype wire

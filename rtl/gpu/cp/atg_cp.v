@@ -323,9 +323,24 @@ module atg_cp #(
 `ifdef SYNTH_KINTEX7
 	(* keep = "true", dont_touch = "true" *) wire cp_rst_high;
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h1)) u_cp_rst (.I0(rst_n), .O(cp_rst_high));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", dont_touch = "true" *) wire cp_rst_high;
+	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h1)) u_cp_rst (.I0(rst_n), .O(cp_rst_high));
 `endif
 
 `ifdef SYNTH_KINTEX7
+	always @(posedge clk or posedge cp_rst_high) begin
+		if (cp_rst_high) begin
+			st_we <= 1'b0;
+			st_idx <= 10'd0;
+			st_wdata <= 32'd0;
+		end else begin
+			st_we <= s_st_we;
+			st_idx <= s_st_idx;
+			st_wdata <= s_st_wdata;
+		end
+	end
+`elsif SYNTH_KINTEX_ULTRASCALE
 	always @(posedge clk or posedge cp_rst_high) begin
 		if (cp_rst_high) begin
 			st_we <= 1'b0;
@@ -365,8 +380,9 @@ module atg_cp #(
 	(* dont_touch = "true" *) reg hcr_we_ctl, hcr_we_fence, hcr_we_dbg, hcr_we_disp, hcr_we_irq;
 	wire hcr_we_ring = s_hcr_we;
 
-	wire [9:0] hcr_ridx_ctl   = s_hcr_ridx;
-	wire [9:0] hcr_ridx_ring  = s_hcr_ridx;
+	wire [9:0] s_hcr_ridx_ctl, s_hcr_ridx_ring;
+	wire [9:0] hcr_ridx_ctl   = s_hcr_ridx_ctl;
+	wire [9:0] hcr_ridx_ring  = s_hcr_ridx_ring;
 	wire [9:0] hcr_ridx_fence = s_hcr_ridx;
 	wire [9:0] hcr_ridx_dbg   = s_hcr_ridx;
 	wire [9:0] hcr_ridx_disp  = s_hcr_ridx;
@@ -414,12 +430,12 @@ module atg_cp #(
 			alias_idx_state <= 10'd0;
 		end else begin
 			hcr_we_ctl      <= s_hcr_we && (s_hcr_widx[9:6] == 4'd0);
-			hcr_we_fence    <= s_hcr_we;
+			hcr_we_fence    <= s_hcr_we && (s_hcr_widx == 10'd28);
 			hcr_we_dbg      <= s_hcr_we;
 			hcr_we_disp     <= s_hcr_we;
 			hcr_we_irq      <= s_hcr_we;
 			hcr_widx_ctl    <= s_hcr_widx;
-			hcr_widx_fence  <= s_hcr_widx;
+			hcr_widx_fence  <= (s_hcr_widx == 10'd28) ? 10'd28 : 10'd0;
 			hcr_widx_dbg    <= s_hcr_widx;
 			hcr_widx_disp   <= s_hcr_widx;
 			hcr_widx_irq    <= s_hcr_widx;
@@ -473,6 +489,119 @@ module atg_cp #(
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_op_r (.I0(s_open), .O(open_ring));
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_op_s (.I0(s_open), .O(open_state));
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_op_o (.I0(s_open), .O(open_out));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* dont_touch = "true" *) reg hcr_we_ctl, hcr_we_fence, hcr_we_dbg, hcr_we_disp, hcr_we_irq;
+	wire hcr_we_ring = s_hcr_we;
+
+	wire [9:0] s_hcr_ridx_ctl, s_hcr_ridx_ring;
+	wire [9:0] hcr_ridx_ctl   = s_hcr_ridx_ctl;
+	wire [9:0] hcr_ridx_ring  = s_hcr_ridx_ring;
+	wire [9:0] hcr_ridx_fence = s_hcr_ridx;
+	wire [9:0] hcr_ridx_dbg   = s_hcr_ridx;
+	wire [9:0] hcr_ridx_disp  = s_hcr_ridx;
+	wire [9:0] hcr_ridx_irq   = s_hcr_ridx;
+	(* dont_touch = "true" *) reg [9:0] hcr_widx_ctl, hcr_widx_fence, hcr_widx_dbg, hcr_widx_disp, hcr_widx_irq;
+	wire [9:0] hcr_widx_ring = s_hcr_widx;
+
+	(* dont_touch = "true" *) reg [31:0] hcr_wmask_ctl, hcr_wmask_fence, hcr_wmask_dbg, hcr_wmask_irq, hcr_wmask_disp;
+	wire [31:0] hcr_wmask_ring = s_hcr_wmask;
+
+	wire [31:0] reg_wdata_regs = reg_wdata;
+	wire [31:0] reg_wdata_ring = s_hcr_wdata;
+	(* dont_touch = "true" *) reg [31:0] reg_wdata_ctl, reg_wdata_fence, reg_wdata_dbg, reg_wdata_irq, reg_wdata_state, reg_wdata_disp;
+
+	wire [3:0] reg_wstrb_regs = reg_wstrb;
+	wire [16:0] reg_waddr_regs = reg_waddr;
+
+	(* dont_touch = "true" *) reg alias_we_state;
+	(* dont_touch = "true" *) reg [9:0] alias_idx_state;
+
+	always @(posedge clk or posedge cp_rst_high) begin
+		if (cp_rst_high) begin
+			hcr_we_ctl      <= 1'b0;
+			hcr_we_fence    <= 1'b0;
+			hcr_we_dbg      <= 1'b0;
+			hcr_we_disp     <= 1'b0;
+			hcr_we_irq      <= 1'b0;
+			hcr_widx_ctl    <= 10'd0;
+			hcr_widx_fence  <= 10'd0;
+			hcr_widx_dbg    <= 10'd0;
+			hcr_widx_disp   <= 10'd0;
+			hcr_widx_irq    <= 10'd0;
+			hcr_wmask_ctl   <= 32'd0;
+			hcr_wmask_fence <= 32'd0;
+			hcr_wmask_dbg   <= 32'd0;
+			hcr_wmask_irq   <= 32'd0;
+			hcr_wmask_disp  <= 32'd0;
+			reg_wdata_ctl   <= 32'd0;
+			reg_wdata_fence <= 32'd0;
+			reg_wdata_dbg   <= 32'd0;
+			reg_wdata_irq   <= 32'd0;
+			reg_wdata_state <= 32'd0;
+			reg_wdata_disp  <= 32'd0;
+			alias_we_state  <= 1'b0;
+			alias_idx_state <= 10'd0;
+		end else begin
+			hcr_we_ctl      <= s_hcr_we && (s_hcr_widx[9:6] == 4'd0);
+			hcr_we_fence    <= s_hcr_we && (s_hcr_widx == 10'd28);
+			hcr_we_dbg      <= s_hcr_we;
+			hcr_we_disp     <= s_hcr_we;
+			hcr_we_irq      <= s_hcr_we;
+			hcr_widx_ctl    <= s_hcr_widx;
+			hcr_widx_fence  <= (s_hcr_widx == 10'd28) ? 10'd28 : 10'd0;
+			hcr_widx_dbg    <= s_hcr_widx;
+			hcr_widx_disp   <= s_hcr_widx;
+			hcr_widx_irq    <= s_hcr_widx;
+			hcr_wmask_ctl   <= s_hcr_wmask;
+			hcr_wmask_fence <= s_hcr_wmask;
+			hcr_wmask_dbg   <= s_hcr_wmask;
+			hcr_wmask_irq   <= s_hcr_wmask;
+			hcr_wmask_disp  <= s_hcr_wmask;
+			reg_wdata_ctl   <= s_hcr_wdata;
+			reg_wdata_fence <= s_hcr_wdata;
+			reg_wdata_dbg   <= s_hcr_wdata;
+			reg_wdata_irq   <= s_hcr_wdata;
+			reg_wdata_state <= s_hcr_wdata;
+			reg_wdata_disp  <= s_hcr_wdata;
+			alias_we_state  <= s_alias_we;
+			alias_idx_state <= s_alias_idx;
+		end
+	end
+
+	wire [1:0] blt_err_b, cpu_fault_b;
+	wire [2:0] rsp_err_b;
+	assign blt_err_b[0] = blt_error;
+	assign blt_err_b[1] = blt_error;
+	assign cpu_fault_b[0] = cpu_fault;
+	assign cpu_fault_b[1] = cpu_fault;
+	assign rsp_err_b[0] = s_i_rsp_error;
+	assign rsp_err_b[1] = s_i_rsp_error;
+	assign rsp_err_b[2] = s_i_rsp_error;
+
+	wire [1:0] x_fault_b0, x_fault_b1;
+	assign x_fault_b0[0] = x_fault[0];
+	assign x_fault_b0[1] = x_fault[0];
+	assign x_fault_b1[0] = x_fault[1];
+	assign x_fault_b1[1] = x_fault[1];
+
+	wire [1:0] fw_act_b;
+	assign fw_act_b[0] = fw_active;
+	assign fw_act_b[1] = fw_active;
+
+	wire [1:0] ring_fault_b, seq_fault_b;
+	assign ring_fault_b[0] = s_ring_fault;
+	assign ring_fault_b[1] = s_ring_fault;
+	assign seq_fault_b[0] = s_seq_fault;
+	assign seq_fault_b[1] = s_seq_fault;
+	wire [1:0] fence_fault_b;
+
+	wire mc_flush_state;
+	assign mc_flush_state = s_mc_flush;
+
+	wire open_ring, open_state, open_out;
+	assign open_ring = s_open;
+	assign open_state = s_open;
+	assign open_out = s_open;
 `else
 	wire [1:0] blt_err_b = {2{blt_error}};
 	wire [1:0] cpu_fault_b = {2{cpu_fault}};
@@ -533,12 +662,12 @@ module atg_cp #(
 			alias_idx_state <= 10'd0;
 		end else begin
 			hcr_we_ctl      <= s_hcr_we && (s_hcr_widx[9:6] == 4'd0);
-			hcr_we_fence    <= s_hcr_we;
+			hcr_we_fence    <= s_hcr_we && (s_hcr_widx == 10'd28);
 			hcr_we_dbg      <= s_hcr_we;
 			hcr_we_disp     <= s_hcr_we;
 			hcr_we_irq      <= s_hcr_we;
 			hcr_widx_ctl    <= s_hcr_widx;
-			hcr_widx_fence  <= s_hcr_widx;
+			hcr_widx_fence  <= (s_hcr_widx == 10'd28) ? 10'd28 : 10'd0;
 			hcr_widx_dbg    <= s_hcr_widx;
 			hcr_widx_disp   <= s_hcr_widx;
 			hcr_widx_irq    <= s_hcr_widx;
@@ -560,6 +689,42 @@ module atg_cp #(
 `endif
 
 `ifdef SYNTH_KINTEX7
+	reg [31:0] reg_rdata_r;
+	wire [31:0] reg_rdata_raw;
+	always @(posedge clk or posedge cp_rst_high) begin
+		if (cp_rst_high)
+			reg_rdata_r <= 32'd0;
+		else
+			reg_rdata_r <= reg_rdata_raw;
+	end
+	assign reg_rdata = reg_rdata_r;
+
+	reg hcr_we_r;
+	reg [9:0] hcr_widx_r;
+	reg [31:0] hcr_wdata_r;
+	reg [31:0] hcr_wmask_r;
+	reg [9:0] hcr_ridx_r;
+	always @(posedge clk or posedge cp_rst_high) begin
+		if (cp_rst_high) begin
+			hcr_we_r    <= 1'b0;
+			hcr_widx_r  <= 10'd0;
+			hcr_wdata_r <= 32'd0;
+			hcr_wmask_r <= 32'd0;
+			hcr_ridx_r  <= 10'd0;
+		end else begin
+			hcr_we_r    <= s_hcr_we;
+			hcr_widx_r  <= s_hcr_widx;
+			hcr_wdata_r <= reg_wdata_disp;
+			hcr_wmask_r <= hcr_wmask_disp;
+			hcr_ridx_r  <= hcr_ridx_disp;
+		end
+	end
+	assign hcr_we = hcr_we_r;
+	assign hcr_widx = hcr_widx_r;
+	assign hcr_wdata = hcr_wdata_r;
+	assign hcr_wmask = hcr_wmask_r;
+	assign hcr_ridx = s_hcr_ridx;
+`elsif SYNTH_KINTEX_ULTRASCALE
 	reg [31:0] reg_rdata_r;
 	wire [31:0] reg_rdata_raw;
 	always @(posedge clk or posedge cp_rst_high) begin
@@ -633,7 +798,18 @@ module atg_cp #(
 	/* CAPS internal read arbitration (Firmware sub-bus vs Sequencer CMD_QUERY_CAPS) */
 	reg [8:0] caps_index;
 	reg [31:0] caps_data;
-	reg caps_fw_stall;
+	(* keep = "true", equivalent_register_removal = "no" *) reg caps_fw_stall;
+`ifdef SYNTH_KINTEX7
+	(* keep = "true", equivalent_register_removal = "no" *) reg caps_fw_stall_d0, caps_fw_stall_d1, caps_fw_stall_idx_lo, caps_fw_stall_idx_hi, caps_fw_stall_seq;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", equivalent_register_removal = "no" *) reg caps_fw_stall_d0, caps_fw_stall_d1, caps_fw_stall_idx_lo, caps_fw_stall_idx_hi, caps_fw_stall_seq;
+`else
+	wire caps_fw_stall_d0 = caps_fw_stall;
+	wire caps_fw_stall_d1 = caps_fw_stall;
+	wire caps_fw_stall_idx_lo = caps_fw_stall;
+	wire caps_fw_stall_idx_hi = caps_fw_stall;
+	wire caps_fw_stall_seq = caps_fw_stall;
+`endif
 	wire [8:0] s_seq_caps_r_idx;
 	wire [31:0] s_caps_r_data;
 
@@ -643,14 +819,67 @@ module atg_cp #(
 			caps_index <= 9'd0;
 			caps_data <= 32'd0;
 			caps_fw_stall <= 1'b0;
+			caps_fw_stall_d0 <= 1'b0;
+			caps_fw_stall_d1 <= 1'b0;
+			caps_fw_stall_idx_lo <= 1'b0;
+			caps_fw_stall_idx_hi <= 1'b0;
+			caps_fw_stall_seq <= 1'b0;
 		end else begin
 			caps_fw_stall <= 1'b0;
+			caps_fw_stall_d0 <= 1'b0;
+			caps_fw_stall_d1 <= 1'b0;
+			caps_fw_stall_idx_lo <= 1'b0;
+			caps_fw_stall_idx_hi <= 1'b0;
+			caps_fw_stall_seq <= 1'b0;
 			if (sb_we && (sb_idx == 6'h34)) begin
 				caps_index <= sb_wdata[8:0];
 				caps_fw_stall <= 1'b1;
+				caps_fw_stall_d0 <= 1'b1;
+				caps_fw_stall_d1 <= 1'b1;
+				caps_fw_stall_idx_lo <= 1'b1;
+				caps_fw_stall_idx_hi <= 1'b1;
+				caps_fw_stall_seq <= 1'b1;
 			end
-			if (caps_fw_stall) begin
-				caps_data <= s_caps_r_data;
+			if (caps_fw_stall_d0) begin
+				caps_data[15:0] <= s_caps_r_data[15:0];
+			end
+			if (caps_fw_stall_d1) begin
+				caps_data[31:16] <= s_caps_r_data[31:16];
+			end
+		end
+	end
+`elsif SYNTH_KINTEX_ULTRASCALE
+	always @(posedge clk or posedge cp_rst_high) begin
+		if (cp_rst_high) begin
+			caps_index <= 9'd0;
+			caps_data <= 32'd0;
+			caps_fw_stall <= 1'b0;
+			caps_fw_stall_d0 <= 1'b0;
+			caps_fw_stall_d1 <= 1'b0;
+			caps_fw_stall_idx_lo <= 1'b0;
+			caps_fw_stall_idx_hi <= 1'b0;
+			caps_fw_stall_seq <= 1'b0;
+		end else begin
+			caps_fw_stall <= 1'b0;
+			caps_fw_stall_d0 <= 1'b0;
+			caps_fw_stall_d1 <= 1'b0;
+			caps_fw_stall_idx_lo <= 1'b0;
+			caps_fw_stall_idx_hi <= 1'b0;
+			caps_fw_stall_seq <= 1'b0;
+			if (sb_we && (sb_idx == 6'h34)) begin
+				caps_index <= sb_wdata[8:0];
+				caps_fw_stall <= 1'b1;
+				caps_fw_stall_d0 <= 1'b1;
+				caps_fw_stall_d1 <= 1'b1;
+				caps_fw_stall_idx_lo <= 1'b1;
+				caps_fw_stall_idx_hi <= 1'b1;
+				caps_fw_stall_seq <= 1'b1;
+			end
+			if (caps_fw_stall_d0) begin
+				caps_data[15:0] <= s_caps_r_data[15:0];
+			end
+			if (caps_fw_stall_d1) begin
+				caps_data[31:16] <= s_caps_r_data[31:16];
 			end
 		end
 	end
@@ -679,20 +908,46 @@ module atg_cp #(
 `endif
 
 `ifdef SYNTH_KINTEX7
-	wire [8:0] s_caps_r_idx = caps_fw_stall ? caps_index : s_seq_caps_r_idx;
+	wire [8:0] s_caps_r_idx;
+	genvar gi_cr;
+	generate
+		for (gi_cr = 0; gi_cr < 9; gi_cr = gi_cr + 1) begin : g_caps_ridx_mux
+			(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'hCA)) u_crim (
+				.I0(s_seq_caps_r_idx[gi_cr]), .I1(caps_index[gi_cr]),
+				.I2(gi_cr < 5 ? caps_fw_stall_idx_lo : caps_fw_stall_idx_hi),
+				.O(s_caps_r_idx[gi_cr])
+			);
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [8:0] s_caps_r_idx;
+	genvar gi_cr;
+	generate
+		for (gi_cr = 0; gi_cr < 9; gi_cr = gi_cr + 1) begin : g_caps_ridx_mux
+			(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'hCA)) u_crim (
+				.I0(s_seq_caps_r_idx[gi_cr]), .I1(caps_index[gi_cr]),
+				.I2(gi_cr < 5 ? caps_fw_stall_idx_lo : caps_fw_stall_idx_hi),
+				.O(s_caps_r_idx[gi_cr])
+			);
+		end
+	endgenerate
 `else
 	wire [8:0] s_caps_r_idx = s_caps_r_idx_r;
 `endif
 
-	always @(*) begin
-		sb_rdata = 32'd0;
-		case (sb_idx)
-		6'h34: sb_rdata = {23'd0, caps_index};
-		6'h35: sb_rdata = caps_data;
-		6'h36: sb_rdata = s_boot_caps;
-		6'h3E: sb_rdata = s_cap_dev_caps;
-		default: sb_rdata = 32'd0;
-		endcase
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			sb_rdata <= 32'd0;
+		end else begin
+			sb_rdata <= 32'd0;
+			case (sb_idx)
+			6'h34: sb_rdata <= {23'd0, caps_index};
+			6'h35: sb_rdata <= caps_data;
+			6'h36: sb_rdata <= s_boot_caps;
+			6'h3E: sb_rdata <= s_cap_dev_caps;
+			default: sb_rdata <= 32'd0;
+			endcase
+		end
 	end
 
 	atg_cp_caps #(
@@ -839,6 +1094,11 @@ module atg_cp #(
 		.reg_rd(reg_rd), .reg_raddr(reg_raddr), .reg_rdata(reg_rdata_raw),
 		.hcr_we(s_hcr_we), .hcr_widx(s_hcr_widx), .hcr_wdata(s_hcr_wdata),
 		.hcr_wmask(s_hcr_wmask), .hcr_ridx(s_hcr_ridx),
+`ifdef SYNTH_KINTEX7
+		.hcr_ridx_ctl(s_hcr_ridx_ctl), .hcr_ridx_ring(s_hcr_ridx_ring),
+`elsif SYNTH_KINTEX_ULTRASCALE
+		.hcr_ridx_ctl(s_hcr_ridx_ctl), .hcr_ridx_ring(s_hcr_ridx_ring),
+`endif
 		.alias_we(s_alias_we), .alias_idx(s_alias_idx), .alias_ridx(s_alias_ridx),
 		.ctl_rdata(s_ctl_rdata), .irq_rdata(s_irq_rdata), .ring_rdata(s_ring_rdata),
 		.fence_rdata(s_fence_rdata), .dbg_rdata(s_dbg_rdata), .state_rdata(s_state_rdata),
@@ -851,7 +1111,11 @@ module atg_cp #(
 	/* Control: state machine, RESET order, watchdog, faults. */
 	wire s_run, s_halt, s_step, s_open, s_quiesce, s_mc_flush, s_ctrl_irq_global;
 	wire [3:0] s_mc_flush_rep;
+`ifdef SYNTH_KINTEX7
 	(* keep = "true", dont_touch = "true" *) wire s_core_rst_n;
+`else
+	wire s_core_rst_n;
+`endif
 	wire [3:0] s_cp_state;
 	wire [2:0] s_lc_state;
 	wire [2:0] s_host_kick;
@@ -884,9 +1148,35 @@ module atg_cp #(
 	end
 	wire ring_busy_ctl = r_ring_busy;
 	wire cp_busy0_ctl = r_cp_busy0;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire s_core_rst_inv = ~s_core_rst_n;
+	reg r_ring_busy;
+	reg r_cp_busy0;
+	always @(posedge clk or posedge s_core_rst_inv) begin
+		if (s_core_rst_inv) begin
+			r_ring_busy <= 1'b0;
+			r_cp_busy0 <= 1'b0;
+		end else begin
+			r_ring_busy <= s_ring_busy;
+			r_cp_busy0 <= s_seq_busy || s_ring_busy || s_dbg_busy;
+		end
+	end
+	wire ring_busy_ctl = r_ring_busy;
+	wire cp_busy0_ctl = r_cp_busy0;
 `else
-	wire ring_busy_ctl = s_ring_busy;
-	wire cp_busy0_ctl = s_seq_busy || s_ring_busy || s_dbg_busy;
+	reg r_ring_busy;
+	reg r_cp_busy0;
+	always @(posedge clk or negedge s_core_rst_n) begin
+		if (!s_core_rst_n) begin
+			r_ring_busy <= 1'b0;
+			r_cp_busy0 <= 1'b0;
+		end else begin
+			r_ring_busy <= s_ring_busy;
+			r_cp_busy0 <= s_seq_busy || s_ring_busy || s_dbg_busy;
+		end
+	end
+	wire ring_busy_ctl = r_ring_busy;
+	wire cp_busy0_ctl = r_cp_busy0;
 `endif
 
 	/* Fault sources: 0 ring, 1 seq, 2 state, 3 fence, 4 SU, 5 CPU, 6 BLT, 7 other blocks, 8 DISP. */
@@ -941,6 +1231,7 @@ module atg_cp #(
 		.src_stage({4'd0, 4'd0, 4'd0, 4'd0, su_effective_stage, 4'd0, 4'd0, 4'd0, 4'd0}),
 		.run(s_run), .halt(s_halt), .ctrl_irq_global(s_ctrl_irq_global), .quiesce(s_quiesce), .mc_flush(s_mc_flush), .mc_flush_rep(s_mc_flush_rep),
 		.core_rst_n(s_core_rst_n), .open(s_open), .cp_state(s_cp_state), .lc_state(s_lc_state),
+		.lc_halting_o(lc_halting), .lc_halted_o(lc_halted), .lc_abort_o(s_seq_abort),
 		.host_kick(s_host_kick), .step(s_step),
 		.ev_halted(s_ev_halted), .ev_fault(s_ev_fault), .ev_wdt(s_ev_wdt),
 		.fault_session_clear(fault_session_clear), .fault_session_tag(fault_session_tag),
@@ -1008,44 +1299,172 @@ module atg_cp #(
 			end
 		end
 	end
-	wire [20:0] amb_k0_b, amb_k1_b;
+	wire [2:0] amb_k0_m, amb_k1_m;
+	wire [36:0] amb_k0_b, amb_k1_b;
 	genvar gi_ak;
 	generate
-		for (gi_ak = 0; gi_ak < 21; gi_ak = gi_ak + 1) begin : g_amb_k_buf
-			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_ak0 (.I0(amb_k[0]), .O(amb_k0_b[gi_ak]));
-			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_ak1 (.I0(amb_k[1]), .O(amb_k1_b[gi_ak]));
+		for (gi_ak = 0; gi_ak < 3; gi_ak = gi_ak + 1) begin : g_amb_k_mid
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_akm0 (.I0(amb_k[0]), .O(amb_k0_m[gi_ak]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_akm1 (.I0(amb_k[1]), .O(amb_k1_m[gi_ak]));
+		end
+		for (gi_ak = 0; gi_ak < 37; gi_ak = gi_ak + 1) begin : g_amb_k_buf
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_ak0 (.I0(amb_k0_m[gi_ak / 13]), .O(amb_k0_b[gi_ak]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_ak1 (.I0(amb_k1_m[gi_ak / 13]), .O(amb_k1_b[gi_ak]));
 		end
 	endgenerate
-	wire amb_req_write = amb_k1_b[20] ?
-		(amb_k0_b[20] ? s_i_req_write[3] : s_i_req_write[2]) :
-		(amb_k0_b[20] ? s_i_req_write[1] : s_i_req_write[0]);
+	wire amb_req_write = amb_k1_b[36] ?
+		(amb_k0_b[36] ? s_i_req_write[3] : s_i_req_write[2]) :
+		(amb_k0_b[36] ? s_i_req_write[1] : s_i_req_write[0]);
 	wire [SLA_W-1:0] amb_req_line;
-	assign amb_req_line[15:0] = amb_k1_b[18] ?
-		(amb_k0_b[18] ? s_i_req_line[3*SLA_W +: 16] : s_i_req_line[2*SLA_W +: 16]) :
-		(amb_k0_b[18] ? s_i_req_line[1*SLA_W +: 16] : s_i_req_line[0*SLA_W +: 16]);
-	assign amb_req_line[SLA_W-1:16] = amb_k1_b[19] ?
-		(amb_k0_b[19] ? s_i_req_line[3*SLA_W + 16 +: (SLA_W-16)] : s_i_req_line[2*SLA_W + 16 +: (SLA_W-16)]) :
-		(amb_k0_b[19] ? s_i_req_line[1*SLA_W + 16 +: (SLA_W-16)] : s_i_req_line[0*SLA_W + 16 +: (SLA_W-16)]);
+	assign amb_req_line[15:0] = amb_k1_b[34] ?
+		(amb_k0_b[34] ? s_i_req_line[3*SLA_W +: 16] : s_i_req_line[2*SLA_W +: 16]) :
+		(amb_k0_b[34] ? s_i_req_line[1*SLA_W +: 16] : s_i_req_line[0*SLA_W +: 16]);
+	assign amb_req_line[SLA_W-1:16] = amb_k1_b[35] ?
+		(amb_k0_b[35] ? s_i_req_line[3*SLA_W + 16 +: (SLA_W-16)] : s_i_req_line[2*SLA_W + 16 +: (SLA_W-16)]) :
+		(amb_k0_b[35] ? s_i_req_line[1*SLA_W + 16 +: (SLA_W-16)] : s_i_req_line[0*SLA_W + 16 +: (SLA_W-16)]);
 	wire [LINE_BYTES-1:0] amb_req_be;
-	assign amb_req_be[15:0] = amb_k1_b[16] ?
-		(amb_k0_b[16] ? s_i_req_be[3*LINE_BYTES +: 16] : s_i_req_be[2*LINE_BYTES +: 16]) :
-		(amb_k0_b[16] ? s_i_req_be[1*LINE_BYTES +: 16] : s_i_req_be[0*LINE_BYTES +: 16]);
-	assign amb_req_be[LINE_BYTES-1:16] = amb_k1_b[17] ?
-		(amb_k0_b[17] ? s_i_req_be[3*LINE_BYTES + 16 +: (LINE_BYTES-16)] : s_i_req_be[2*LINE_BYTES + 16 +: (LINE_BYTES-16)]) :
-		(amb_k0_b[17] ? s_i_req_be[1*LINE_BYTES + 16 +: (LINE_BYTES-16)] : s_i_req_be[0*LINE_BYTES + 16 +: (LINE_BYTES-16)]);
+	assign amb_req_be[15:0] = amb_k1_b[32] ?
+		(amb_k0_b[32] ? s_i_req_be[3*LINE_BYTES +: 16] : s_i_req_be[2*LINE_BYTES +: 16]) :
+		(amb_k0_b[32] ? s_i_req_be[1*LINE_BYTES +: 16] : s_i_req_be[0*LINE_BYTES +: 16]);
+	assign amb_req_be[LINE_BYTES-1:16] = amb_k1_b[33] ?
+		(amb_k0_b[33] ? s_i_req_be[3*LINE_BYTES + 16 +: (LINE_BYTES-16)] : s_i_req_be[2*LINE_BYTES + 16 +: (LINE_BYTES-16)]) :
+		(amb_k0_b[33] ? s_i_req_be[1*LINE_BYTES + 16 +: (LINE_BYTES-16)] : s_i_req_be[0*LINE_BYTES + 16 +: (LINE_BYTES-16)]);
 	wire [SLB-1:0] amb_req_wdata;
 	genvar gi_aw;
 	generate
-		for (gi_aw = 0; gi_aw < 16; gi_aw = gi_aw + 1) begin : g_amb_wdata
-			assign amb_req_wdata[gi_aw*16 +: 16] = amb_k1_b[gi_aw] ?
-				(amb_k0_b[gi_aw] ? s_i_req_wdata[3*SLB + gi_aw*16 +: 16] : s_i_req_wdata[2*SLB + gi_aw*16 +: 16]) :
-				(amb_k0_b[gi_aw] ? s_i_req_wdata[1*SLB + gi_aw*16 +: 16] : s_i_req_wdata[0*SLB + gi_aw*16 +: 16]);
+		for (gi_aw = 0; gi_aw < 32; gi_aw = gi_aw + 1) begin : g_amb_wdata
+			assign amb_req_wdata[gi_aw*8 +: 8] = amb_k1_b[gi_aw] ?
+				(amb_k0_b[gi_aw] ? s_i_req_wdata[3*SLB + gi_aw*8 +: 8] : s_i_req_wdata[2*SLB + gi_aw*8 +: 8]) :
+				(amb_k0_b[gi_aw] ? s_i_req_wdata[1*SLB + gi_aw*8 +: 8] : s_i_req_wdata[0*SLB + gi_aw*8 +: 8]);
 		end
 	endgenerate
-	wire [5:0] amb_tag_low = amb_k1_b[20] ?
-		(amb_k0_b[20] ? s_i_req_tag[3*8 +: 6] : s_i_req_tag[2*8 +: 6]) :
-		(amb_k0_b[20] ? s_i_req_tag[1*8 +: 6] : s_i_req_tag[0*8 +: 6]);
-	wire [7:0] amb_req_tag = {amb_k1_b[20], amb_k0_b[20], amb_tag_low};
+	wire [5:0] amb_tag_low = amb_k1_b[36] ?
+		(amb_k0_b[36] ? s_i_req_tag[3*8 +: 6] : s_i_req_tag[2*8 +: 6]) :
+		(amb_k0_b[36] ? s_i_req_tag[1*8 +: 6] : s_i_req_tag[0*8 +: 6]);
+	wire [7:0] amb_req_tag = {amb_k1_b[36], amb_k0_b[36], amb_tag_low};
+
+	reg req_valid_r;
+	(* extract_reset = "no" *) reg req_write_r;
+	(* extract_reset = "no" *) reg [SLA_W-1:0] req_line_r;
+	(* extract_reset = "no" *) reg [LINE_BYTES-1:0] req_be_r;
+	(* extract_reset = "no" *) reg [SLB-1:0] req_wdata_r;
+	(* extract_reset = "no" *) reg [7:0] req_tag_r;
+	always @(posedge clk or posedge cp_rst_high) begin
+		if (cp_rst_high) begin
+			req_valid_r <= 1'b0;
+			req_write_r <= 1'b0;
+			req_line_r  <= {SLA_W{1'b0}};
+			req_be_r    <= {LINE_BYTES{1'b0}};
+			req_wdata_r <= {SLB{1'b0}};
+			req_tag_r   <= 8'd0;
+		end else begin
+			req_valid_r <= |s_i_req_valid;
+			req_write_r <= amb_req_write;
+			req_line_r  <= amb_req_line;
+			req_be_r    <= amb_req_be;
+			req_wdata_r <= amb_req_wdata;
+			req_tag_r   <= amb_req_tag;
+		end
+	end
+	assign req_valid = req_valid_r;
+	assign req_write = req_write_r;
+	assign req_line  = req_line_r;
+	assign req_be    = req_be_r;
+	assign req_wdata = req_wdata_r;
+	assign req_tag   = req_tag_r;
+	(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h11F0)) u_rdy0 (
+		.I0(amb_lock_k[0]), .I1(amb_lock_k[1]), .I2(amb_lock), .I3(req_ready), .O(s_i_req_ready[0])
+	);
+	(* DONT_TOUCH = "TRUE" *) LUT5 #(.INIT(32'h002200F0)) u_rdy1 (
+		.I0(amb_lock_k[0]), .I1(amb_lock_k[1]), .I2(amb_lock), .I3(s_i_req_valid[0]), .I4(req_ready), .O(s_i_req_ready[1])
+	);
+	assign s_i_req_ready[2] = req_ready && ({amb_k1_b[20], amb_k0_b[20]} == 2'd2) && s_i_req_valid[2];
+	assign s_i_req_ready[3] = req_ready && ({amb_k1_b[20], amb_k0_b[20]} == 2'd3) && s_i_req_valid[3];
+	wire rsp_tag_hi_z;
+	(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'h0000000000000001)) u_rthz (
+		.I0(rsp_tag[2]), .I1(rsp_tag[3]), .I2(rsp_tag[4]),
+		.I3(rsp_tag[5]), .I4(rsp_tag[6]), .I5(rsp_tag[7]),
+		.O(rsp_tag_hi_z)
+	);
+	assign s_i_rsp_valid[0] = rsp_valid && rsp_tag_hi_z;
+	assign s_i_rsp_valid[1] = rsp_valid && (rsp_tag[7:6] == 2'd1);
+	assign s_i_rsp_valid[2] = rsp_valid && (rsp_tag[7:6] == 2'd2);
+	assign s_i_rsp_valid[3] = rsp_valid && (rsp_tag[7:6] == 2'd3);
+	assign s_i_rsp_write = rsp_write;
+	assign s_i_rsp_tag = {2'b00, rsp_tag[5:0]};
+	assign s_i_rsp_rdata = rsp_rdata;
+	assign s_i_rsp_error = rsp_error;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	reg amb_lock;
+	reg [1:0] amb_lock_k;
+	wire [1:0] amb_pick = s_i_req_valid[0] ? 2'd0 :
+		s_i_req_valid[1] ? 2'd1 :
+		s_i_req_valid[2] ? 2'd2 : 2'd3;
+	wire [1:0] amb_k;
+	(* DONT_TOUCH = "TRUE" *) LUT5 #(.INIT(32'hFF00_4455)) u_amb_k0 (
+		.I0(s_i_req_valid[0]), .I1(s_i_req_valid[1]), .I2(s_i_req_valid[2]),
+		.I3(amb_lock_k[0]), .I4(amb_lock), .O(amb_k[0])
+	);
+	(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'hF011)) u_amb_k1 (
+		.I0(s_i_req_valid[0]), .I1(s_i_req_valid[1]),
+		.I2(amb_lock_k[1]), .I3(amb_lock), .O(amb_k[1])
+	);
+	always @(posedge clk or posedge cp_rst_high) begin
+		if (cp_rst_high) begin
+			amb_lock <= 1'b0;
+			amb_lock_k <= 2'd0;
+		end else if (|s_i_req_valid) begin
+			if (req_ready)
+				amb_lock <= 1'b0;
+			else if (!amb_lock) begin
+				amb_lock <= 1'b1;
+				amb_lock_k <= amb_pick;
+			end
+		end
+	end
+	wire [2:0] amb_k0_m, amb_k1_m;
+	wire [36:0] amb_k0_b, amb_k1_b;
+	genvar gi_ak;
+	generate
+		for (gi_ak = 0; gi_ak < 3; gi_ak = gi_ak + 1) begin : g_amb_k_mid
+			assign amb_k0_m[gi_ak] = amb_k[0];
+			assign amb_k1_m[gi_ak] = amb_k[1];
+		end
+		for (gi_ak = 0; gi_ak < 37; gi_ak = gi_ak + 1) begin : g_amb_k_buf
+			assign amb_k0_b[gi_ak] = amb_k0_m[gi_ak / 13];
+			assign amb_k1_b[gi_ak] = amb_k1_m[gi_ak / 13];
+		end
+	endgenerate
+	wire amb_req_write = amb_k1_b[36] ?
+		(amb_k0_b[36] ? s_i_req_write[3] : s_i_req_write[2]) :
+		(amb_k0_b[36] ? s_i_req_write[1] : s_i_req_write[0]);
+	wire [SLA_W-1:0] amb_req_line;
+	assign amb_req_line[15:0] = amb_k1_b[34] ?
+		(amb_k0_b[34] ? s_i_req_line[3*SLA_W +: 16] : s_i_req_line[2*SLA_W +: 16]) :
+		(amb_k0_b[34] ? s_i_req_line[1*SLA_W +: 16] : s_i_req_line[0*SLA_W +: 16]);
+	assign amb_req_line[SLA_W-1:16] = amb_k1_b[35] ?
+		(amb_k0_b[35] ? s_i_req_line[3*SLA_W + 16 +: (SLA_W-16)] : s_i_req_line[2*SLA_W + 16 +: (SLA_W-16)]) :
+		(amb_k0_b[35] ? s_i_req_line[1*SLA_W + 16 +: (SLA_W-16)] : s_i_req_line[0*SLA_W + 16 +: (SLA_W-16)]);
+	wire [LINE_BYTES-1:0] amb_req_be;
+	assign amb_req_be[15:0] = amb_k1_b[32] ?
+		(amb_k0_b[32] ? s_i_req_be[3*LINE_BYTES +: 16] : s_i_req_be[2*LINE_BYTES +: 16]) :
+		(amb_k0_b[32] ? s_i_req_be[1*LINE_BYTES +: 16] : s_i_req_be[0*LINE_BYTES +: 16]);
+	assign amb_req_be[LINE_BYTES-1:16] = amb_k1_b[33] ?
+		(amb_k0_b[33] ? s_i_req_be[3*LINE_BYTES + 16 +: (LINE_BYTES-16)] : s_i_req_be[2*LINE_BYTES + 16 +: (LINE_BYTES-16)]) :
+		(amb_k0_b[33] ? s_i_req_be[1*LINE_BYTES + 16 +: (LINE_BYTES-16)] : s_i_req_be[0*LINE_BYTES + 16 +: (LINE_BYTES-16)]);
+	wire [SLB-1:0] amb_req_wdata;
+	genvar gi_aw;
+	generate
+		for (gi_aw = 0; gi_aw < 32; gi_aw = gi_aw + 1) begin : g_amb_wdata
+			assign amb_req_wdata[gi_aw*8 +: 8] = amb_k1_b[gi_aw] ?
+				(amb_k0_b[gi_aw] ? s_i_req_wdata[3*SLB + gi_aw*8 +: 8] : s_i_req_wdata[2*SLB + gi_aw*8 +: 8]) :
+				(amb_k0_b[gi_aw] ? s_i_req_wdata[1*SLB + gi_aw*8 +: 8] : s_i_req_wdata[0*SLB + gi_aw*8 +: 8]);
+		end
+	endgenerate
+	wire [5:0] amb_tag_low = amb_k1_b[36] ?
+		(amb_k0_b[36] ? s_i_req_tag[3*8 +: 6] : s_i_req_tag[2*8 +: 6]) :
+		(amb_k0_b[36] ? s_i_req_tag[1*8 +: 6] : s_i_req_tag[0*8 +: 6]);
+	wire [7:0] amb_req_tag = {amb_k1_b[36], amb_k0_b[36], amb_tag_low};
 
 	reg req_valid_r;
 	(* extract_reset = "no" *) reg req_write_r;
@@ -1242,17 +1661,91 @@ module atg_cp #(
 	assign s_n_ready_raw = rs_in_ready;
 	assign s_n_valid     = rs_out_valid;
 	assign s_n_data      = rs_out_data;
-`else
-	am_skid #(.W(32)) u_skid_ring_seq (
-		.clk(clk),
-		.rst_n(s_core_rst_n),
-		.in_valid(s_n_valid_raw),
-		.in_ready(s_n_ready_raw),
-		.in_data(s_n_data_raw),
-		.out_valid(s_n_valid),
-		.out_ready(s_n_ready),
-		.out_data(s_n_data)
+`elsif SYNTH_KINTEX_ULTRASCALE
+	reg        rs_in_ready, rs_out_valid, rs_skid_valid;
+	(* max_fanout = 16, extract_reset = "no" *) reg [31:0] rs_out_data, rs_skid_data;
+	wire [1:0] rs_load_out_b, rs_load_skid_b, rs_skid_sel_b;
+	wire rs_load_skid_raw = s_n_valid_raw && rs_in_ready;
+	(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'hF8CC)) u_rslo0 (
+		.I0(rs_out_valid), .I1(s_n_ready), .I2(s_n_valid_raw), .I3(rs_skid_valid), .O(rs_load_out_b[0])
 	);
+	(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'hF8CC)) u_rslo1 (
+		.I0(rs_out_valid), .I1(s_n_ready), .I2(s_n_valid_raw), .I3(rs_skid_valid), .O(rs_load_out_b[1])
+	);
+	assign rs_load_skid_b[0] = rs_load_skid_raw;
+	assign rs_load_skid_b[1] = rs_load_skid_raw;
+	assign rs_skid_sel_b[0] = rs_skid_valid;
+	assign rs_skid_sel_b[1] = rs_skid_valid;
+
+	wire [31:0] rs_out_next;
+	genvar gi_rso;
+	generate
+		for (gi_rso = 0; gi_rso < 32; gi_rso = gi_rso + 1) begin : g_rs_out_mux
+			(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'hCA)) u_rsom (
+				.I0(s_n_data_raw[gi_rso]),
+				.I1(rs_skid_data[gi_rso]),
+				.I2(rs_skid_sel_b[gi_rso >= 16 ? 1 : 0]),
+				.O(rs_out_next[gi_rso])
+			);
+		end
+	endgenerate
+
+	always @(posedge clk or posedge s_core_rst_inv) begin
+		if (s_core_rst_inv) begin
+			rs_in_ready   <= 1'b1;
+			rs_out_valid  <= 1'b0;
+			rs_skid_valid <= 1'b0;
+			rs_out_data   <= 32'd0;
+			rs_skid_data  <= 32'd0;
+		end else begin
+			if (rs_skid_valid) begin
+				if (s_n_ready) begin
+					rs_out_valid  <= 1'b1;
+					rs_skid_valid <= 1'b0;
+					rs_in_ready   <= 1'b1;
+				end
+			end else begin
+				if (s_n_ready || !rs_out_valid) begin
+					rs_out_valid <= s_n_valid_raw;
+				end else if (s_n_valid_raw && rs_in_ready) begin
+					rs_skid_valid <= 1'b1;
+					rs_in_ready   <= 1'b0;
+				end
+			end
+			if (rs_load_out_b[0])  rs_out_data[15:0]   <= rs_out_next[15:0];
+			if (rs_load_out_b[1])  rs_out_data[31:16]  <= rs_out_next[31:16];
+			if (rs_load_skid_b[0]) rs_skid_data[15:0]  <= s_n_data_raw[15:0];
+			if (rs_load_skid_b[1]) rs_skid_data[31:16] <= s_n_data_raw[31:16];
+		end
+	end
+	assign s_n_ready_raw = rs_in_ready;
+	assign s_n_valid     = rs_out_valid;
+	assign s_n_data      = rs_out_data;
+`else
+	reg        rs_in_ready, rs_out_valid, rs_skid_valid;
+	reg [31:0] rs_out_data, rs_skid_data;
+	wire       rs_load_out = s_n_ready || !rs_out_valid;
+	wire       rs_stall_g  = rs_skid_valid || (rs_out_valid && s_n_valid_raw && rs_in_ready);
+	always @(posedge clk or negedge s_core_rst_n) begin
+		if (!s_core_rst_n) begin
+			rs_in_ready   <= 1'b1;
+			rs_out_valid  <= 1'b0;
+			rs_skid_valid <= 1'b0;
+			rs_out_data   <= 32'd0;
+			rs_skid_data  <= 32'd0;
+		end else begin
+			rs_skid_valid <= !s_n_ready && rs_stall_g;
+			rs_in_ready   <=  s_n_ready || !rs_stall_g;
+			rs_out_valid  <= rs_skid_valid || s_n_valid_raw || (rs_out_valid && !s_n_ready);
+			if (rs_load_out)
+				rs_out_data <= rs_skid_valid ? rs_skid_data : s_n_data_raw;
+			if (!rs_skid_valid)
+				rs_skid_data <= s_n_data_raw;
+		end
+	end
+	assign s_n_ready_raw = rs_in_ready;
+	assign s_n_valid     = rs_out_valid;
+	assign s_n_data      = rs_out_data;
 `endif
 
 	/* The sequencer; it stops only in FAULTED and RESETTING. */
@@ -1264,14 +1757,24 @@ module atg_cp #(
 	wire [1:0] s_f_op;
 	wire [63:0] s_f_addr;
 	wire [31:0] s_f_value, s_f_aux;
-	wire lc_halting   = s_lc_state == GHCI_LC_HALTING;
-	wire lc_halted    = s_lc_state == GHCI_LC_HALTED;
-	wire lc_faulted   = s_lc_state == GHCI_LC_FAULTED;
-	wire lc_resetting = s_lc_state == GHCI_LC_RESETTING;
-	wire s_seq_abort  = lc_faulted || lc_resetting;
+	wire lc_halting, lc_halted, s_seq_abort;
+	wire unused_lc_st = &{1'b0, s_lc_state};
 
 	reg step_active;
 `ifdef SYNTH_KINTEX7
+	always @(posedge clk or posedge s_core_rst_inv) begin
+		if (s_core_rst_inv) begin
+			step_active <= 1'b0;
+		end else begin
+			if (!lc_halted || s_seq_abort)
+				step_active <= 1'b0;
+			else if (s_step)
+				step_active <= 1'b1;
+			else if (s_n_valid && s_n_ready && (s_seq_st == 4'd0))
+				step_active <= 1'b0;
+		end
+	end
+`elsif SYNTH_KINTEX_ULTRASCALE
 	always @(posedge clk or posedge s_core_rst_inv) begin
 		if (s_core_rst_inv) begin
 			step_active <= 1'b0;
@@ -1298,8 +1801,19 @@ module atg_cp #(
 		end
 	end
 `endif
-	wire step_en = step_active || s_step;
-	wire s_seq_halt = lc_halting || (lc_halted && !step_en) || s_seq_abort;
+`ifdef SYNTH_KINTEX7
+	wire s_seq_halt = lc_halting || s_seq_abort || (lc_halted && !step_active && !s_step);
+	wire step_hold_n_w = !s_seq_halt;
+	wire s_seq_halt_a_n = !s_seq_halt;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire s_seq_halt = lc_halting || s_seq_abort || (lc_halted && !step_active && !s_step);
+	wire step_hold_n_w = !s_seq_halt;
+	wire s_seq_halt_a_n = !s_seq_halt;
+`else
+	wire step_hold_n_w  = !(lc_halted && !(step_active | s_step));
+	wire s_seq_halt_a_n = !(lc_halting | s_seq_abort);
+	wire s_seq_halt     = !(s_seq_halt_a_n & step_hold_n_w);
+`endif
 
 	wire s_fw_valid, s_fw_ready;
 	wire [31:0] s_fw_data;
@@ -1372,17 +1886,106 @@ module atg_cp #(
 	assign s_fw_valid = fw_out_valid;
 	assign s_fw_data  = fw_out_data;
 	assign s_fw_side  = fw_out_side;
-`else
-	am_skid #(.W(39)) u_skid_fw (
-		.clk(clk),
-		.rst_n(s_core_rst_n),
-		.in_valid(fw_valid),
-		.in_ready(fw_ready),
-		.in_data({fw_side, fw_data}),
-		.out_valid(s_fw_valid),
-		.out_ready(s_fw_ready),
-		.out_data({s_fw_side, s_fw_data})
+`elsif SYNTH_KINTEX_ULTRASCALE
+	reg        fw_in_ready, fw_out_valid, fw_skid_valid;
+	(* max_fanout = 16, extract_reset = "no" *) reg [31:0] fw_out_data, fw_skid_data;
+	(* max_fanout = 16, extract_reset = "no" *) reg [6:0] fw_out_side, fw_skid_side;
+	wire [6:0] fw_side_next = fw_skid_sel_b[0] ? fw_skid_side : fw_side;
+	wire [1:0] fw_load_out_b, fw_load_skid_b, fw_skid_sel_b;
+	wire fw_load_skid_raw = fw_valid && fw_in_ready;
+	(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'hF8CC)) u_fwlo0 (
+		.I0(fw_out_valid), .I1(s_fw_ready), .I2(fw_valid), .I3(fw_skid_valid), .O(fw_load_out_b[0])
 	);
+	(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'hF8CC)) u_fwlo1 (
+		.I0(fw_out_valid), .I1(s_fw_ready), .I2(fw_valid), .I3(fw_skid_valid), .O(fw_load_out_b[1])
+	);
+	assign fw_load_skid_b[0] = fw_load_skid_raw;
+	assign fw_load_skid_b[1] = fw_load_skid_raw;
+	assign fw_skid_sel_b[0] = fw_skid_valid;
+	assign fw_skid_sel_b[1] = fw_skid_valid;
+
+	wire [31:0] fw_out_next;
+	genvar gi_fwo;
+	generate
+		for (gi_fwo = 0; gi_fwo < 32; gi_fwo = gi_fwo + 1) begin : g_fw_out_mux
+			(* DONT_TOUCH = "TRUE" *) LUT3 #(.INIT(8'hCA)) u_fwom (
+				.I0(fw_data[gi_fwo]),
+				.I1(fw_skid_data[gi_fwo]),
+				.I2(fw_skid_sel_b[gi_fwo >= 16 ? 1 : 0]),
+				.O(fw_out_next[gi_fwo])
+			);
+		end
+	endgenerate
+
+	always @(posedge clk or posedge s_core_rst_inv) begin
+		if (s_core_rst_inv) begin
+			fw_in_ready   <= 1'b1;
+			fw_out_valid  <= 1'b0;
+			fw_skid_valid <= 1'b0;
+			fw_out_data   <= 32'd0;
+			fw_out_side   <= 7'd0;
+			fw_skid_data  <= 32'd0;
+			fw_skid_side  <= 7'd0;
+		end else begin
+			if (fw_skid_valid) begin
+				if (s_fw_ready) begin
+					fw_out_valid  <= 1'b1;
+					fw_skid_valid <= 1'b0;
+					fw_in_ready   <= 1'b1;
+				end
+			end else begin
+				if (s_fw_ready || !fw_out_valid) begin
+					fw_out_valid <= fw_valid;
+				end else if (fw_valid && fw_in_ready) begin
+					fw_skid_valid <= 1'b1;
+					fw_in_ready   <= 1'b0;
+				end
+			end
+			if (fw_load_out_b[0])  fw_out_data[15:0]   <= fw_out_next[15:0];
+			if (fw_load_out_b[1])  fw_out_data[31:16]  <= fw_out_next[31:16];
+			if (fw_load_out_b[0])  fw_out_side         <= fw_side_next;
+			if (fw_load_skid_b[0]) fw_skid_data[15:0]  <= fw_data[15:0];
+			if (fw_load_skid_b[1]) fw_skid_data[31:16] <= fw_data[31:16];
+			if (fw_load_skid_b[0]) fw_skid_side        <= fw_side;
+		end
+	end
+	assign fw_ready   = fw_in_ready;
+	assign s_fw_valid = fw_out_valid;
+	assign s_fw_data  = fw_out_data;
+	assign s_fw_side  = fw_out_side;
+`else
+	reg        fw_in_ready, fw_out_valid, fw_skid_valid;
+	reg [31:0] fw_out_data, fw_skid_data;
+	reg [6:0]  fw_out_side, fw_skid_side;
+	wire       fw_load_out = s_fw_ready || !fw_out_valid;
+	wire       fw_stall_g  = fw_skid_valid || (fw_out_valid && fw_valid && fw_in_ready);
+	always @(posedge clk or negedge s_core_rst_n) begin
+		if (!s_core_rst_n) begin
+			fw_in_ready   <= 1'b1;
+			fw_out_valid  <= 1'b0;
+			fw_skid_valid <= 1'b0;
+			fw_out_data   <= 32'd0;
+			fw_out_side   <= 7'd0;
+			fw_skid_data  <= 32'd0;
+			fw_skid_side  <= 7'd0;
+		end else begin
+			fw_skid_valid <= !s_fw_ready && fw_stall_g;
+			fw_in_ready   <=  s_fw_ready || !fw_stall_g;
+			fw_out_valid  <= fw_skid_valid || fw_valid || (fw_out_valid && !s_fw_ready);
+			if (fw_load_out) begin
+				fw_out_data <= fw_skid_valid ? fw_skid_data : fw_data;
+				fw_out_side <= fw_skid_valid ? fw_skid_side : fw_side;
+			end
+			if (!fw_skid_valid) begin
+				fw_skid_data <= fw_data;
+				fw_skid_side <= fw_side;
+			end
+		end
+	end
+	assign fw_ready   = fw_in_ready;
+	assign s_fw_valid = fw_out_valid;
+	assign s_fw_data  = fw_out_data;
+	assign s_fw_side  = fw_out_side;
 `endif
 
 	wire s_seq_cs_mesh;
@@ -1412,7 +2015,7 @@ module atg_cp #(
 		.u_fw(u_fw), .u_side(u_side), .u_req(u_req), .u_ok(u_ok), .u_active(u_active),
 		.caps_r_idx(s_seq_caps_r_idx),
 		.caps_r_data(s_caps_r_data),
-		.caps_fw_stall(caps_fw_stall),
+		.caps_fw_stall(caps_fw_stall_seq),
 		.bound_session(active_session)
 	);
 	assign u_tag = s_seq_fault_tag;
@@ -1421,7 +2024,14 @@ module atg_cp #(
 	reg blt_kick_r, draw_kick_r, cs_kick_r, cs_mesh_r, lc_kick_r, raw_kick_r, occ_clear_r;
 	reg perf_reset_r, kick_flip_r, kick_idle_r;
 	reg [3:0] inv_r;
+	wire [7:0] sk_dec = {
+		s_kick_code == 3'd7, s_kick_code == 3'd6, s_kick_code == 3'd5, s_kick_code == 3'd4,
+		s_kick_code == 3'd3, s_kick_code == 3'd2, s_kick_code == 3'd1, s_kick_code == 3'd0
+	};
 `ifdef SYNTH_KINTEX7
+	always @(posedge clk or posedge s_core_rst_inv) begin
+		if (s_core_rst_inv) begin
+`elsif SYNTH_KINTEX_ULTRASCALE
 	always @(posedge clk or posedge s_core_rst_inv) begin
 		if (s_core_rst_inv) begin
 `else
@@ -1440,17 +2050,17 @@ module atg_cp #(
 			kick_flip_r  <= 1'b0;
 			kick_idle_r  <= 1'b0;
 		end else begin
-			blt_kick_r   <= s_host_kick[0] || s_kick && s_kick_code == 3'd0;
-			draw_kick_r  <= s_host_kick[1] || s_kick && s_kick_code == 3'd1;
-			cs_kick_r    <= s_host_kick[2] || s_kick && s_kick_code == 3'd2;
+			blt_kick_r   <= s_host_kick[0] || (s_kick && sk_dec[0]);
+			draw_kick_r  <= s_host_kick[1] || (s_kick && sk_dec[1]);
+			cs_kick_r    <= s_host_kick[2] || (s_kick && sk_dec[2]);
 			cs_mesh_r    <= s_seq_cs_mesh;
-			lc_kick_r    <= s_kick && s_kick_code == 3'd3;
-			raw_kick_r   <= s_kick && s_kick_code == 3'd4;
+			lc_kick_r    <= s_kick && sk_dec[3];
+			raw_kick_r   <= s_kick && sk_dec[4];
 			inv_r        <= s_seq_inv;
 			occ_clear_r  <= s_seq_occ_clear;
-			perf_reset_r <= s_kick && s_kick_code == 3'd5;
-			kick_flip_r  <= s_kick && s_kick_code == 3'd6;
-			kick_idle_r  <= s_kick && s_kick_code == 3'd7;
+			perf_reset_r <= s_kick && sk_dec[5];
+			kick_flip_r  <= s_kick && sk_dec[6];
+			kick_idle_r  <= s_kick && sk_dec[7];
 		end
 	end
 	assign blt_kick = blt_kick_r;
@@ -1468,6 +2078,15 @@ module atg_cp #(
 	/* Fences. */
 	wire s_ev_fence, s_f_64;
 `ifdef SYNTH_KINTEX7
+	reg cp_fence_ev_r;
+	always @(posedge clk or posedge s_core_rst_inv) begin
+		if (s_core_rst_inv)
+			cp_fence_ev_r <= 1'b0;
+		else
+			cp_fence_ev_r <= s_ev_fence;
+	end
+	assign cp_fence_ev = cp_fence_ev_r;
+`elsif SYNTH_KINTEX_ULTRASCALE
 	reg cp_fence_ev_r;
 	always @(posedge clk or posedge s_core_rst_inv) begin
 		if (s_core_rst_inv)

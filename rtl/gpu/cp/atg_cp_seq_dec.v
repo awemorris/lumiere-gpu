@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -132,7 +132,9 @@ module atg_cp_seq_dec #(
 	/* n rounded up to even (the pairs of SET_REG and DISP_SET). */
 	wire [7:0] h_n_even = {h_n[7:1], 1'b0};
 
-	assign h_zero = is_ghci ? (hdr[15:8] == 8'd1) : (hdr[7:0] == 8'd0);
+	wire hz_std_w  = !(hdr[7] | hdr[6] | hdr[5]) && !(hdr[4] | hdr[3] | hdr[2]) && !(hdr[1] | hdr[0]);
+	wire hz_ghci_w = !(hdr[15] | hdr[14] | hdr[13]) && !(hdr[12] | hdr[11] | hdr[10]) && !(hdr[9] | !hdr[8]);
+	assign h_zero = is_ghci ? hz_ghci_w : hz_std_w;
 
 	always @(*) begin
 		h_known = 1'b1;

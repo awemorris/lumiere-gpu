@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -51,29 +51,43 @@ module atg_dc_hdr #(
 
 `ifdef SYNTH_KINTEX7
 	localparam HDR_LAT = 2;
-`elsif SYNTH_ASIC
+	wire [9:0] m_in_r = in_r, m_in_g = in_g, m_in_b = in_b;
+`elsif SYNTH_KINTEX_ULTRASCALE
 	localparam HDR_LAT = 2;
+	wire [9:0] m_in_r = in_r, m_in_g = in_g, m_in_b = in_b;
+`elsif SYNTH_ASIC
+	localparam HDR_LAT = 3;
+	reg [9:0] in_r_in_q, in_g_in_q, in_b_in_q;
+	reg hdr_en_in_q;
+	always @(posedge pclk) begin
+		in_r_in_q   <= in_r;
+		in_g_in_q   <= in_g;
+		in_b_in_q   <= in_b;
+		hdr_en_in_q <= hdr_en;
+	end
+	wire [9:0] m_in_r = in_r_in_q, m_in_g = in_g_in_q, m_in_b = in_b_in_q;
 `else
 	localparam HDR_LAT = 0;
+	wire [9:0] m_in_r = in_r, m_in_g = in_g, m_in_b = in_b;
 `endif
 
 	/* Multipliers for Row 0 (R) */
 	wire [21:0] p_r0, p_r1, p_r2;
-	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_r0 (.clk(pclk), .en(1'b1), .a(in_r), .b(C00), .p(p_r0));
-	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_r1 (.clk(pclk), .en(1'b1), .a(in_g), .b(C01), .p(p_r1));
-	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_r2 (.clk(pclk), .en(1'b1), .a(in_b), .b(C02), .p(p_r2));
+	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_r0 (.clk(pclk), .en(1'b1), .a(m_in_r), .b(C00), .p(p_r0));
+	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_r1 (.clk(pclk), .en(1'b1), .a(m_in_g), .b(C01), .p(p_r1));
+	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_r2 (.clk(pclk), .en(1'b1), .a(m_in_b), .b(C02), .p(p_r2));
 
 	/* Multipliers for Row 1 (G) */
 	wire [21:0] p_g0, p_g1, p_g2;
-	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_g0 (.clk(pclk), .en(1'b1), .a(in_r), .b(C10), .p(p_g0));
-	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_g1 (.clk(pclk), .en(1'b1), .a(in_g), .b(C11), .p(p_g1));
-	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_g2 (.clk(pclk), .en(1'b1), .a(in_b), .b(C12), .p(p_g2));
+	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_g0 (.clk(pclk), .en(1'b1), .a(m_in_r), .b(C10), .p(p_g0));
+	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_g1 (.clk(pclk), .en(1'b1), .a(m_in_g), .b(C11), .p(p_g1));
+	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_g2 (.clk(pclk), .en(1'b1), .a(m_in_b), .b(C12), .p(p_g2));
 
 	/* Multipliers for Row 2 (B) */
 	wire [21:0] p_b0, p_b1, p_b2;
-	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_b0 (.clk(pclk), .en(1'b1), .a(in_r), .b(C20), .p(p_b0));
-	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_b1 (.clk(pclk), .en(1'b1), .a(in_g), .b(C21), .p(p_b1));
-	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_b2 (.clk(pclk), .en(1'b1), .a(in_b), .b(C22), .p(p_b2));
+	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_b0 (.clk(pclk), .en(1'b1), .a(m_in_r), .b(C20), .p(p_b0));
+	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_b1 (.clk(pclk), .en(1'b1), .a(m_in_g), .b(C21), .p(p_b1));
+	am_mul #(.AW(10), .BW(12), .SIGNED(0), .LAT(HDR_LAT)) u_mul_b2 (.clk(pclk), .en(1'b1), .a(m_in_b), .b(C22), .p(p_b2));
 
 `ifdef SYNTH_KINTEX7
 	reg [21:0] p_r0_q, p_r1_q, p_r2_q;
@@ -94,9 +108,7 @@ module atg_dc_hdr #(
 	wire [21:0] d_g0 = p_g0_q, d_g1 = p_g1_q, d_g2 = p_g2_q;
 	wire [21:0] d_b0 = p_b0_q, d_b1 = p_b1_q, d_b2 = p_b2_q;
 	wire [9:0]  d_in_r = in_r_q, d_in_g = in_g_q, d_in_b = in_b_q;
-`elsif SYNTH_ASIC
-	reg [9:0] in_r_q0, in_g_q0, in_b_q0;
-	reg hdr_en_q0;
+`elsif SYNTH_KINTEX_ULTRASCALE
 	reg [21:0] p_r0_q, p_r1_q, p_r2_q;
 	reg [21:0] p_g0_q, p_g1_q, p_g2_q;
 	reg [21:0] p_b0_q, p_b1_q, p_b2_q;
@@ -104,13 +116,37 @@ module atg_dc_hdr #(
 	reg hdr_en_q;
 
 	always @(posedge pclk) begin
-		in_r_q0 <= in_r; in_g_q0 <= in_g; in_b_q0 <= in_b;
-		hdr_en_q0 <= hdr_en;
 		p_r0_q <= p_r0; p_r1_q <= p_r1; p_r2_q <= p_r2;
 		p_g0_q <= p_g0; p_g1_q <= p_g1; p_g2_q <= p_g2;
 		p_b0_q <= p_b0; p_b1_q <= p_b1; p_b2_q <= p_b2;
-		in_r_q <= in_r_q0; in_g_q <= in_g_q0; in_b_q <= in_b_q0;
-		hdr_en_q <= hdr_en_q0;
+		in_r_q <= in_r; in_g_q <= in_g; in_b_q <= in_b;
+		hdr_en_q <= hdr_en;
+	end
+
+	wire [21:0] d_r0 = p_r0_q, d_r1 = p_r1_q, d_r2 = p_r2_q;
+	wire [21:0] d_g0 = p_g0_q, d_g1 = p_g1_q, d_g2 = p_g2_q;
+	wire [21:0] d_b0 = p_b0_q, d_b1 = p_b1_q, d_b2 = p_b2_q;
+	wire [9:0]  d_in_r = in_r_q, d_in_g = in_g_q, d_in_b = in_b_q;
+`elsif SYNTH_ASIC
+	reg [9:0] in_r_q0, in_g_q0, in_b_q0;
+	reg [9:0] in_r_q1, in_g_q1, in_b_q1;
+	reg hdr_en_q0, hdr_en_q1;
+	reg [21:0] p_r0_q, p_r1_q, p_r2_q;
+	reg [21:0] p_g0_q, p_g1_q, p_g2_q;
+	reg [21:0] p_b0_q, p_b1_q, p_b2_q;
+	reg [9:0] in_r_q, in_g_q, in_b_q;
+	reg hdr_en_q;
+
+	always @(posedge pclk) begin
+		in_r_q0 <= m_in_r; in_g_q0 <= m_in_g; in_b_q0 <= m_in_b;
+		hdr_en_q0 <= hdr_en_in_q;
+		in_r_q1 <= in_r_q0; in_g_q1 <= in_g_q0; in_b_q1 <= in_b_q0;
+		hdr_en_q1 <= hdr_en_q0;
+		p_r0_q <= p_r0; p_r1_q <= p_r1; p_r2_q <= p_r2;
+		p_g0_q <= p_g0; p_g1_q <= p_g1; p_g2_q <= p_g2;
+		p_b0_q <= p_b0; p_b1_q <= p_b1; p_b2_q <= p_b2;
+		in_r_q <= in_r_q1; in_g_q <= in_g_q1; in_b_q <= in_b_q1;
+		hdr_en_q <= hdr_en_q1;
 	end
 
 	wire [21:0] d_r0 = p_r0_q, d_r1 = p_r1_q, d_r2 = p_r2_q;
@@ -138,6 +174,62 @@ module atg_dc_hdr #(
 	assign co_r_unused[0] = 1'b0;
 	assign co_g_unused[0] = 1'b0;
 	assign co_b_unused[0] = 1'b0;
+`ifdef SYNTH_ASIC
+	/* Register 3:2 CSA before split 22-bit carry-select addition (<= 9 cmos3/stage). */
+	reg [21:0] csa_s_r [0:2];
+	reg [21:0] csa_c_r [0:2];
+	reg [9:0]  in_r_q1b, in_g_q1b, in_b_q1b;
+	reg        hdr_en_q1b;
+	always @(posedge pclk) begin
+		csa_s_r[0] <= csa_r_s; csa_c_r[0] <= {csa_r_c[20:0], 1'b0};
+		csa_s_r[1] <= csa_g_s; csa_c_r[1] <= {csa_g_c[20:0], 1'b0};
+		csa_s_r[2] <= csa_b_s; csa_c_r[2] <= {csa_b_c[20:0], 1'b0};
+		in_r_q1b   <= in_r_q;  in_g_q1b   <= in_g_q;  in_b_q1b   <= in_b_q;
+		hdr_en_q1b <= hdr_en_q;
+	end
+
+	wire [21:0] sum_ch [0:2];
+	wire [2:0]  sum_ch_co;
+	reg  [21:12] csa_s_q1c [0:2];
+	reg  [21:12] csa_c_q1c [0:2];
+	reg  [2:0]  sum_b11_q, sum_c12_q;
+	reg  [9:0]  in_r_q1c, in_g_q1c, in_b_q1c;
+	reg         hdr_en_q1c;
+	always @(posedge pclk) begin
+		in_r_q1c <= in_r_q1b; in_g_q1c <= in_g_q1b; in_b_q1c <= in_b_q1b;
+		hdr_en_q1c <= hdr_en_q1b;
+	end
+	genvar gc;
+	generate
+		for (gc = 0; gc < 3; gc = gc + 1) begin : g_hdr_csa_add
+			wire [5:0] s0, s1_0, s1_1;
+			wire [4:0] s2_0, s2_1, s3_0, s3_1;
+			wire c0, c1_0, c1_1, c2_0, c2_1, c3_0, c3_1;
+			am_add #(.W(6)) u_a0  (.a(csa_s_r[gc][5:0]),    .b(csa_c_r[gc][5:0]),    .ci(1'b0), .s(s0),   .co(c0));
+			am_add #(.W(6)) u_a10 (.a(csa_s_r[gc][11:6]),   .b(csa_c_r[gc][11:6]),   .ci(1'b0), .s(s1_0), .co(c1_0));
+			am_add #(.W(6)) u_a11 (.a(csa_s_r[gc][11:6]),   .b(csa_c_r[gc][11:6]),   .ci(1'b1), .s(s1_1), .co(c1_1));
+			wire c1 = c0 ? c1_1 : c1_0;
+			wire [5:0] s1 = c0 ? s1_1 : s1_0;
+			always @(posedge pclk) begin
+				csa_s_q1c[gc] <= csa_s_r[gc][21:12];
+				csa_c_q1c[gc] <= csa_c_r[gc][21:12];
+				sum_b11_q[gc] <= s1[5];
+				sum_c12_q[gc] <= c1;
+			end
+			am_add #(.W(5)) u_a20 (.a(csa_s_q1c[gc][16:12]), .b(csa_c_q1c[gc][16:12]), .ci(1'b0), .s(s2_0), .co(c2_0));
+			am_add #(.W(5)) u_a21 (.a(csa_s_q1c[gc][16:12]), .b(csa_c_q1c[gc][16:12]), .ci(1'b1), .s(s2_1), .co(c2_1));
+			am_add #(.W(5)) u_a30 (.a(csa_s_q1c[gc][21:17]), .b(csa_c_q1c[gc][21:17]), .ci(1'b0), .s(s3_0), .co(c3_0));
+			am_add #(.W(5)) u_a31 (.a(csa_s_q1c[gc][21:17]), .b(csa_c_q1c[gc][21:17]), .ci(1'b1), .s(s3_1), .co(c3_1));
+			wire c2 = sum_c12_q[gc] ? c2_1 : c2_0;
+			wire c3 = c2 ? c3_1 : c3_0;
+			/* verilator lint_off UNUSEDSIGNAL */
+			wire [10:0] low_unused = {s1[4:0], s0};
+			/* verilator lint_on UNUSEDSIGNAL */
+			assign sum_ch[gc] = {c2 ? s3_1 : s3_0, sum_c12_q[gc] ? s2_1 : s2_0, sum_b11_q[gc], low_unused};
+			assign sum_ch_co[gc] = c3;
+		end
+	endgenerate
+`else
 	/* Fast 6+6+5+5 carry-select 22-bit add per channel */
 	genvar gc;
 	wire [21:0] csa_s_w [0:2];
@@ -165,11 +257,27 @@ module atg_dc_hdr #(
 			assign sum_ch_co[gc] = c2 ? c3_1 : c3_0;
 		end
 	endgenerate
+`endif
 	assign sum_r = sum_ch[0]; assign co_r_unused[1] = sum_ch_co[0];
 	assign sum_g = sum_ch[1]; assign co_g_unused[1] = sum_ch_co[1];
 	assign sum_b = sum_ch[2]; assign co_b_unused[1] = sum_ch_co[2];
 
 `ifdef SYNTH_KINTEX7
+	reg [21:0] sum_r_q, sum_g_q, sum_b_q;
+	reg [9:0]  in_r_q2, in_g_q2, in_b_q2;
+	reg hdr_en_q2;
+	always @(posedge pclk) begin
+		sum_r_q   <= sum_r;
+		sum_g_q   <= sum_g;
+		sum_b_q   <= sum_b;
+		in_r_q2   <= in_r_q;
+		in_g_q2   <= in_g_q;
+		in_b_q2   <= in_b_q;
+		hdr_en_q2 <= hdr_en_q;
+	end
+	wire [21:0] pipe_sum_r = sum_r_q, pipe_sum_g = sum_g_q, pipe_sum_b = sum_b_q;
+	wire [9:0]  pipe_in_r  = in_r_q2, pipe_in_g  = in_g_q2, pipe_in_b  = in_b_q2;
+`elsif SYNTH_KINTEX_ULTRASCALE
 	reg [21:0] sum_r_q, sum_g_q, sum_b_q;
 	reg [9:0]  in_r_q2, in_g_q2, in_b_q2;
 	reg hdr_en_q2;
@@ -192,10 +300,10 @@ module atg_dc_hdr #(
 		sum_r_q   <= sum_r;
 		sum_g_q   <= sum_g;
 		sum_b_q   <= sum_b;
-		in_r_q2   <= in_r_q;
-		in_g_q2   <= in_g_q;
-		in_b_q2   <= in_b_q;
-		hdr_en_q2 <= hdr_en_q;
+		in_r_q2   <= in_r_q1c;
+		in_g_q2   <= in_g_q1c;
+		in_b_q2   <= in_b_q1c;
+		hdr_en_q2 <= hdr_en_q1c;
 	end
 	wire [21:0] pipe_sum_r = sum_r_q, pipe_sum_g = sum_g_q, pipe_sum_b = sum_b_q;
 	wire [9:0]  pipe_in_r  = in_r_q2, pipe_in_g  = in_g_q2, pipe_in_b  = in_b_q2;
@@ -232,7 +340,7 @@ module atg_dc_hdr #(
 		in_b_q3   <= in_b_q2;
 		hdr_en_q3 <= hdr_en_q2;
 	end
-`elsif SYNTH_ASIC
+`elsif SYNTH_KINTEX_ULTRASCALE
 	(* max_fanout = 16 *) reg [9:0] r_idx_q, g_idx_q, b_idx_q;
 	reg [9:0] in_r_q3, in_g_q3, in_b_q3;
 	reg hdr_en_q3;
@@ -244,6 +352,28 @@ module atg_dc_hdr #(
 		in_g_q3   <= in_g_q2;
 		in_b_q3   <= in_b_q2;
 		hdr_en_q3 <= hdr_en_q2;
+	end
+`elsif SYNTH_ASIC
+	(* max_fanout = 16 *) reg [9:0] r_idx_q, g_idx_q, b_idx_q;
+	reg [9:0] r_idx_q2, g_idx_q2, b_idx_q2;
+	reg [9:0] in_r_q3, in_g_q3, in_b_q3;
+	reg [9:0] in_r_q4, in_g_q4, in_b_q4;
+	reg hdr_en_q3, hdr_en_q4;
+	always @(posedge pclk) begin
+		r_idx_q   <= r_idx;
+		g_idx_q   <= g_idx;
+		b_idx_q   <= b_idx;
+		in_r_q3   <= in_r_q2;
+		in_g_q3   <= in_g_q2;
+		in_b_q3   <= in_b_q2;
+		hdr_en_q3 <= hdr_en_q2;
+		r_idx_q2  <= r_idx_q;
+		g_idx_q2  <= g_idx_q;
+		b_idx_q2  <= b_idx_q;
+		in_r_q4   <= in_r_q3;
+		in_g_q4   <= in_g_q3;
+		in_b_q4   <= in_b_q3;
+		hdr_en_q4 <= hdr_en_q3;
 	end
 `endif
 
@@ -268,7 +398,7 @@ module atg_dc_hdr #(
 			out_g <= lut[g_idx_q];
 			out_b <= lut[b_idx_q];
 		end
-`elsif SYNTH_ASIC
+`elsif SYNTH_KINTEX_ULTRASCALE
 		end else if (!hdr_en_q3) begin
 			out_r <= in_r_q3;
 			out_g <= in_g_q3;
@@ -277,6 +407,16 @@ module atg_dc_hdr #(
 			out_r <= lut[r_idx_q];
 			out_g <= lut[g_idx_q];
 			out_b <= lut[b_idx_q];
+		end
+`elsif SYNTH_ASIC
+		end else if (!hdr_en_q4) begin
+			out_r <= in_r_q4;
+			out_g <= in_g_q4;
+			out_b <= in_b_q4;
+		end else begin
+			out_r <= lut[r_idx_q2];
+			out_g <= lut[g_idx_q2];
+			out_b <= lut[b_idx_q2];
 		end
 `else
 		end else if (!hdr_en) begin

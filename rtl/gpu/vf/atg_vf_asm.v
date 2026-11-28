@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -84,6 +84,9 @@ module atg_vf_asm (
 			LUT1 #(.INIT(2'b10)) u_vo (.O(we_voff_b[gb]), .I0(we_voff));
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_si (.O(s_ind_b[gb]),   .I0(s_ind));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign we_voff_b[gb] = we_voff;
+			assign s_ind_b[gb] = s_ind;
 `else
 			assign we_voff_b[gb] = we_voff;
 			assign s_ind_b[gb]   = s_ind;
@@ -167,6 +170,15 @@ module atg_vf_asm (
 			LUT1 #(.INIT(2'b10)) u_cii (.O(ce_in_idx_b[gb]),    .I0(ce_in));
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_cin (.O(ce_in_inst_b[gb]),   .I0(ce_in));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign ce_sk0_idx_b[gb] = ce_sk0;
+			assign ce_sk0_inst_b[gb] = ce_sk0;
+			assign sel_sk0_idx_b[gb] = sk1_v;
+			assign sel_sk0_inst_b[gb] = sk1_v;
+			assign ce_sk1_idx_b[gb] = ce_sk1;
+			assign ce_sk1_inst_b[gb] = ce_sk1;
+			assign ce_in_idx_b[gb] = ce_in;
+			assign ce_in_inst_b[gb] = ce_in;
 `else
 			assign ce_sk0_idx_b[gb]   = ce_sk0;
 			assign ce_sk0_inst_b[gb]  = ce_sk0;
@@ -241,6 +253,9 @@ module atg_vf_asm (
 	LUT1 #(.INIT(2'b10)) u_l0_0 (.O(lane0_b[0]), .I0(lane[0]));
 	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 	LUT1 #(.INIT(2'b10)) u_l0_1 (.O(lane0_b[1]), .I0(lane[0]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign lane0_b[0] = lane[0];
+	assign lane0_b[1] = lane[0];
 `else
 	assign lane0_b[0] = lane[0];
 	assign lane0_b[1] = lane[0];
@@ -278,15 +293,16 @@ module atg_vf_asm (
 			LUT1 #(.INIT(2'b10)) u_lg0 (.O(L_g0[gb]), .I0(L[gb]));
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_lg1 (.O(L_g1[gb]), .I0(L[gb]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign L_g0[gb] = L[gb];
+			assign L_g1[gb] = L[gb];
 `else
 			assign L_g0[gb] = L[gb];
 			assign L_g1[gb] = L[gb];
 `endif
 		end
 	endgenerate
-	wire [1:0] cnt_inc;
-	wire ci_co_unused;
-	am_add #(.W(2)) u_cnt (.a(cnt_0), .b(2'd0), .ci(1'b1), .s(cnt_inc), .co(ci_co_unused));
+	wire [1:0] cnt_inc = {cnt_0[1] ^ cnt_0[0], ~cnt_0[0]};
 
 	/*
 	 * When a primitive is emitted (ce_pl_b), g0/g1/g2 each select from {a_lane, b_lane, L}.
@@ -319,7 +335,7 @@ module atg_vf_asm (
 	(* keep = "true" *) wire [4:0] g2 = g2_sel_a ? a_lane : (g2_sel_b ? b_lane : L_g1);
 	(* keep = "true" *) wire [14:0] g_l_w = {g2, g1, g0};
 
-	(* keep = "true" *) wire [1:0] g_cnt =
+	wire [1:0] g_cnt =
 		(s_topo_1 == T_LINES)  ? {1'b0, cnt_0 == 2'd0} :
 		(s_topo_1 == T_LSTRIP) ? 2'd1 :
 		(s_topo_1 == T_TRIS)   ? (cnt_0 == 2'd2 ? 2'd0 : cnt_inc) :
@@ -367,9 +383,18 @@ module atg_vf_asm (
 	wire inst_chg = in_inst_ne && (cnt_2 != 2'd0);
 	wire early = lane_early_r && (cnt_2 == 2'd0);
 	wire c_put = st_is_send && vfree && !carry_z;
-	(* keep = "true" *) wire s_go = st_is_send && vfree && carry_z && in_v;
+	wire s_go = st_is_send && vfree && carry_z && in_v;
 	wire s_rst = s_go && in_rst;
-	(* keep = "true" *) wire s_put = s_go && !in_rst && !inst_chg && !early;
+	wire s_put = s_go && !in_rst && !inst_chg && !early;
+	wire s_put_ctrl;
+`ifdef SYNTH_KINTEX7
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+	LUT1 #(.INIT(2'b10)) u_s_put_ctrl (.O(s_put_ctrl), .I0(s_put));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign s_put_ctrl = s_put;
+`else
+	assign s_put_ctrl = s_put;
+`endif
 	wire n_rst = st_is_next && in_v && in_rst;
 	wire in_take = s_rst || s_put || n_rst;
 	wire seg_end = s_rst || (s_go && !in_rst && inst_chg);
@@ -404,6 +429,8 @@ module atg_vf_asm (
 `ifdef SYNTH_KINTEX7
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_pp (.O(p_push_b[gb]), .I0(p_push_raw));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign p_push_b[gb] = p_push_raw;
 `else
 			assign p_push_b[gb] = p_push_raw;
 `endif
@@ -412,15 +439,31 @@ module atg_vf_asm (
 
 	wire f_pop = st_is_prims_1 && f_n != 6'd0 && (!h_v || h_take);
 	(* keep = "true" *) wire ce_fn = p_push_raw || f_pop;
+	wire fhd_ld = (st_is_go && (f_n != 6'd0)) || (st_is_prims && (f_n != 6'd0) && (!h_v || h_take) && (f_n != 6'd1));
+	wire fhd_ld_lo, fhd_ld_hi, fhd_ld_rp;
+`ifdef SYNTH_KINTEX7
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_fhd_lo (.O(fhd_ld_lo), .I0(fhd_ld));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_fhd_hi (.O(fhd_ld_hi), .I0(fhd_ld));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_fhd_rp (.O(fhd_ld_rp), .I0(fhd_ld));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign fhd_ld_lo = fhd_ld;
+	assign fhd_ld_hi = fhd_ld;
+	assign fhd_ld_rp = fhd_ld;
+`else
+	assign fhd_ld_lo = fhd_ld;
+	assign fhd_ld_hi = fhd_ld;
+	assign fhd_ld_rp = fhd_ld;
+`endif
+	wire [21:0] f_mem_rdata = {f_mem_hi[f_rp_1], f_mem_lo[f_rp_0]};
 	wire [4:0] f_wp_next;
 	wire [4:0] f_rp_next;
 	wire [5:0] f_n_inc;
 	wire [5:0] f_n_dec;
 	wire [5:0] lane_next;
 	wire [1:0] carry_next;
-	wire fw_co_unused, fr_co_unused, fni_co_unused, fnd_bo_unused, ln_co_unused, cy_bo_unused;
-	am_add #(.W(5)) u_f_wp (.a(f_wp_c), .b(5'd0), .ci(1'b1), .s(f_wp_next), .co(fw_co_unused));
-	am_add #(.W(5)) u_f_rp (.a(f_rp_c), .b(5'd0), .ci(1'b1), .s(f_rp_next), .co(fr_co_unused));
+	wire fni_co_unused, fnd_bo_unused, ln_co_unused, cy_bo_unused;
+	assign f_wp_next = f_wp_c ^ {&f_wp_c[3:0], &f_wp_c[2:0], &f_wp_c[1:0], f_wp_c[0], 1'b1};
+	assign f_rp_next = f_rp_c ^ {&f_rp_c[3:0], &f_rp_c[2:0], &f_rp_c[1:0], f_rp_c[0], 1'b1};
 	am_add #(.W(6)) u_fn_inc (.a(f_n), .b(6'd0), .ci(1'b1), .s(f_n_inc), .co(fni_co_unused));
 	am_sub #(.W(6)) u_fn_dec (.a(f_n), .b(6'd0), .bi(1'b1), .d(f_n_dec), .bo(fnd_bo_unused));
 	am_add #(.W(6)) u_lane (.a(lane), .b(6'd0), .ci(1'b1), .s(lane_next), .co(ln_co_unused));
@@ -518,6 +561,22 @@ module atg_vf_asm (
 			LUT1 #(.INIT(2'b10)) u_vlm (.O(ce_vlmask_b[gb]),     .I0(ce_vlmask_all));
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_hvx (.O(ce_hvtx_b[gb]),       .I0(ce_hvtx_all));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign ce_vb_idx_b[gb] = ce_vb_all;
+			assign ce_vb_inst_b[gb] = ce_vb_all;
+			assign ce_sg_idx_b[gb] = ce_step;
+			assign ce_sg_inst_b[gb] = ce_step;
+			assign sel_cput_idx_b[gb] = c_put;
+			assign sel_cput_inst_b[gb] = c_put;
+			assign sel_l0_idx_b[gb] = lane0_b[1];
+			assign sel_l0_inst_b[gb] = lane0_b[1];
+			assign sel_gwa_idx_b[gb] = g_wa_w;
+			assign sel_gwa_inst_b[gb] = g_wa_w;
+			assign ce_cur_inst_b[gb] = s_put;
+			assign ce_used_b[gb] = ce_used_all;
+			assign sel_used_clr_b[gb] = alloc_gnt;
+			assign ce_vlmask_b[gb] = ce_vlmask_all;
+			assign ce_hvtx_b[gb] = ce_hvtx_all;
 `else
 			assign ce_vb_idx_b[gb]     = ce_vb_all;
 			assign ce_vb_inst_b[gb]    = ce_vb_all;
@@ -540,14 +599,15 @@ module atg_vf_asm (
 
 	wire p_final_fast = st_is_close || in_rst || inst_chg;
 	wire [21:0] f_wdata_ord = {p_final_fast, p_fl, p_fa, p_l_2};
-	wire f_mem_we = p_v && !f_n[5] && (st_is_send || st_is_close);
+	(* keep = "true" *) wire f_mem_we_lo = p_v && !f_n[5] && (st_is_send || st_is_close);
+	(* keep = "true" *) wire f_mem_we_hi = p_v && !f_n[5] && (st_is_send || st_is_close);
 	wire [23:0] h_vtx_next = {pt2, pt1, pt0};
 
 	always @(posedge clk) begin
-		if (f_mem_we) begin
+		if (f_mem_we_lo)
 			f_mem_lo[f_wp_0] <= f_wdata_ord[8:0];
+		if (f_mem_we_hi)
 			f_mem_hi[f_wp_1] <= f_wdata_ord[21:9];
-		end
 	end
 
 	always @(posedge clk or posedge rst_sync) begin
@@ -768,7 +828,7 @@ module atg_vf_asm (
 			else if (ce_p_emit)
 				p_v <= 1'b1;
 
-			if (we_topo && !cnt_clr_w && !s_put)
+			if (we_topo && !cnt_clr_w && !s_put_ctrl)
 				g_emit_r <= emit_of(st_wdata[2:0], cnt_2);
 
 			if (cnt_clr_w) begin
@@ -777,7 +837,7 @@ module atg_vf_asm (
 				cnt_2 <= 2'd0;
 				g_emit_r <= emit_of(s_topo_2, 2'd0);
 				par <= 1'b0;
-			end else if (s_put) begin
+			end else if (s_put_ctrl) begin
 				cnt_0 <= g_cnt;
 				cnt_1 <= g_cnt;
 				cnt_2 <= g_cnt;
@@ -785,6 +845,10 @@ module atg_vf_asm (
 				if (s_topo_1 == T_STRIP && cnt_1 == 2'd2)
 					par <= !par;
 			end
+
+			fin <= (st_is_next && in_v && in_rst && in_last) ||
+			       (st_is_send && (s_rst || s_put_ctrl) && in_last) ||
+			       (fin && !(st_is_prims && f_n == 6'd0 && (!h_v || h_take)));
 
 			/* One-hot state transitions (independent if blocks, no priority chain) */
 			if (st_is_idle && in_v) begin
@@ -795,7 +859,6 @@ module atg_vf_asm (
 				/* Between warps: open the next one only for a real vertex. */
 				if (in_rst || (in_inst_ne && cnt_2 != 2'd0)) begin
 					if (in_rst && in_last) begin
-						fin <= 1'b1;
 						st_is_next    <= 1'b0;
 						st_is_prims   <= 1'b1;
 						st_is_prims_1 <= 1'b1;
@@ -812,16 +875,14 @@ module atg_vf_asm (
 			if (st_is_send) begin
 				if (s_rst) begin
 					if (in_last) begin
-						fin <= 1'b1;
 						st_is_send  <= 1'b0;
 						st_is_close <= 1'b1;
 					end
 				end else if (s_go && !in_rst && early) begin
 					st_is_send  <= 1'b0;
 					st_is_close <= 1'b1;
-				end else if (s_put) begin
+				end else if (s_put_ctrl) begin
 					if (in_last) begin
-						fin <= 1'b1;
 						st_is_send  <= 1'b0;
 						st_is_close <= 1'b1;
 					end else if (lane_is31_r) begin
@@ -839,28 +900,23 @@ module atg_vf_asm (
 				st_is_wait <= 1'b0;
 				st_is_go   <= 1'b1;
 			end
+			if (fhd_ld_lo) f_head_q[10:0]  <= f_mem_rdata[10:0];
+			if (fhd_ld_hi) f_head_q[21:11] <= f_mem_rdata[21:11];
+			if (fhd_ld_rp) begin
+				f_rp_0 <= f_rp_next;
+				f_rp_1 <= f_rp_next;
+				f_rp_c <= f_rp_next;
+			end
 			if (st_is_go) begin
 				st_is_go      <= 1'b0;
 				st_is_prims   <= 1'b1;
 				st_is_prims_1 <= 1'b1;
-				if (f_n != 6'd0) begin
-					f_head_q <= {f_mem_hi[f_rp_1], f_mem_lo[f_rp_0]};
-					f_rp_0 <= f_rp_next;
-					f_rp_1 <= f_rp_next;
-					f_rp_c <= f_rp_next;
-				end
 			end
 			if (st_is_prims) begin
 				/* PRIMS: the list in order; the last one waits for its successor. */
 				if (f_n != 6'd0 && (!h_v || h_take)) begin
 					h_v <= 1'b1;
 					h_free <= f_top[17:15];
-					if (f_n != 6'd1) begin
-						f_head_q <= {f_mem_hi[f_rp_1], f_mem_lo[f_rp_0]};
-						f_rp_0 <= f_rp_next;
-						f_rp_1 <= f_rp_next;
-						f_rp_c <= f_rp_next;
-					end
 				end else if (h_take) begin
 					h_v <= 1'b0;
 				end
@@ -873,15 +929,14 @@ module atg_vf_asm (
 						st_is_prims   <= 1'b0;
 						st_is_prims_1 <= 1'b0;
 						st_is_idle    <= 1'b1;
-						fin <= 1'b0;
 					end
 				end
 			end
 		end
 	end
 
-	wire unused_ok = &{1'b0, lane[5], ci_co_unused, vo_co_unused,
-		fw_co_unused, fr_co_unused, fni_co_unused, fnd_bo_unused, ln_co_unused, cy_bo_unused,
+	wire unused_ok = &{1'b0, lane[5], vo_co_unused,
+		fni_co_unused, fnd_bo_unused, ln_co_unused, cy_bo_unused,
 		p0_co_unused, p1_co_unused, p2_co_unused};
 endmodule
 

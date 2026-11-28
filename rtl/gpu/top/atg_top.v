@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -584,6 +584,82 @@ module atg_top #(
 	assign reg_raddr = reg_raddr_cp;
 	assign j_rdata = j_rdata_q;
 	assign j_busy = j_busy_q;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", dont_touch = "true" *) wire rst_top_high;
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b01)) u_rst_top (.I0(rst_n), .O(rst_top_high));
+
+	(* keep = "true", dont_touch = "true" *) wire a_busy;
+	(* dont_touch = "true" *) LUT2 #(.INIT(4'hE)) u_abusy (.I0(a_reg_wr), .I1(a_reg_rd), .O(a_busy));
+	wire j_go = HAS_JTAG != 0 && !a_busy;
+
+	(* keep = "true", dont_touch = "true" *) wire [4:0] a_busy_b;
+	genvar gab;
+	generate
+		for (gab = 0; gab < 5; gab = gab + 1) begin : g_abusy_buf
+			assign a_busy_b[gab] = a_busy;
+		end
+	endgenerate
+
+	(* dont_touch = "true" *) reg [4:0] reg_wr_q;
+	(* dont_touch = "true" *) reg [16:0] reg_waddr_cp, reg_waddr_xr;
+	(* dont_touch = "true" *) reg [31:0] reg_wdata_cp, reg_wdata_xr;
+	(* dont_touch = "true" *) reg [3:0] reg_wstrb_cp, reg_wstrb_xr;
+	(* dont_touch = "true" *) reg [3:0] reg_rd_q;
+	(* dont_touch = "true" *) reg [16:0] reg_raddr_cp, reg_raddr_xr;
+	(* dont_touch = "true" *) reg [31:0] xr_rdata_q;
+	(* dont_touch = "true" *) reg [31:0] j_rdata_q;
+	(* dont_touch = "true" *) reg j_busy_q;
+
+	wire reg_wr_d = a_reg_wr || (j_go && j_wr);
+	wire [16:0] reg_waddr_d = a_busy_b[0] ? a_reg_waddr : j_waddr;
+	wire [31:0] reg_wdata_d = {
+		a_busy_b[2] ? a_reg_wdata[31:16] : j_wdata[31:16],
+		a_busy_b[1] ? a_reg_wdata[15:0]  : j_wdata[15:0]
+	};
+	wire [3:0] reg_wstrb_d = a_busy_b[3] ? a_reg_wstrb : j_wstrb;
+	wire reg_rd_d = a_reg_rd || (j_go && j_rd);
+	wire [16:0] reg_raddr_d = a_busy_b[4] ? a_reg_raddr : j_raddr;
+
+	always @(posedge clk or posedge rst_top_high) begin
+		if (rst_top_high) begin
+			reg_wr_q <= 5'd0;
+			reg_waddr_cp <= 17'd0;
+			reg_waddr_xr <= 17'd0;
+			reg_wdata_cp <= 32'd0;
+			reg_wdata_xr <= 32'd0;
+			reg_wstrb_cp <= 4'd0;
+			reg_wstrb_xr <= 4'd0;
+			reg_rd_q <= 4'd0;
+			reg_raddr_cp <= 17'd0;
+			reg_raddr_xr <= 17'd0;
+			xr_rdata_q <= 32'd0;
+			j_rdata_q <= 32'd0;
+			j_busy_q <= 1'b0;
+		end else begin
+			reg_wr_q <= {5{reg_wr_d}};
+			reg_waddr_cp <= reg_waddr_d;
+			reg_waddr_xr <= reg_waddr_d;
+			reg_wdata_cp <= reg_wdata_d;
+			reg_wdata_xr <= reg_wdata_d;
+			reg_wstrb_cp <= reg_wstrb_d;
+			reg_wstrb_xr <= reg_wstrb_d;
+			reg_rd_q <= {4{reg_rd_d}};
+			reg_raddr_cp <= reg_raddr_d;
+			reg_raddr_xr <= reg_raddr_d;
+			xr_rdata_q <= xr_rdata;
+			j_rdata_q <= reg_rdata;
+			j_busy_q <= a_busy_b[3];
+		end
+	end
+
+	assign reg_wr = reg_wr_q[0];
+	assign reg_waddr = reg_waddr_cp;
+	assign reg_wdata = reg_wdata_cp;
+	assign reg_wstrb = reg_wstrb_cp;
+	assign reg_rd = reg_rd_q[0];
+	assign reg_raddr = reg_raddr_cp;
+	assign j_rdata = j_rdata_q;
+	assign j_busy = j_busy_q;
 `else
 	wire a_busy = a_reg_wr || a_reg_rd;
 	wire j_go_wr = (HAS_JTAG != 0) && !a_reg_wr;
@@ -654,6 +730,14 @@ module atg_top #(
 	wire [1:0] cp_seen_dc_pending = dc_pending | (dc_flip_valid ? (dc_flip_plane ? 2'b10 : 2'b01) : 2'b00);
 	wire cp_seen_dc_idle = dc_idle && !dc_d_we && !dc_flip_valid;
 `ifdef SYNTH_KINTEX7
+	assign reg_rdata = cp_reg_rdata | xr_rdata_q;
+	assign xr_wr = reg_wr_q[1];
+	assign xr_waddr = reg_waddr_xr;
+	assign xr_wdata = reg_wdata_xr;
+	assign xr_wstrb = reg_wstrb_xr;
+	assign xr_rd = reg_rd_q[1];
+	assign xr_raddr = reg_raddr_xr;
+`elsif SYNTH_KINTEX_ULTRASCALE
 	assign reg_rdata = cp_reg_rdata | xr_rdata_q;
 	assign xr_wr = reg_wr_q[1];
 	assign xr_waddr = reg_waddr_xr;
@@ -757,6 +841,7 @@ module atg_top #(
 	wire [31:0] st_wdata;
 	wire blt_kick;
 	wire blt_busy;
+	wire blt_busy_cp, vf_busy_cp, rx_busy_cp, tu_busy_cp, rop_busy_cp, sa_busy_cp, su_busy_cp;
 	wire blt_done;
 	wire blt_error;
 	wire [3:0] blt_error_kind;
@@ -974,7 +1059,7 @@ module atg_top #(
 		.st_idx(st_idx),
 		.st_wdata(st_wdata),
 		.blt_kick(blt_kick),
-		.blt_busy(blt_busy),
+		.blt_busy(blt_busy_cp),
 		.blt_error(blt_error),
 		.blt_error_kind(blt_error_kind),
 		.req_valid(c_req_valid[0]),
@@ -997,7 +1082,7 @@ module atg_top #(
 		.lc_kick(lc_kick),
 		.raw_kick(raw_kick),
 		.inv(cp_inv),
-		.busy_ext({sa_busy, su_busy, tu_busy, rop_busy, rx_busy, vf_busy, 1'b0, !effective_mc_unit_idle}),
+		.busy_ext({sa_busy_cp, su_busy_cp, tu_busy_cp, rop_busy_cp, rx_busy_cp, vf_busy_cp, 1'b0, !effective_mc_unit_idle}),
 		.vsync(HAS_DISP != 0 ? dc_vsync : x_vsync),
 		.x_fault({1'b0, su_fault}),
 		.x_fault_kind(8'h01),
@@ -1064,6 +1149,18 @@ module atg_top #(
 
 	generate
 	if (HAS_BLT != 0) begin : gen_blt
+		wire        blt_st_we_u;
+		wire [8:0]  blt_st_idx_u;
+		wire [31:0] blt_st_wdata_u;
+		wire        blt_kick_u;
+		wire        blt_rst_n_u;
+		atg_cp_st_pipe #(.IDX_W(9), .CTRL_W(1)) u_blt_st_pipe (
+			.clk(clk), .rst_n(core_rst_n),
+			.in_we(ust_we), .in_idx(ust_idx), .in_wdata(st_wdata), .in_ctrl(blt_kick),
+			.out_we(blt_st_we_u), .out_idx(blt_st_idx_u), .out_wdata(blt_st_wdata_u), .out_ctrl(blt_kick_u),
+			.out_rst_n(blt_rst_n_u)
+		);
+
 		atg_blt #(
 			.ADDR_W(UNIT_ADDR_W),
 			.LINE_BYTES(LINE_BYTES),
@@ -1074,11 +1171,11 @@ module atg_top #(
 			.ENABLE_TILE(BLT_TILE)
 		) blt (
 			.clk(clk),
-			.rst_n(core_rst_n),
-			.st_we(ust_we),
-			.st_idx(ust_idx),
-			.st_wdata(st_wdata),
-			.kick(blt_kick),
+			.rst_n(blt_rst_n_u),
+			.st_we(blt_st_we_u),
+			.st_idx(blt_st_idx_u),
+			.st_wdata(blt_st_wdata_u),
+			.kick(blt_kick_u),
 			.busy(blt_busy),
 			.done(blt_done),
 			.error(blt_error),
@@ -1314,7 +1411,7 @@ module atg_top #(
 		~(HAS_CPU != 0 ? {{(NCLIENT-1){1'b0}}, 1'b1} << C_CPU : {NCLIENT{1'b0}});
 	wire prot_scrub, su_scrub_any;
 	wire [7:0] prot_fault_tag, prot_unit_tag;
-	wire units_busy = blt_busy || vf_busy || rx_busy || rop_busy || tu_busy || su_busy || sa_busy;
+	wire units_busy = blt_busy_cp || vf_busy_cp || rx_busy_cp || rop_busy_cp || tu_busy_cp || su_busy_cp || sa_busy_cp;
 	wire drain_ok = !units_busy && !(|(c_req_valid & UNIT_LEAF)) && !any_brg_inflight && mc_chk_idle && mc_unit_idle;
 
 	genvar pc;
@@ -1430,6 +1527,46 @@ module atg_top #(
 	localparam DW = SU_NPHYS * 32;
 
 	wire vf_busy, rx_busy, tu_busy, rop_busy, sa_busy, su_busy;
+	(* keep = "true", equivalent_register_removal = "no" *) reg blt_busy_r, vf_busy_r, rx_busy_r, tu_busy_r, rop_busy_r, sa_busy_r, su_busy_r;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [1:0] blt_kick_hold, vf_kick_hold, rx_kick_hold, tu_st_hold, su_kick_hold;
+	wire tu_st_hit_cp = st_we && ((st_idx[9:8] == 2'b10) ||
+		(!st_idx[9] && (st_idx[8] ? (!st_idx[7] || (st_idx[6:4] == 3'd0)) : (st_idx[7] && (|st_idx[6:4])))));
+	always @(posedge clk or negedge core_rst_n) begin
+		if (!core_rst_n) begin
+			blt_busy_r    <= 1'b0;
+			vf_busy_r     <= 1'b0;
+			rx_busy_r     <= 1'b0;
+			tu_busy_r     <= 1'b0;
+			rop_busy_r    <= 1'b0;
+			sa_busy_r     <= 1'b0;
+			su_busy_r     <= 1'b0;
+			blt_kick_hold <= 2'd0;
+			vf_kick_hold  <= 2'd0;
+			rx_kick_hold  <= 2'd0;
+			tu_st_hold    <= 2'd0;
+			su_kick_hold  <= 2'd0;
+		end else begin
+			blt_busy_r    <= blt_busy;
+			vf_busy_r     <= vf_busy;
+			rx_busy_r     <= rx_busy;
+			tu_busy_r     <= tu_busy;
+			rop_busy_r    <= rop_busy;
+			sa_busy_r     <= sa_busy;
+			su_busy_r     <= su_busy;
+			blt_kick_hold <= {blt_kick_hold[0], blt_kick};
+			vf_kick_hold  <= {vf_kick_hold[0],  draw_kick};
+			rx_kick_hold  <= {rx_kick_hold[0],  raw_kick};
+			tu_st_hold    <= {tu_st_hold[0],    tu_st_hit_cp};
+			su_kick_hold  <= {su_kick_hold[0],  cs_kick || lc_kick};
+		end
+	end
+	assign blt_busy_cp = blt_busy_r || (|blt_kick_hold);
+	assign vf_busy_cp  = vf_busy_r  || (|vf_kick_hold);
+	assign rx_busy_cp  = rx_busy_r  || (|rx_kick_hold);
+	assign tu_busy_cp  = tu_busy_r  || (|tu_st_hold);
+	assign rop_busy_cp = rop_busy_r;
+	assign sa_busy_cp  = sa_busy_r;
+	assign su_busy_cp  = su_busy_r  || (|su_kick_hold);
 	wire su_fault;
 	wire [31:0] su_fault_addr;
 	wire [3:0] su_fault_stage;
@@ -1443,6 +1580,9 @@ module atg_top #(
 	wire [31:0] vl_data, vl_mask;
 	/* VF → RX (a primitive waits until SU 0's vertex warp of its PT block has
 	 * ended: pt_done, atg_su_pt). */
+	wire vf_prim_valid, vf_prim_ready, vf_prim_last;
+	wire [25:0] vf_prim_vtx;
+	wire [2:0] vf_prim_free;
 	wire prim_valid, prim_ready, prim_last, rx_prim_ready;
 	wire [7:0] pt_done;
 	wire prim_ok = pt_done[prim_vtx[7:5]];
@@ -1464,12 +1604,27 @@ module atg_top #(
 	wire [701:0] su_mesh_tri;
 	wire [15:0] su_mesh_id;
 	/* RX → ROP. */
+	wire rx_dx_valid, rx_dx_ready, rx_dx_last;
+	wire [15:0] rx_dx_seq;
+	wire [31:0] rx_dx_xy;
+	wire [3:0] rx_dx_mask;
+	wire [127:0] rx_dx_depth;
 	wire dx_valid, dx_ready, dx_last, ord_valid;
 	wire [15:0] dx_seq, ord_seq;
 	wire [31:0] dx_xy;
 	wire [3:0] dx_mask;
 	wire [127:0] dx_depth;
 	/* SU 0 ↔ TU. */
+	wire su_tx_valid, su_tx_ready, su_tx_last;
+	wire [7:0] su_tx_op;
+	wire [3:0] su_tx_slot, su_tx_samp_slot, su_tx_mask;
+	wire su_tx_vs;
+	wire [639:0] su_tx_coord;
+	wire [11:0] su_tx_off;
+	wire [15:0] su_tx_tag;
+	wire tu_tr_valid, tu_tr_ready, tu_tr_last;
+	wire [15:0] tu_tr_tag;
+	wire [511:0] tu_tr_data;
 	wire tx_valid, tx_ready, tx_last, tr_valid, tr_ready, tr_last;
 	wire [7:0] tx_op;
 	wire [3:0] tx_slot, tx_samp_slot, tx_mask;
@@ -1479,6 +1634,13 @@ module atg_top #(
 	wire [15:0] tx_tag, tr_tag;
 	wire [511:0] tr_data;
 	/* SU 0 → ROP. */
+	wire su_ex_valid, su_ex_ready, su_ex_last, su_ex_has_src1;
+	wire [15:0] su_ex_seq, rop_ex_next;
+	wire [31:0] su_ex_xy;
+	wire [3:0] su_ex_mask;
+	wire [511:0] su_ex_color, su_ex_color1;
+	wire [154:0] su_ex_aux;
+	wire [127:0] su_ex_depth;
 	wire ex_valid, ex_ready, ex_last;
 	wire [15:0] ex_seq, ex_next;
 	wire [31:0] ex_xy;
@@ -1492,6 +1654,13 @@ module atg_top #(
 	wire [DW-1:0] sa_push_data, sa_pop_data;
 	wire [31:0] sa_ctl_data, sa_qstat, sa_stat, sa_qtag;
 	/* SUs ↔ the atomic unit. */
+	wire [ATOM_PORTS-1:0] su_at_valid, su_at_ready, mc_at_rsp_valid;
+	wire [ATOM_PORTS*4-1:0] su_at_op;
+	wire [ATOM_PORTS*30-1:0] su_at_addr;
+	wire [ATOM_PORTS*32-1:0] su_at_a, su_at_b;
+	wire [ATOM_PORTS*2-1:0] su_mc_at_stage;
+	wire [31:0] mc_at_old;
+	wire mc_at_error;
 	wire [ATOM_PORTS-1:0] at_valid, at_ready, at_rsp_valid;
 	wire [ATOM_PORTS*4-1:0] at_op;
 	wire [ATOM_PORTS*30-1:0] at_addr;
@@ -1504,6 +1673,134 @@ module atg_top #(
 	wire [SU_STAT_PORTS*32-1:0] su_fault_addr_v;	/* each SU's fault PC */
 	wire [SU_STAT_PORTS*4-1:0] su_fault_stage_v;	/* each SU's fault stage */
 	wire [ATOM_PORTS*2-1:0] su_at_stage;
+
+	/* Inter-module NoC / registered repeaters when USE_NOC_FABRIC != 0 */
+	generate
+		if (USE_NOC_FABRIC != 0) begin : g_noc_inter_rep
+			am_skid #(.WIDTH(30), .RST_DATA(0)) u_prim_rep (
+				.clk(clk), .rst_n(core_rst_n),
+				.in_valid(vf_prim_valid), .in_ready(vf_prim_ready),
+				.in_data({vf_prim_vtx, vf_prim_free, vf_prim_last}),
+				.out_valid(prim_valid), .out_ready(prim_ready),
+				.out_data({prim_vtx, prim_free, prim_last})
+			);
+			am_skid #(.WIDTH(181), .RST_DATA(0)) u_dx_rep (
+				.clk(clk), .rst_n(core_rst_n),
+				.in_valid(rx_dx_valid), .in_ready(rx_dx_ready),
+				.in_data({rx_dx_seq, rx_dx_xy, rx_dx_mask, rx_dx_depth, rx_dx_last}),
+				.out_valid(dx_valid), .out_ready(dx_ready),
+				.out_data({dx_seq, dx_xy, dx_mask, dx_depth, dx_last})
+			);
+			am_skid #(.WIDTH(690), .RST_DATA(0)) u_tx_rep (
+				.clk(clk), .rst_n(core_rst_n),
+				.in_valid(su_tx_valid), .in_ready(su_tx_ready),
+				.in_data({su_tx_op, su_tx_slot, su_tx_samp_slot, su_tx_vs, su_tx_mask, su_tx_coord, su_tx_off, su_tx_tag, su_tx_last}),
+				.out_valid(tx_valid), .out_ready(tx_ready),
+				.out_data({tx_op, tx_slot, tx_samp_slot, tx_vs, tx_mask, tx_coord, tx_off, tx_tag, tx_last})
+			);
+			am_skid #(.WIDTH(529), .RST_DATA(0)) u_tr_rep (
+				.clk(clk), .rst_n(core_rst_n),
+				.in_valid(tu_tr_valid), .in_ready(tu_tr_ready),
+				.in_data({tu_tr_tag, tu_tr_data, tu_tr_last}),
+				.out_valid(tr_valid), .out_ready(tr_ready),
+				.out_data({tr_tag, tr_data, tr_last})
+			);
+			am_skid #(.WIDTH(1361), .RST_DATA(0)) u_ex_rep (
+				.clk(clk), .rst_n(core_rst_n),
+				.in_valid(su_ex_valid), .in_ready(su_ex_ready),
+				.in_data({su_ex_seq, su_ex_xy, su_ex_mask, su_ex_color, su_ex_color1, su_ex_has_src1, su_ex_depth, su_ex_aux, su_ex_last}),
+				.out_valid(ex_valid), .out_ready(ex_ready),
+				.out_data({ex_seq, ex_xy, ex_mask, ex_color, ex_color1, ex_has_src1, ex_depth, ex_aux, ex_last})
+			);
+			reg [15:0] ex_next_r;
+			always @(posedge clk or negedge core_rst_n) begin
+				if (!core_rst_n)
+					ex_next_r <= 16'd0;
+				else
+					ex_next_r <= rop_ex_next;
+			end
+			assign ex_next = ex_next_r;
+
+			genvar gat;
+			for (gat = 0; gat < ATOM_PORTS; gat = gat + 1) begin : g_at_rep
+				am_skid #(.WIDTH(100), .RST_DATA(0)) u_at_req_rep (
+					.clk(clk), .rst_n(core_rst_n),
+					.in_valid(su_at_valid[gat]), .in_ready(su_at_ready[gat]),
+					.in_data({su_at_op[gat*4 +: 4], su_at_addr[gat*30 +: 30], su_at_a[gat*32 +: 32], su_at_b[gat*32 +: 32], su_at_stage[gat*2 +: 2]}),
+					.out_valid(at_valid[gat]), .out_ready(at_ready[gat]),
+					.out_data({at_op[gat*4 +: 4], at_addr[gat*30 +: 30], at_a[gat*32 +: 32], at_b[gat*32 +: 32], su_mc_at_stage[gat*2 +: 2]})
+				);
+			end
+			reg [ATOM_PORTS-1:0] at_rsp_valid_r;
+			reg [31:0] at_old_r;
+			reg at_error_r;
+			always @(posedge clk or negedge core_rst_n) begin
+				if (!core_rst_n) begin
+					at_rsp_valid_r <= {ATOM_PORTS{1'b0}};
+					at_old_r       <= 32'd0;
+					at_error_r     <= 1'b0;
+				end else begin
+					at_rsp_valid_r <= mc_at_rsp_valid;
+					at_old_r       <= mc_at_old;
+					at_error_r     <= mc_at_error;
+				end
+			end
+			assign at_rsp_valid = at_rsp_valid_r;
+			assign at_old       = at_old_r;
+			assign at_error     = at_error_r;
+		end else begin : g_noc_inter_direct
+			assign prim_valid    = vf_prim_valid;
+			assign vf_prim_ready = prim_ready;
+			assign prim_vtx      = vf_prim_vtx;
+			assign prim_free     = vf_prim_free;
+			assign prim_last     = vf_prim_last;
+			assign dx_valid      = rx_dx_valid;
+			assign rx_dx_ready   = dx_ready;
+			assign dx_seq        = rx_dx_seq;
+			assign dx_xy         = rx_dx_xy;
+			assign dx_mask       = rx_dx_mask;
+			assign dx_depth      = rx_dx_depth;
+			assign dx_last       = rx_dx_last;
+			assign tx_valid      = su_tx_valid;
+			assign su_tx_ready   = tx_ready;
+			assign tx_op         = su_tx_op;
+			assign tx_slot       = su_tx_slot;
+			assign tx_samp_slot  = su_tx_samp_slot;
+			assign tx_vs         = su_tx_vs;
+			assign tx_mask       = su_tx_mask;
+			assign tx_coord      = su_tx_coord;
+			assign tx_off        = su_tx_off;
+			assign tx_tag        = su_tx_tag;
+			assign tx_last       = su_tx_last;
+			assign tr_valid      = tu_tr_valid;
+			assign tu_tr_ready   = tr_ready;
+			assign tr_tag        = tu_tr_tag;
+			assign tr_data       = tu_tr_data;
+			assign tr_last       = tu_tr_last;
+			assign ex_valid      = su_ex_valid;
+			assign su_ex_ready   = ex_ready;
+			assign ex_seq        = su_ex_seq;
+			assign ex_xy         = su_ex_xy;
+			assign ex_mask       = su_ex_mask;
+			assign ex_color      = su_ex_color;
+			assign ex_color1     = su_ex_color1;
+			assign ex_has_src1   = su_ex_has_src1;
+			assign ex_depth      = su_ex_depth;
+			assign ex_aux        = su_ex_aux;
+			assign ex_last       = su_ex_last;
+			assign ex_next       = rop_ex_next;
+			assign at_valid      = su_at_valid;
+			assign su_at_ready   = at_ready;
+			assign at_op         = su_at_op;
+			assign at_addr       = su_at_addr;
+			assign at_a          = su_at_a;
+			assign at_b          = su_at_b;
+			assign su_mc_at_stage = su_at_stage;
+			assign at_rsp_valid  = mc_at_rsp_valid;
+			assign at_old        = mc_at_old;
+			assign at_error      = mc_at_error;
+		end
+	endgenerate
 	wire [SU_STAT_PORTS*4-1:0] su_fsm_v;
 	wire [3:0] su_fsm = NSU > 0 ? su_fsm_v[3:0] : 4'd0;
 	wire [7:0] pipe_busy_mask = {blt_busy, sa_busy, su_busy, tu_busy, rop_busy, rx_busy, vf_busy, !mc_unit_idle};
@@ -1512,14 +1809,26 @@ module atg_top #(
 
 	generate
 	if (HAS_VF != 0) begin : g_vf
+		wire        vf_st_we_u;
+		wire [8:0]  vf_st_idx_u;
+		wire [31:0] vf_st_wdata_u;
+		wire        vf_draw_kick_u;
+		wire        vf_rst_n_u;
+		atg_cp_st_pipe #(.IDX_W(9), .CTRL_W(1)) u_vf_st_pipe (
+			.clk(clk), .rst_n(core_rst_n),
+			.in_we(ust_we), .in_idx(ust_idx), .in_wdata(st_wdata), .in_ctrl(draw_kick),
+			.out_we(vf_st_we_u), .out_idx(vf_st_idx_u), .out_wdata(vf_st_wdata_u), .out_ctrl(vf_draw_kick_u),
+			.out_rst_n(vf_rst_n_u)
+		);
+
 		atg_vf #(.ADDR_W(UNIT_ADDR_W), .LINE_BYTES(LINE_BYTES), .LINE_SHIFT(LINE_SHIFT)) vf (
-			.clk(clk), .rst_n(core_rst_n), .st_we(ust_we), .st_idx(ust_idx), .st_wdata(st_wdata),
-			.draw_kick(draw_kick), .busy(vf_busy), .fsm(vf_fsm),
+			.clk(clk), .rst_n(vf_rst_n_u), .st_we(vf_st_we_u), .st_idx(vf_st_idx_u), .st_wdata(vf_st_wdata_u),
+			.draw_kick(vf_draw_kick_u), .busy(vf_busy), .fsm(vf_fsm),
 			.vl_req(vl_req), .vl_gnt(vl_gnt), .vl_ptbase(vl_ptbase), .vl_go(vl_go),
 			.vl_mask(vl_mask), .vl_we(vl_we), .vl_reg(vl_reg), .vl_lane(vl_lane),
 			.vl_data(vl_data),
-			.prim_valid(prim_valid), .prim_ready(prim_ready), .prim_vtx(prim_vtx),
-			.prim_free(prim_free), .prim_last(prim_last),
+			.prim_valid(vf_prim_valid), .prim_ready(vf_prim_ready), .prim_vtx(vf_prim_vtx),
+			.prim_free(vf_prim_free), .prim_last(vf_prim_last),
 			.req_valid(u_req_valid[C_VF]), .req_ready(u_req_ready[C_VF]),
 			.req_write(u_req_write[C_VF]), .req_line(u_req_line[C_VF*UNIT_LA_W +: UNIT_LA_W]),
 			.req_be(u_req_be[C_VF*LINE_BYTES +: LINE_BYTES]),
@@ -1538,14 +1847,26 @@ module atg_top #(
 		assign vl_reg = 6'd0;
 		assign vl_lane = 5'd0;
 		assign vl_data = 32'd0;
-		assign prim_valid = 1'b0;
-		assign prim_vtx = 26'd0;
-		assign prim_free = 3'd0;
-		assign prim_last = 1'b0;
-		wire unused_vf = &{1'b0, draw_kick, vl_gnt, vl_ptbase, prim_ready};
+		assign vf_prim_valid = 1'b0;
+		assign vf_prim_vtx = 26'd0;
+		assign vf_prim_free = 3'd0;
+		assign vf_prim_last = 1'b0;
+		wire unused_vf = &{1'b0, draw_kick, vl_gnt, vl_ptbase, vf_prim_ready};
 	end
 
 	if (HAS_RX != 0) begin : g_rx
+		wire        rx_st_we_u;
+		wire [8:0]  rx_st_idx_u;
+		wire [31:0] rx_st_wdata_u;
+		wire        rx_raw_kick_u;
+		wire        rx_rst_n_u;
+		atg_cp_st_pipe #(.IDX_W(9), .CTRL_W(1)) u_rx_st_pipe (
+			.clk(clk), .rst_n(core_rst_n),
+			.in_we(ust_we), .in_idx(ust_idx), .in_wdata(st_wdata), .in_ctrl(raw_kick),
+			.out_we(rx_st_we_u), .out_idx(rx_st_idx_u), .out_wdata(rx_st_wdata_u), .out_ctrl(rx_raw_kick_u),
+			.out_rst_n(rx_rst_n_u)
+		);
+
 		atg_rx #(
 			.HAS_SU(NSU > 0 ? 1 : 0),
 			.ENABLE_MSAA(RX_ENABLE_MSAA),
@@ -1555,8 +1876,8 @@ module atg_top #(
 			.ENABLE_CPOLY(RX_ENABLE_CPOLY),
 			.ENABLE_MULTIVIEWPORT(RX_ENABLE_MULTIVIEWPORT)
 		) rx (
-			.clk(clk), .rst_n(core_rst_n), .st_we(ust_we), .st_idx(ust_idx), .st_wdata(st_wdata),
-			.raw_kick(raw_kick), .busy(rx_busy), .fsm(rx_fsm),
+			.clk(clk), .rst_n(rx_rst_n_u), .st_we(rx_st_we_u), .st_idx(rx_st_idx_u), .st_wdata(rx_st_wdata_u),
+			.raw_kick(rx_raw_kick_u), .busy(rx_busy), .fsm(rx_fsm),
 			.prim_valid(prim_valid && prim_ok), .prim_ready(rx_prim_ready),
 			.prim_vtx(prim_vtx), .prim_free(prim_free), .prim_last(prim_last),
 			.pt_rd(pt_rd), .pt_idx(pt_idx), .pt_word(pt_word), .pt_rdata(pt_rdata),
@@ -1564,8 +1885,8 @@ module atg_top #(
 			.fl_req(fl_req), .fl_gnt(fl_gnt), .fl_we(fl_we), .fl_reg(fl_reg), .fl_lane(fl_lane),
 			.fl_data(fl_data), .fl_pw_we(fl_pw_we), .fl_pw_addr(fl_pw_addr),
 			.fl_pw_data(fl_pw_data), .fl_go(fl_go), .fl_mask(fl_mask), .fl_info(fl_info),
-			.dx_valid(dx_valid), .dx_ready(dx_ready), .dx_seq(dx_seq), .dx_xy(dx_xy),
-			.dx_mask(dx_mask), .dx_depth(dx_depth), .dx_last(dx_last),
+			.dx_valid(rx_dx_valid), .dx_ready(rx_dx_ready), .dx_seq(rx_dx_seq), .dx_xy(rx_dx_xy),
+			.dx_mask(rx_dx_mask), .dx_depth(rx_dx_depth), .dx_last(rx_dx_last),
 			.ord_valid(ord_valid), .ord_seq(ord_seq),
 			.mesh_valid(su_mesh_valid), .mesh_ready(su_mesh_ready),
 			.mesh_tri(su_mesh_tri), .mesh_last(su_mesh_last), .mesh_id(su_mesh_id)
@@ -1593,20 +1914,32 @@ module atg_top #(
 		assign fl_go = 1'b0;
 		assign fl_mask = 32'd0;
 		assign fl_info = 64'd0;
-		assign dx_valid = 1'b0;
-		assign dx_seq = 16'd0;
-		assign dx_xy = 32'd0;
-		assign dx_mask = 4'd0;
-		assign dx_depth = 128'd0;
-		assign dx_last = 1'b0;
+		assign rx_dx_valid = 1'b0;
+		assign rx_dx_seq = 16'd0;
+		assign rx_dx_xy = 32'd0;
+		assign rx_dx_mask = 4'd0;
+		assign rx_dx_depth = 128'd0;
+		assign rx_dx_last = 1'b0;
 		assign ord_valid = 1'b0;
 		assign ord_seq = 16'd0;
 		wire unused_rx = &{1'b0, raw_kick, prim_valid, prim_vtx, prim_free, prim_last,
-			pt_rdata, fl_gnt, dx_ready, prim_ok, rx_prim_ready,
+			pt_rdata, fl_gnt, rx_dx_ready, prim_ok, rx_prim_ready,
 			su_mesh_valid, su_mesh_last, su_mesh_tri, su_mesh_id};
 	end
 
 	if (HAS_TU != 0) begin : g_tu
+		wire        tu_st_we_u;
+		wire [9:0]  tu_st_idx_u;
+		wire [31:0] tu_st_wdata_u;
+		wire        tu_inv1_u;
+		wire        tu_rst_n_u;
+		atg_cp_st_pipe #(.IDX_W(10), .CTRL_W(1)) u_tu_st_pipe (
+			.clk(clk), .rst_n(core_rst_n),
+			.in_we(st_we), .in_idx(st_idx), .in_wdata(st_wdata), .in_ctrl(inv[1]),
+			.out_we(tu_st_we_u), .out_idx(tu_st_idx_u), .out_wdata(tu_st_wdata_u), .out_ctrl(tu_inv1_u),
+			.out_rst_n(tu_rst_n_u)
+		);
+
 		atg_tu #(
 			.ADDR_W(UNIT_ADDR_W), .LINE_BYTES(LINE_BYTES), .LINE_SHIFT(LINE_SHIFT),
 			.ENABLE_BILINEAR(TU_BILINEAR != 0),
@@ -1620,14 +1953,14 @@ module atg_top #(
 			.ENABLE_SEAMLESS_CUBE(TU_ENABLE_SEAMLESS_CUBE != 0),
 			.ENABLE_MSAA(RX_ENABLE_MSAA != 0)
 		) tu (
-			.clk(clk), .rst_n(core_rst_n), .st_we(st_we), .st_idx(st_idx), .st_wdata(st_wdata),
-			.inv(inv[1]), .busy(tu_busy),
+			.clk(clk), .rst_n(tu_rst_n_u), .st_we(tu_st_we_u), .st_idx(tu_st_idx_u), .st_wdata(tu_st_wdata_u),
+			.inv(tu_inv1_u), .busy(tu_busy),
 			.tx_valid(tx_valid), .tx_ready(tx_ready), .tx_op(tx_op), .tx_slot(tx_slot),
 			.tx_samp_slot(tx_samp_slot), .tx_vs(tx_vs),
 			.tx_mask(tx_mask), .tx_coord(tx_coord), .tx_off(tx_off), .tx_tag(tx_tag),
 			.tx_last(tx_last),
-			.tr_valid(tr_valid), .tr_ready(tr_ready), .tr_tag(tr_tag), .tr_data(tr_data),
-			.tr_last(tr_last),
+			.tr_valid(tu_tr_valid), .tr_ready(tu_tr_ready), .tr_tag(tu_tr_tag), .tr_data(tu_tr_data),
+			.tr_last(tu_tr_last),
 			.req_valid(u_req_valid[C_TU]), .req_ready(u_req_ready[C_TU]),
 			.req_write(u_req_write[C_TU]), .req_line(u_req_line[C_TU*UNIT_LA_W +: UNIT_LA_W]),
 			.req_be(u_req_be[C_TU*LINE_BYTES +: LINE_BYTES]),
@@ -1639,15 +1972,27 @@ module atg_top #(
 	end else begin : g_no_tu
 		assign tu_busy = 1'b0;
 		assign tx_ready = 1'b0;
-		assign tr_valid = 1'b0;
-		assign tr_tag = 16'd0;
-		assign tr_data = 512'd0;
-		assign tr_last = 1'b0;
+		assign tu_tr_valid = 1'b0;
+		assign tu_tr_tag = 16'd0;
+		assign tu_tr_data = 512'd0;
+		assign tu_tr_last = 1'b0;
 		wire unused_tu = &{1'b0, tx_valid, tx_op, tx_slot, tx_samp_slot, tx_vs, tx_mask, tx_coord, tx_off, tx_tag, tx_last,
-			tr_ready};
+			tu_tr_ready};
 	end
 
 	if (HAS_ROP != 0) begin : g_rop
+		wire        rop_st_we_u;
+		wire [8:0]  rop_st_idx_u;
+		wire [31:0] rop_st_wdata_u;
+		wire        rop_occ_clear_u;
+		wire        rop_rst_n_u;
+		atg_cp_st_pipe #(.IDX_W(9), .CTRL_W(1)) u_rop_st_pipe (
+			.clk(clk), .rst_n(core_rst_n),
+			.in_we(ust_we), .in_idx(ust_idx), .in_wdata(st_wdata), .in_ctrl(occ_clear),
+			.out_we(rop_st_we_u), .out_idx(rop_st_idx_u), .out_wdata(rop_st_wdata_u), .out_ctrl(rop_occ_clear_u),
+			.out_rst_n(rop_rst_n_u)
+		);
+
 		atg_rop #(
 			.ADDR_W(UNIT_ADDR_W), .LINE_BYTES(LINE_BYTES), .LINE_SHIFT(LINE_SHIFT),
 			.STENCIL(ROP_STENCIL),
@@ -1659,15 +2004,15 @@ module atg_top #(
 			.ENABLE_FBLEND(HAS_ROP_FBLEND),
 			.ENABLE_PACK(HAS_ROP_PACK)
 		) rop (
-			.clk(clk), .rst_n(core_rst_n), .st_we(ust_we), .st_idx(ust_idx), .st_wdata(st_wdata),
+			.clk(clk), .rst_n(rop_rst_n_u), .st_we(rop_st_we_u), .st_idx(rop_st_idx_u), .st_wdata(rop_st_wdata_u),
 			.busy(rop_busy), .fsm(rop_fsm),
 			.ex_valid(ex_valid), .ex_ready(ex_ready), .ex_seq(ex_seq), .ex_xy(ex_xy),
 			.ex_mask(ex_mask), .ex_color(ex_color), .ex_color1(ex_color1), .ex_has_src1(ex_has_src1), .ex_depth(ex_depth), .ex_last(ex_last),
-			.ex_next(ex_next), .ex_aux(ex_aux),
+			.ex_next(rop_ex_next), .ex_aux(ex_aux),
 			.dx_valid(dx_valid), .dx_ready(dx_ready), .dx_seq(dx_seq), .dx_xy(dx_xy),
 			.dx_mask(dx_mask), .dx_depth(dx_depth), .dx_last(dx_last),
 			.ord_valid(ord_valid), .ord_seq(ord_seq),
-			.occ_count(occ_count), .occ_clear(occ_clear),
+			.occ_count(occ_count), .occ_clear(rop_occ_clear_u),
 			.req_valid(u_req_valid[C_ROP]), .req_ready(u_req_ready[C_ROP]),
 			.req_write(u_req_write[C_ROP]), .req_line(u_req_line[C_ROP*UNIT_LA_W +: UNIT_LA_W]),
 			.req_be(u_req_be[C_ROP*LINE_BYTES +: LINE_BYTES]),
@@ -1681,15 +2026,28 @@ module atg_top #(
 		assign rop_fsm = 4'd0;
 		assign occ_count = 40'd0;
 		assign ex_ready = 1'b0;
-		assign ex_next = 16'd0;
+		assign rop_ex_next = 16'd0;
 		assign dx_ready = 1'b0;
 		wire unused_rop = &{1'b0, ex_valid, ex_seq, ex_xy, ex_mask, ex_color, ex_color1, ex_has_src1, ex_depth, ex_last, ex_aux,
 			dx_valid, dx_seq, dx_xy, dx_mask, dx_depth, dx_last, ord_valid, ord_seq, occ_clear};
 	end
 
 	if (HAS_SA != 0) begin : g_sa
+		wire        sa_st_we_u;
+		wire [8:0]  sa_st_idx_u;
+		wire [31:0] sa_st_wdata_u;
+		wire [0:0]  sa_ctrl_u;
+		wire        sa_rst_n_u;
+		wire        unused_sa_pipe = &{1'b0, sa_ctrl_u};
+		atg_cp_st_pipe #(.IDX_W(9), .CTRL_W(1)) u_sa_st_pipe (
+			.clk(clk), .rst_n(core_rst_n),
+			.in_we(ust_we), .in_idx(ust_idx), .in_wdata(st_wdata), .in_ctrl(1'b0),
+			.out_we(sa_st_we_u), .out_idx(sa_st_idx_u), .out_wdata(sa_st_wdata_u), .out_ctrl(sa_ctrl_u),
+			.out_rst_n(sa_rst_n_u)
+		);
+
 		atg_sa #(.ADDR_W(UNIT_ADDR_W), .LINE_BYTES(LINE_BYTES), .LINE_SHIFT(LINE_SHIFT), .NPHYS(SU_NPHYS)) sa (
-			.clk(clk), .rst_n(core_rst_n), .st_we(ust_we), .st_idx(ust_idx), .st_wdata(st_wdata),
+			.clk(clk), .rst_n(sa_rst_n_u), .st_we(sa_st_we_u), .st_idx(sa_st_idx_u), .st_wdata(sa_st_wdata_u),
 			.hcr_we(hcr_we), .hcr_widx(hcr_widx), .hcr_wdata(hcr_wdata), .hcr_wmask(hcr_wmask),
 			.hcr_ridx(hcr_ridx), .hcr_rdata(sa_hcr_rdata),
 			.push_valid(sa_push_valid), .push_ready(sa_push_ready), .push_data(sa_push_data),
@@ -1885,6 +2243,20 @@ module atg_top #(
 		wire [154:0] s_ex_aux;
 		wire [DW-1:0] s_sa_push_data;
 		wire g0 = k == 0;
+		wire        su_st_we_u;
+		wire [8:0]  su_st_idx_u;
+		wire [31:0] su_st_wdata_u;
+		wire        su_cs_kick_u, su_cs_mesh_u, su_lc_kick_u, su_scrub_u;
+		wire [3:0]  su_inv_u;
+		wire        su_rst_n_u;
+		atg_cp_st_pipe #(.IDX_W(9), .CTRL_W(8)) u_su_st_pipe (
+			.clk(clk), .rst_n(core_rst_n),
+			.in_we(ust_we), .in_idx(ust_idx), .in_wdata(st_wdata),
+			.in_ctrl({cs_kick, cs_mesh, lc_kick, inv, prot_scrub}),
+			.out_we(su_st_we_u), .out_idx(su_st_idx_u), .out_wdata(su_st_wdata_u),
+			.out_ctrl({su_cs_kick_u, su_cs_mesh_u, su_lc_kick_u, su_inv_u, su_scrub_u}),
+			.out_rst_n(su_rst_n_u)
+		);
 
 		atg_su #(
 			.NPHYS(SU_NPHYS), .NWARPS(SU_NWARPS), .WARP_W(SU_WARP_W), .GRP_W(SU_GRP_W),
@@ -1897,8 +2269,8 @@ module atg_top #(
 			.MRT_COUNT(MRT_COUNT), .DUAL_SOURCE(ROP_DUAL_SOURCE),
 			.SHARED_PT(SU_SHARED_PT), .HAS_GFX(SU_HAS_GFX ? 1 : 0), .HAS_TU(HAS_TU != 0 ? 1 : 0)
 		) su (
-			.clk(clk), .rst_n(core_rst_n), .st_we(ust_we), .st_idx(ust_idx), .st_wdata(st_wdata),
-			.cs_kick(cs_kick), .cs_mesh(cs_mesh), .lc_kick(lc_kick), .inv(inv),
+			.clk(clk), .rst_n(su_rst_n_u), .st_we(su_st_we_u), .st_idx(su_st_idx_u), .st_wdata(su_st_wdata_u),
+			.cs_kick(su_cs_kick_u), .cs_mesh(su_cs_mesh_u), .lc_kick(su_lc_kick_u), .inv(su_inv_u),
 			.vl_req(su_vl_req_v[k]), .vl_gnt(s_vl_gnt), .vl_slot(s_vl_slot),
 			.vl_ptbase(s_vl_ptbase), .vl_avail(s_vl_avail),
 			.vl_we(su_vl_we_v[k]), .vl_reg(su_vl_reg_v[k*6 +: 6]),
@@ -1949,8 +2321,8 @@ module atg_top #(
 			.i_req_tag(u_req_tag[CI*8 +: 8]),
 			.i_rsp_valid(u_rsp_valid[CI]), .i_rsp_write(u_rsp_write[CI]), .i_rsp_tag(u_rsp_tag[CI*8 +: 8]),
 			.i_rsp_rdata(u_rsp_rdata[CI*LINE_BITS +: LINE_BITS]), .i_rsp_error(u_rsp_error[CI]),
-			.at_valid(at_valid[k]), .at_stage(su_at_stage[k*2 +: 2]), .at_ready(at_ready[k]), .at_op(at_op[k*4 +: 4]),
-			.at_addr(at_addr[k*30 +: 30]), .at_a(at_a[k*32 +: 32]), .at_b(at_b[k*32 +: 32]),
+			.at_valid(su_at_valid[k]), .at_stage(su_at_stage[k*2 +: 2]), .at_ready(su_at_ready[k]), .at_op(su_at_op[k*4 +: 4]),
+			.at_addr(su_at_addr[k*30 +: 30]), .at_a(su_at_a[k*32 +: 32]), .at_b(su_at_b[k*32 +: 32]),
 			.at_rsp_valid(at_rsp_valid[k]), .at_old(at_old), .at_error(at_error),
 			.sa_push_valid(s_sa_push_valid), .sa_push_ready(g0 && sa_push_ready),
 			.sa_push_data(s_sa_push_data), .sa_pop_valid(g0 && sa_pop_valid),
@@ -1958,7 +2330,7 @@ module atg_top #(
 			.sa_ctl_valid(s_sa_ctl_valid), .sa_ctl_data(s_sa_ctl_data),
 			.sa_qstat(sa_qstat), .sa_stat(sa_stat), .sa_qtag(sa_qtag),
 			.busy(su_busy_v[k]), .fault(su_fault_v[k]),
-			.scrub(prot_scrub), .scrub_busy(su_scrub_v[k]),
+			.scrub(su_scrub_u), .scrub_busy(su_scrub_v[k]),
 			.fault_addr(su_fault_addr_v[k*32 +: 32]),
 			.fault_stage(su_fault_stage_v[k*4 +: 4]),
 			.fsm(su_fsm_v[k*4 +: 4])
@@ -2049,35 +2421,35 @@ module atg_top #(
 		assign pt_done = su_pt_done_v[7:0];
 		assign su_pt_exp_ready_v[0] = 1'b1;
 
-		assign tx_valid = su_tx_valid_v[0];
-		assign su_tx_ready_v[0] = tx_ready;
-		assign tx_op = su_tx_op_v[7:0];
-		assign tx_slot = su_tx_slot_v[3:0];
-		assign tx_samp_slot = su_tx_samp_slot_v[3:0];
-		assign tx_vs = su_tx_vs_v[0];
-		assign tx_mask = su_tx_mask_v[3:0];
-		assign tx_coord = su_tx_coord_v[639:0];
-		assign tx_off = su_tx_off_v[11:0];
-		assign tx_tag = su_tx_tag_v[15:0];
-		assign tx_last = su_tx_last_v[0];
+		assign su_tx_valid = su_tx_valid_v[0];
+		assign su_tx_ready_v[0] = su_tx_ready;
+		assign su_tx_op = su_tx_op_v[7:0];
+		assign su_tx_slot = su_tx_slot_v[3:0];
+		assign su_tx_samp_slot = su_tx_samp_slot_v[3:0];
+		assign su_tx_vs = su_tx_vs_v[0];
+		assign su_tx_mask = su_tx_mask_v[3:0];
+		assign su_tx_coord = su_tx_coord_v[639:0];
+		assign su_tx_off = su_tx_off_v[11:0];
+		assign su_tx_tag = su_tx_tag_v[15:0];
+		assign su_tx_last = su_tx_last_v[0];
 		assign su_tr_valid_v[0] = tr_valid;
 		assign tr_ready = su_tr_ready_v[0];
 		assign su_tr_tag_v[15:0] = tr_tag;
 		assign su_tr_data_v[511:0] = tr_data;
 		assign su_tr_last_v[0] = tr_last;
 
-		assign ex_valid = su_ex_valid_v[0];
-		assign su_ex_ready_v[0] = ex_ready;
-		assign ex_seq = su_ex_seq_v[15:0];
-		assign ex_xy = su_ex_xy_v[31:0];
-		assign ex_mask = su_ex_mask_v[3:0];
-		assign ex_color = su_ex_color_v[511:0];
-		assign ex_color1 = su_ex_color1_v[511:0];
-		assign ex_has_src1 = su_ex_has_src1_v[0];
-		assign ex_depth = su_ex_depth_v[127:0];
-		assign ex_last = su_ex_last_v[0];
+		assign su_ex_valid = su_ex_valid_v[0];
+		assign su_ex_ready_v[0] = su_ex_ready;
+		assign su_ex_seq = su_ex_seq_v[15:0];
+		assign su_ex_xy = su_ex_xy_v[31:0];
+		assign su_ex_mask = su_ex_mask_v[3:0];
+		assign su_ex_color = su_ex_color_v[511:0];
+		assign su_ex_color1 = su_ex_color1_v[511:0];
+		assign su_ex_has_src1 = su_ex_has_src1_v[0];
+		assign su_ex_depth = su_ex_depth_v[127:0];
+		assign su_ex_last = su_ex_last_v[0];
 		assign su_ex_next_v[15:0] = ex_next;
-		assign ex_aux = su_ex_aux_v[154:0];
+		assign su_ex_aux = su_ex_aux_v[154:0];
 		wire unused_s1 = &{1'b0, su_vl_avail_v, su_fl_avail_v, su_pt_exp_valid_v, su_pt_exp_data_v};
 	end else if (NSU > 1) begin : g_su_spine_n
 		/* Temporary Phase 3 K<=4 tree (up to 16 SUs); replaced by atg_su_fabric_n1..n128 in Phase 4 */
@@ -2345,10 +2717,10 @@ module atg_top #(
 					.c_tx_off(su_tx_off_v), .c_tx_tag(su_tx_tag_v), .c_tx_last(su_tx_last_v),
 					.c_tr_valid(su_tr_valid_v), .c_tr_ready(su_tr_ready_v),
 					.c_tr_tag(su_tr_tag_v), .c_tr_data(su_tr_data_v), .c_tr_last(su_tr_last_v),
-					.p_tx_valid(tx_valid), .p_tx_ready(tx_ready),
-					.p_tx_op(tx_op), .p_tx_slot(tx_slot), .p_tx_samp_slot(tx_samp_slot),
-					.p_tx_vs(tx_vs), .p_tx_mask(tx_mask), .p_tx_coord(tx_coord),
-					.p_tx_off(tx_off), .p_tx_tag(tx_tag), .p_tx_last(tx_last),
+					.p_tx_valid(su_tx_valid), .p_tx_ready(su_tx_ready),
+					.p_tx_op(su_tx_op), .p_tx_slot(su_tx_slot), .p_tx_samp_slot(su_tx_samp_slot),
+					.p_tx_vs(su_tx_vs), .p_tx_mask(su_tx_mask), .p_tx_coord(su_tx_coord),
+					.p_tx_off(su_tx_off), .p_tx_tag(su_tx_tag), .p_tx_last(su_tx_last),
 					.p_tr_valid(tr_valid), .p_tr_ready(tr_ready),
 					.p_tr_tag(tr_tag), .p_tr_data(tr_data), .p_tr_last(tr_last)
 				);
@@ -2365,9 +2737,9 @@ module atg_top #(
 					.c_tx_coord(w_tx_coord), .c_tx_off(w_tx_off), .c_tx_tag(w_tx_tag), .c_tx_last(w_tx_l),
 					.c_tr_valid(w_tr_v), .c_tr_ready(w_tr_r), .c_tr_tag(w_tr_tag),
 					.c_tr_data(w_tr_data), .c_tr_last(w_tr_l),
-					.p_tx_valid(tx_valid), .p_tx_ready(tx_ready), .p_tx_op(tx_op), .p_tx_slot(tx_slot),
-					.p_tx_samp_slot(tx_samp_slot), .p_tx_vs(tx_vs), .p_tx_mask(tx_mask),
-					.p_tx_coord(tx_coord), .p_tx_off(tx_off), .p_tx_tag(tx_tag), .p_tx_last(tx_last),
+					.p_tx_valid(su_tx_valid), .p_tx_ready(su_tx_ready), .p_tx_op(su_tx_op), .p_tx_slot(su_tx_slot),
+					.p_tx_samp_slot(su_tx_samp_slot), .p_tx_vs(su_tx_vs), .p_tx_mask(su_tx_mask),
+					.p_tx_coord(su_tx_coord), .p_tx_off(su_tx_off), .p_tx_tag(su_tx_tag), .p_tx_last(su_tx_last),
 					.p_tr_valid(tr_valid), .p_tr_ready(tr_ready), .p_tr_tag(tr_tag),
 					.p_tr_data(tr_data), .p_tr_last(tr_last)
 				);
@@ -2415,23 +2787,23 @@ module atg_top #(
 				end
 			end
 		end else begin : g_sp_notu
-			assign tx_valid = 1'b0;
-			assign tx_op = 8'd0;
-			assign tx_slot = 4'd0;
-			assign tx_samp_slot = 4'd0;
-			assign tx_vs = 1'b0;
-			assign tx_mask = 4'd0;
-			assign tx_coord = 640'd0;
-			assign tx_off = 12'd0;
-			assign tx_tag = 16'd0;
-			assign tx_last = 1'b0;
+			assign su_tx_valid = 1'b0;
+			assign su_tx_op = 8'd0;
+			assign su_tx_slot = 4'd0;
+			assign su_tx_samp_slot = 4'd0;
+			assign su_tx_vs = 1'b0;
+			assign su_tx_mask = 4'd0;
+			assign su_tx_coord = 640'd0;
+			assign su_tx_off = 12'd0;
+			assign su_tx_tag = 16'd0;
+			assign su_tx_last = 1'b0;
 			assign tr_ready = 1'b1;
 			assign su_tx_ready_v = {NSU_V{1'b0}};
 			assign su_tr_valid_v = {NSU_V{1'b0}};
 			assign su_tr_tag_v = {(NSU_V*16){1'b0}};
 			assign su_tr_data_v = {(NSU_V*512){1'b0}};
 			assign su_tr_last_v = {NSU_V{1'b0}};
-			wire unused_sp_ntu = &{1'b0, tx_ready, tr_valid, tr_tag, tr_data, tr_last,
+			wire unused_sp_ntu = &{1'b0, su_tx_ready, tr_valid, tr_tag, tr_data, tr_last,
 				su_tx_valid_v, su_tx_op_v, su_tx_slot_v, su_tx_samp_slot_v, su_tx_vs_v,
 				su_tx_mask_v, su_tx_coord_v, su_tx_off_v, su_tx_tag_v, su_tx_last_v, su_tr_ready_v};
 		end
@@ -2446,11 +2818,11 @@ module atg_top #(
 					.c_ex_color(su_ex_color_v), .c_ex_color1(su_ex_color1_v),
 					.c_ex_has_src1(su_ex_has_src1_v), .c_ex_depth(su_ex_depth_v),
 					.c_ex_last(su_ex_last_v), .c_ex_aux(su_ex_aux_v), .c_ex_next(c_ex_next_w),
-					.p_ex_valid(ex_valid), .p_ex_ready(ex_ready),
-					.p_ex_seq(ex_seq), .p_ex_xy(ex_xy), .p_ex_mask(ex_mask),
-					.p_ex_color(ex_color), .p_ex_color1(ex_color1),
-					.p_ex_has_src1(ex_has_src1), .p_ex_depth(ex_depth),
-					.p_ex_last(ex_last), .p_ex_aux(ex_aux), .p_ex_next(ex_next)
+					.p_ex_valid(su_ex_valid), .p_ex_ready(su_ex_ready),
+					.p_ex_seq(su_ex_seq), .p_ex_xy(su_ex_xy), .p_ex_mask(su_ex_mask),
+					.p_ex_color(su_ex_color), .p_ex_color1(su_ex_color1),
+					.p_ex_has_src1(su_ex_has_src1), .p_ex_depth(su_ex_depth),
+					.p_ex_last(su_ex_last), .p_ex_aux(su_ex_aux), .p_ex_next(ex_next)
 				);
 				assign su_ex_next_v = {NSU_V{c_ex_next_w}};
 			end else begin : g_rop_l2
@@ -2464,10 +2836,10 @@ module atg_top #(
 					.c_ex_xy(w_ex_xy), .c_ex_mask(w_ex_mask), .c_ex_color(w_ex_col),
 					.c_ex_color1(w_ex_col1), .c_ex_has_src1(w_ex_hs1), .c_ex_depth(w_ex_dep),
 					.c_ex_last(w_ex_l), .c_ex_aux(w_ex_aux), .c_ex_next(w_ex_next),
-					.p_ex_valid(ex_valid), .p_ex_ready(ex_ready), .p_ex_seq(ex_seq),
-					.p_ex_xy(ex_xy), .p_ex_mask(ex_mask), .p_ex_color(ex_color),
-					.p_ex_color1(ex_color1), .p_ex_has_src1(ex_has_src1), .p_ex_depth(ex_depth),
-					.p_ex_last(ex_last), .p_ex_aux(ex_aux), .p_ex_next(ex_next)
+					.p_ex_valid(su_ex_valid), .p_ex_ready(su_ex_ready), .p_ex_seq(su_ex_seq),
+					.p_ex_xy(su_ex_xy), .p_ex_mask(su_ex_mask), .p_ex_color(su_ex_color),
+					.p_ex_color1(su_ex_color1), .p_ex_has_src1(su_ex_has_src1), .p_ex_depth(su_ex_depth),
+					.p_ex_last(su_ex_last), .p_ex_aux(su_ex_aux), .p_ex_next(ex_next)
 				);
 				for (gg = 0; gg < NG; gg = gg + 1) begin : g_rop_grp
 					localparam GB = gg * 4;
@@ -2509,19 +2881,19 @@ module atg_top #(
 				end
 			end
 		end else begin : g_sp_norop
-			assign ex_valid = 1'b0;
-			assign ex_seq = 16'd0;
-			assign ex_xy = 32'd0;
-			assign ex_mask = 4'd0;
-			assign ex_color = 512'd0;
-			assign ex_color1 = 512'd0;
-			assign ex_has_src1 = 1'b0;
-			assign ex_depth = 128'd0;
-			assign ex_last = 1'b0;
-			assign ex_aux = 155'd0;
+			assign su_ex_valid = 1'b0;
+			assign su_ex_seq = 16'd0;
+			assign su_ex_xy = 32'd0;
+			assign su_ex_mask = 4'd0;
+			assign su_ex_color = 512'd0;
+			assign su_ex_color1 = 512'd0;
+			assign su_ex_has_src1 = 1'b0;
+			assign su_ex_depth = 128'd0;
+			assign su_ex_last = 1'b0;
+			assign su_ex_aux = 155'd0;
 			assign su_ex_ready_v = {NSU_V{1'b0}};
 			assign su_ex_next_v = {(NSU_V*16){1'b0}};
-			wire unused_sp_nrp = &{1'b0, ex_ready, ex_next, su_ex_valid_v, su_ex_seq_v,
+			wire unused_sp_nrp = &{1'b0, su_ex_ready, ex_next, su_ex_valid_v, su_ex_seq_v,
 				su_ex_xy_v, su_ex_mask_v, su_ex_color_v, su_ex_color1_v,
 				su_ex_has_src1_v, su_ex_depth_v, su_ex_last_v, su_ex_aux_v};
 		end
@@ -2648,11 +3020,27 @@ module atg_top #(
 				fab_pt_rdata, fab_pt_done, fab_pt_exp_valid, fab_pt_exp_packed};
 		end
 
+		wire        noc_st_we_u;
+		wire [8:0]  noc_st_idx_u;
+		wire [31:0] noc_st_wdata_u;
+		wire        noc_cs_kick_u, noc_cs_mesh_u, noc_lc_kick_u, noc_scrub_u;
+		wire [3:0]  noc_inv_u;
+		wire        noc_rst_n_u;
+		wire        unused_noc_rst_pipe = noc_rst_n_u;
+		atg_cp_st_pipe #(.IDX_W(9), .CTRL_W(8)) u_noc_st_pipe (
+			.clk(clk), .rst_n(core_rst_n),
+			.in_we(ust_we), .in_idx(ust_idx), .in_wdata(st_wdata),
+			.in_ctrl({cs_kick, cs_mesh, lc_kick, inv, prot_scrub}),
+			.out_we(noc_st_we_u), .out_idx(noc_st_idx_u), .out_wdata(noc_st_wdata_u),
+			.out_ctrl({noc_cs_kick_u, noc_cs_mesh_u, noc_lc_kick_u, noc_inv_u, noc_scrub_u}),
+			.out_rst_n(noc_rst_n_u)
+		);
+
 		`define ATG_FAB_CONNS \
 			.clk(clk), .rst_n(core_rst_n), .flush(1'b0), \
-			.st_we(ust_we), .st_idx(ust_idx), .st_wdata(st_wdata), \
-			.cs_kick(cs_kick), .cs_mesh(cs_mesh), .lc_kick(lc_kick), .inv(inv), \
-			.scrub(prot_scrub), .session_id(active_mmu_session), \
+			.st_we(noc_st_we_u), .st_idx(noc_st_idx_u), .st_wdata(noc_st_wdata_u), \
+			.cs_kick(noc_cs_kick_u), .cs_mesh(noc_cs_mesh_u), .lc_kick(noc_lc_kick_u), .inv(noc_inv_u), \
+			.scrub(noc_scrub_u), .session_id(active_mmu_session), \
 			.vl_req(fab_vl_req), .vl_gnt(fab_vl_gnt), .vl_ptbase(fab_vl_ptbase), .vl_avail(fab_vl_avail), \
 			.vl_we(vl_we), .vl_reg(vl_reg), .vl_lane(vl_lane), .vl_data(vl_data), \
 			.vl_go(vl_go), .vl_mask(vl_mask), .vl_go_ptbase(fab_vl_go_ptbase), \
@@ -2663,22 +3051,22 @@ module atg_top #(
 			.pt_rd(fab_pt_rd), .pt_idx(fab_pt_idx), .pt_word(fab_pt_word), .pt_rdata(fab_pt_rdata), \
 			.pt_free(fab_pt_free), .pt_free_idx(fab_pt_free_idx), .pt_done(fab_pt_done), \
 			.pt_exp_valid(fab_pt_exp_valid), .pt_exp_ready(fab_pt_exp_ready), .pt_exp_packed(fab_pt_exp_packed), \
-			.tx_valid(tx_valid), .tx_ready(tx_ready), .tx_op(tx_op), \
-			.tx_slot(tx_slot), .tx_samp_slot(tx_samp_slot), .tx_vs(tx_vs), \
-			.tx_mask(tx_mask), .tx_coord(tx_coord), .tx_off(tx_off), \
-			.tx_tag(tx_tag), .tx_last(tx_last), \
+			.tx_valid(su_tx_valid), .tx_ready(su_tx_ready), .tx_op(su_tx_op), \
+			.tx_slot(su_tx_slot), .tx_samp_slot(su_tx_samp_slot), .tx_vs(su_tx_vs), \
+			.tx_mask(su_tx_mask), .tx_coord(su_tx_coord), .tx_off(su_tx_off), \
+			.tx_tag(su_tx_tag), .tx_last(su_tx_last), \
 			.tr_valid(tr_valid), .tr_ready(tr_ready), .tr_tag(tr_tag), \
 			.tr_data(tr_data), .tr_last(tr_last), \
-			.ex_valid(ex_valid), .ex_ready(ex_ready), .ex_seq(ex_seq), \
-			.ex_xy(ex_xy), .ex_mask(ex_mask), .ex_color(ex_color), .ex_color1(ex_color1), \
-			.ex_has_src1(ex_has_src1), .ex_depth(ex_depth), .ex_last(ex_last), \
-			.ex_aux(ex_aux), .ex_next(ex_next), \
+			.ex_valid(su_ex_valid), .ex_ready(su_ex_ready), .ex_seq(su_ex_seq), \
+			.ex_xy(su_ex_xy), .ex_mask(su_ex_mask), .ex_color(su_ex_color), .ex_color1(su_ex_color1), \
+			.ex_has_src1(su_ex_has_src1), .ex_depth(su_ex_depth), .ex_last(su_ex_last), \
+			.ex_aux(su_ex_aux), .ex_next(ex_next), \
 			.trunk_req_valid(fab_trunk_req_valid), .trunk_req_ready(fab_trunk_req_ready), \
 			.trunk_req_data(fab_trunk_req_data), .trunk_req_last(fab_trunk_req_last), \
 			.trunk_rsp_valid(fab_trunk_rsp_valid), .trunk_rsp_ready(fab_trunk_rsp_ready), \
 			.trunk_rsp_data(fab_trunk_rsp_data), \
-			.at_valid(at_valid[0]), .at_ready(at_ready[0]), .at_op(at_op[3:0]), \
-			.at_addr(at_addr[29:0]), .at_a(at_a[31:0]), .at_b(at_b[31:0]), \
+			.at_valid(su_at_valid[0]), .at_ready(su_at_ready[0]), .at_op(su_at_op[3:0]), \
+			.at_addr(su_at_addr[29:0]), .at_a(su_at_a[31:0]), .at_b(su_at_b[31:0]), \
 			.at_stage(su_at_stage[1:0]), .at_rsp_valid(at_rsp_valid[0]), .at_old(at_old), .at_error(at_error), \
 			.su0_mesh_valid(su_mesh_valid), .su0_mesh_ready(su_mesh_ready), .su0_mesh_tri(su_mesh_tri), \
 			.su0_mesh_last(su_mesh_last), .su0_mesh_id(su_mesh_id), \
@@ -2775,8 +3163,8 @@ module atg_top #(
 		) atom (
 			.clk(clk), .rst_n(core_rst_n),
 			.at_valid(at_valid), .at_ready(at_ready), .at_op(at_op), .at_addr(at_addr),
-			.at_a(at_a), .at_b(at_b), .at_stage(su_at_stage), .at_rsp_valid(at_rsp_valid), .at_old(at_old),
-			.at_error(at_error), .busy(atom_busy),
+			.at_a(at_a), .at_b(at_b), .at_stage(su_mc_at_stage), .at_rsp_valid(mc_at_rsp_valid), .at_old(mc_at_old),
+			.at_error(mc_at_error), .busy(atom_busy),
 			.req_valid(u_req_valid[C_ATOM]), .req_ready(u_req_ready[C_ATOM]),
 			.req_write(u_req_write[C_ATOM]), .req_line(u_req_line[C_ATOM*UNIT_LA_W +: UNIT_LA_W]),
 			.req_be(u_req_be[C_ATOM*LINE_BYTES +: LINE_BYTES]),
@@ -2797,41 +3185,41 @@ module atg_top #(
 		assign fl_gnt = 1'b0;
 		assign pt_rdata = 32'd0;
 		assign pt_done = 8'd0;
-		assign tx_valid = 1'b0;
-		assign tx_op = 8'd0;
-		assign tx_slot = 4'd0;
-		assign tx_samp_slot = 4'd0;
-		assign tx_vs = 1'b0;
-		assign tx_mask = 4'd0;
-		assign tx_coord = 640'd0;
-		assign tx_off = 12'd0;
-		assign tx_tag = 16'd0;
-		assign tx_last = 1'b0;
+		assign su_tx_valid = 1'b0;
+		assign su_tx_op = 8'd0;
+		assign su_tx_slot = 4'd0;
+		assign su_tx_samp_slot = 4'd0;
+		assign su_tx_vs = 1'b0;
+		assign su_tx_mask = 4'd0;
+		assign su_tx_coord = 640'd0;
+		assign su_tx_off = 12'd0;
+		assign su_tx_tag = 16'd0;
+		assign su_tx_last = 1'b0;
 		assign tr_ready = 1'b0;
-		assign ex_valid = 1'b0;
-		assign ex_seq = 16'd0;
-		assign ex_xy = 32'd0;
-		assign ex_mask = 4'd0;
-		assign ex_color = 512'd0;
-		assign ex_color1 = 512'd0;
-		assign ex_has_src1 = 1'b0;
-		assign ex_depth = 128'd0;
-		assign ex_last = 1'b0;
-		assign ex_aux = 155'd0;
+		assign su_ex_valid = 1'b0;
+		assign su_ex_seq = 16'd0;
+		assign su_ex_xy = 32'd0;
+		assign su_ex_mask = 4'd0;
+		assign su_ex_color = 512'd0;
+		assign su_ex_color1 = 512'd0;
+		assign su_ex_has_src1 = 1'b0;
+		assign su_ex_depth = 128'd0;
+		assign su_ex_last = 1'b0;
+		assign su_ex_aux = 155'd0;
 		assign sa_push_valid = 1'b0;
 		assign sa_push_data = {DW{1'b0}};
 		assign sa_pop_ready = 1'b0;
 		assign sa_ctl_valid = 1'b0;
 		assign sa_ctl_data = 32'd0;
-		assign at_valid = 1'b0;
-		assign at_op = 4'd0;
-		assign at_addr = 30'd0;
-		assign at_a = 32'd0;
-		assign at_b = 32'd0;
+		assign su_at_valid = 1'b0;
+		assign su_at_op = 4'd0;
+		assign su_at_addr = 30'd0;
+		assign su_at_a = 32'd0;
+		assign su_at_b = 32'd0;
 		assign at_ready = 1'b0;
-		assign at_rsp_valid = 1'b0;
-		assign at_old = 32'd0;
-		assign at_error = 1'b0;
+		assign mc_at_rsp_valid = 1'b0;
+		assign mc_at_old = 32'd0;
+		assign mc_at_error = 1'b0;
 		assign su_busy_v = 1'b0;
 		assign su_fault_v = 1'b0;
 		assign su_scrub_v = 1'b0;
@@ -2844,10 +3232,11 @@ module atg_top #(
 		wire unused_su = &{1'b0, cs_kick, lc_kick, inv, vl_req, vl_we, vl_reg, vl_lane, vl_data,
 			vl_go, vl_mask, fl_req, fl_we, fl_reg, fl_lane, fl_data, fl_pw_we, fl_pw_addr,
 			fl_pw_data, fl_go, fl_mask, fl_info, pt_rd, pt_idx, pt_word, pt_free, pt_free_idx,
-			tx_ready, tr_valid, tr_tag, tr_data, tr_last, ex_ready, ex_next, sa_push_ready,
-			sa_pop_valid, sa_pop_data, sa_qstat, sa_stat, sa_qtag, at_ready, at_rsp_valid,
-			at_old, at_error, su_busy_v, su_fault_v, su_fault_addr_v, at_valid, at_op, at_addr,
-			at_a, at_b, su_mesh_ready};
+			su_tx_ready, tr_valid, tr_tag, tr_data, tr_last, su_ex_ready, ex_next, sa_push_ready,
+			sa_pop_valid, sa_pop_data, sa_qstat, sa_stat, sa_qtag, su_at_ready, at_rsp_valid,
+			at_old, at_error, su_busy_v, su_fault_v, su_fault_addr_v, su_at_valid, su_at_op, su_at_addr,
+			su_at_a, su_at_b, su_mesh_ready,
+			at_valid, at_op, at_addr, at_a, at_b, su_mc_at_stage, at_ready, mc_at_rsp_valid, mc_at_old, mc_at_error};
 	end
 	endgenerate
 

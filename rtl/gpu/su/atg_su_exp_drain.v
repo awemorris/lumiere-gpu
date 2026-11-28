@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -76,6 +76,7 @@ module atg_su_exp_drain #(
 	(* max_fanout = 12 *) reg [2:0] low_rtw_r;
 	(* max_fanout = 12 *) reg       nocol_r;
 	(* max_fanout = 12 *) reg [7:1] q_nz_r;
+	(* max_fanout = 12 *) reg       d_lastb_r;
 
 	/* the attachments above and below the beat's (using registered rtw_r) */
 	reg [7:0] above_m, below_m;
@@ -102,8 +103,7 @@ module atg_su_exp_drain #(
 	(* keep = "true" *) wire qlast = d_q[2] ? qlast_hi : qlast_lo;
 
 	(* keep = "true" *) wire above_lo_nz = |above[3:1];
-	(* keep = "true" *) wire above_hi_nz = |above[7:4];
-	(* keep = "true" *) wire d_lastb_w   = !above_lo_nz && !above_hi_nz;
+	(* keep = "true" *) wire d_lastb_w   = d_lastb_r;
 
 	(* keep = "true" *) wire [2:0] low_above = {
 		!above_lo_nz,
@@ -115,7 +115,9 @@ module atg_su_exp_drain #(
 	assign d_first = below == 8'd0;
 	assign d_lastb = d_lastb_w;
 
-	/* An ended fragment warp whose sequence number is the ROP's next one. */
+	/* An ended fragment warp whose sequence number is the ROP's next one.
+	 * Pre-evaluate sequence match into FFs in S_IDLE so seq[*] -> d_warp (E) <= 8 cmos3. */
+	reg [NWARPS-1:0] seq_eq_r;
 	reg [WARP_W-1:0] cand;
 	reg cand_v;
 	integer w;
@@ -123,31 +125,84 @@ module atg_su_exp_drain #(
 		cand_v = 1'b0;
 		cand = {WARP_W{1'b0}};
 		for (w = NWARPS - 1; w >= 0; w = w - 1)
-			if (frag[w] && ended[w] && seq[w*16 +: 16] == ex_next) begin
+			if (frag[w] && ended[w] && seq_eq_r[w]) begin
 				cand_v = 1'b1;
 				cand = w[WARP_W-1:0];
 			end
 	end
 
 	assign ex_valid = st == S_DRAIN;
-	assign ex_seq = seq[d_warp*16 +: 16];
+	(* dont_touch = "true" *) reg [WARP_W-1:0] d_warp_seq;
+	assign ex_seq = seq[d_warp_seq*16 +: 16];
 	assign ex_last = d_lastb_w && qlast;
 	assign xr_valid = vx_v || st == S_RET;
 	assign xr_warp = vx_v ? vx_w : d_warp;
 
-	(* keep = "true" *) wire [2:0] first_low_rtw =
-		d_rtw[0] ? 3'd0 : d_rtw[1] ? 3'd1 : d_rtw[2] ? 3'd2 : d_rtw[3] ? 3'd3 :
-		d_rtw[4] ? 3'd4 : d_rtw[5] ? 3'd5 : d_rtw[6] ? 3'd6 : d_rtw[7] ? 3'd7 : 3'd0;
+	wire flr_lo_nz = |d_rtw[3:0];
+	wire flr_hi_nz = |d_rtw[7:4];
+	wire [1:0] flr_lo_idx = d_rtw[0] ? 2'd0 : d_rtw[1] ? 2'd1 : d_rtw[2] ? 2'd2 : 2'd3;
+	wire [1:0] flr_hi_idx = d_rtw[4] ? 2'd0 : d_rtw[5] ? 2'd1 : d_rtw[6] ? 2'd2 : 2'd3;
+	(* keep = "true" *) wire [2:0] first_low_rtw = flr_lo_nz ? {1'b0, flr_lo_idx} : (flr_hi_nz ? {1'b1, flr_hi_idx} : 3'd0);
 
+	/* Balanced fanout trees for d_warp_rep (44*WARP_W FFs) and d_q_rep (26*3 FFs) <= 16 loads each */
+	wire warp_ce_raw = (st == S_IDLE) && cand_v;
+	wire q_ce_raw    = (st == S_DRAIN) && ex_ready && d_lastb_w && !qlast;
+	wire [7:0] warp_ce_b;
+	wire [7:0] q_clr_ce_b;
+	wire [8*WARP_W-1:0] cand_b;
+	wire [8:0] q_ce_b;
+	wire [26:0] dq1_b;
+	genvar gdb_i, gdb_j;
+	generate
+		for (gdb_i = 0; gdb_i < 8; gdb_i = gdb_i + 1) begin : g_wrep_buf
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_wce  (.I0(warp_ce_raw), .O(warp_ce_b[gdb_i]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_qcce (.I0(warp_ce_raw), .O(q_clr_ce_b[gdb_i]));
+			for (gdb_j = 0; gdb_j < WARP_W; gdb_j = gdb_j + 1) begin : g_wcb
+				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_wc (.I0(cand[gdb_j]), .O(cand_b[gdb_i*WARP_W + gdb_j]));
+			end
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign warp_ce_b[gdb_i] = warp_ce_raw;
+			assign q_clr_ce_b[gdb_i] = warp_ce_raw;
+			for (gdb_j = 0; gdb_j < WARP_W; gdb_j = gdb_j + 1) begin : g_wcb
+				assign cand_b[gdb_i*WARP_W + gdb_j] = cand[gdb_j];
+			end
+`else
+			assign warp_ce_b[gdb_i]  = warp_ce_raw;
+			assign q_clr_ce_b[gdb_i] = warp_ce_raw;
+			assign cand_b[gdb_i*WARP_W +: WARP_W] = cand;
+`endif
+		end
+		for (gdb_i = 0; gdb_i < 9; gdb_i = gdb_i + 1) begin : g_qrep_buf
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_qce (.I0(q_ce_raw), .O(q_ce_b[gdb_i]));
+			for (gdb_j = 0; gdb_j < 3; gdb_j = gdb_j + 1) begin : g_qdb
+				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_qd (.I0(dq1[gdb_j]), .O(dq1_b[gdb_i*3 + gdb_j]));
+			end
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign q_ce_b[gdb_i] = q_ce_raw;
+			for (gdb_j = 0; gdb_j < 3; gdb_j = gdb_j + 1) begin : g_qdb
+				assign dq1_b[gdb_i*3 + gdb_j] = dq1[gdb_j];
+			end
+`else
+			assign q_ce_b[gdb_i] = q_ce_raw;
+			assign dq1_b[gdb_i*3 +: 3] = dq1;
+`endif
+		end
+	endgenerate
+
+	integer sqi, wri, qri;
 	always @(posedge clk or posedge rst_p) begin
 		if (rst_p) begin
 			frag <= {NWARPS{1'b0}};
 			ended <= {NWARPS{1'b0}};
 			seq <= {(NWARPS*16){1'b0}};
+			seq_eq_r <= {NWARPS{1'b0}};
 			st <= S_IDLE;
 			vx_v <= 1'b0;
 			vx_w <= {WARP_W{1'b0}};
 			d_warp <= {WARP_W{1'b0}};
+			d_warp_seq <= {WARP_W{1'b0}};
 			d_q <= 3'd0;
 			d_warp_rep <= {(44*WARP_W){1'b0}};
 			d_q_rep <= {(26*3){1'b0}};
@@ -156,7 +211,10 @@ module atg_su_exp_drain #(
 			low_rtw_r <= 3'd0;
 			nocol_r <= 1'b1;
 			q_nz_r <= 7'd0;
+			d_lastb_r <= 1'b1;
 		end else begin
+			for (sqi = 0; sqi < NWARPS; sqi = sqi + 1)
+				seq_eq_r[sqi] <= (st == S_IDLE || st == S_RET) && (seq[sqi*16 +: 16] == ex_next);
 			vx_v <= wc_end && !frag[wc_warp];
 			vx_w <= wc_warp;
 			if (wc_end && frag[wc_warp])
@@ -168,11 +226,10 @@ module atg_su_exp_drain #(
 			end
 			case (st)
 			S_IDLE:
-				if (cand_v) begin
-					d_warp <= cand;
+				if (warp_ce_b[0]) begin
+					d_warp <= cand_b[0 +: WARP_W];
+					d_warp_seq <= cand_b[0 +: WARP_W];
 					d_q <= 3'd0;
-					d_warp_rep <= {44{cand}};
-					d_q_rep <= {(26*3){1'b0}};
 					st <= S_FIRST;
 				end
 			S_FIRST: begin
@@ -181,18 +238,20 @@ module atg_su_exp_drain #(
 				nocol_r <= (d_rtw == 8'd0);
 				q_nz_r <= q_nz;
 				d_rt <= first_low_rtw;
+				d_lastb_r <= (d_rtw & (8'hFE << first_low_rtw)) == 8'd0;
 				st <= S_DRAIN;
 			end
 			S_DRAIN:
 				if (ex_ready) begin
-					if (!d_lastb_w)
+					if (!d_lastb_w) begin
 						d_rt <= low_above;
-					else if (qlast)
+						d_lastb_r <= (rtw_r & (8'hFE << low_above)) == 8'd0;
+					end else if (qlast)
 						st <= S_RET;
 					else begin
-						d_q <= dq1;
-						d_q_rep <= {26{dq1}};
+						d_q <= dq1_b[0 +: 3];
 						d_rt <= low_rtw_r;
+						d_lastb_r <= (rtw_r & (8'hFE << low_rtw_r)) == 8'd0;
 					end
 				end
 			default:	/* S_RET: the release (after a vertex warp's of this cycle) */
@@ -202,6 +261,14 @@ module atg_su_exp_drain #(
 					st <= S_IDLE;
 				end
 			endcase
+			for (wri = 0; wri < 44; wri = wri + 1)
+				if (warp_ce_b[wri / 6])
+					d_warp_rep[wri*WARP_W +: WARP_W] <= cand_b[(wri / 6)*WARP_W +: WARP_W];
+			for (qri = 0; qri < 26; qri = qri + 1)
+				if (q_clr_ce_b[qri / 4])
+					d_q_rep[qri*3 +: 3] <= 3'd0;
+				else if (q_ce_b[qri / 3])
+					d_q_rep[qri*3 +: 3] <= dq1_b[(qri / 3)*3 +: 3];
 		end
 	end
 endmodule

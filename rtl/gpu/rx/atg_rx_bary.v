@@ -76,11 +76,43 @@ module atg_rx_bary (
 	wire [31:0] fi_comb [0:3];
 	wire [31:0] fj_comb [0:3];
 
+	wire pl_we_root = !rst_sync && (st == S_IDLE) && (i_start || i_dz);
+	wire [1:0] pl_we_mid;
+`ifdef SYNTH_KINTEX7
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_plm0 (.I0(pl_we_root), .O(pl_we_mid[0]));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_plm1 (.I0(pl_we_root), .O(pl_we_mid[1]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign pl_we_mid[0] = pl_we_root;
+	assign pl_we_mid[1] = pl_we_root;
+`else
+	assign pl_we_mid = {2{pl_we_root}};
+`endif
+	wire idle_start_root = !rst_sync && (st == S_IDLE) && i_start;
+	wire prep0_root      = !rst_sync && (st == S_PREP0);
+	wire prep1_root      = !rst_sync && (st == S_PREP1);
+	wire prep2_root      = !rst_sync && (st == S_PREP2) && (c == 6'd5);
+	wire [1:0] prep2_mid;
+`ifdef SYNTH_KINTEX7
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_p2m0 (.I0(prep2_root), .O(prep2_mid[0]));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_p2m1 (.I0(prep2_root), .O(prep2_mid[1]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign prep2_mid[0] = prep2_root;
+	assign prep2_mid[1] = prep2_root;
+`else
+	assign prep2_mid = {2{prep2_root}};
+`endif
+
 	genvar gl, gs, gh, gp;
 	generate
 	for (gs = 0; gs < 24; gs = gs + 1) begin : g_pl_reg
-		wire pl_we_raw = !rst_sync && (st == S_IDLE) && (i_start || i_dz);
-		wire pl_we_s = pl_we_raw;
+		wire pl_we_s;
+`ifdef SYNTH_KINTEX7
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_plw (.I0(pl_we_mid[gs / 12]), .O(pl_we_s));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign pl_we_s = pl_we_mid[gs / 12];
+`else
+		assign pl_we_s = pl_we_mid[gs / 12];
+`endif
 		always @(posedge clk) begin
 			if (pl_we_s)
 				r_pl[16 * gs +: 16] <= i_pl[16 * gs +: 16];
@@ -88,11 +120,23 @@ module atg_rx_bary (
 	end
 
 	for (gl = 0; gl < 4; gl = gl + 1) begin : g_coord
-		wire idle_start_raw = !rst_sync && (st == S_IDLE) && i_start;
-		wire we_qx  = idle_start_raw;
-		wire we_qy  = idle_start_raw;
-		wire we_bx0 = idle_start_raw;
-		wire we_by0 = idle_start_raw;
+		wire we_qx, we_qy, we_bx0, we_by0;
+`ifdef SYNTH_KINTEX7
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wqx  (.I0(idle_start_root), .O(we_qx));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wqy  (.I0(idle_start_root), .O(we_qy));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wbx0 (.I0(idle_start_root), .O(we_bx0));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wby0 (.I0(idle_start_root), .O(we_by0));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign we_qx = idle_start_root;
+		assign we_qy = idle_start_root;
+		assign we_bx0 = idle_start_root;
+		assign we_by0 = idle_start_root;
+`else
+		assign we_qx  = idle_start_root;
+		assign we_qy  = idle_start_root;
+		assign we_bx0 = idle_start_root;
+		assign we_by0 = idle_start_root;
+`endif
 
 		always @(posedge clk) begin
 			if (we_qx)  r_qx_l[gl]  <= i_qx;
@@ -141,22 +185,43 @@ module atg_rx_bary (
 		atg_rx_fix2f_pipe #(.W(21), .F(3), .SIGNED(1)) u_fi (.clk(clk), .rst_n(rst_n), .i_v(r_i8[gl]), .o_f(fi_comb[gl]));
 		atg_rx_fix2f_pipe #(.W(21), .F(3), .SIGNED(1)) u_fj (.clk(clk), .rst_n(rst_n), .i_v(r_j8[gl]), .o_f(fj_comb[gl]));
 
-		wire prep0_raw = !rst_sync && (st == S_PREP0);
-		wire prep1_raw = !rst_sync && (st == S_PREP1);
-		wire prep2_raw = !rst_sync && (st == S_PREP2) && (c == 6'd5);
 		wire we_di_lo, we_dj_lo, we_didj_hi;
 		wire we_i8_lo, we_j8_lo, we_i8j8_hi;
 		wire we_fi_lo, we_fi_hi, we_fj_lo, we_fj_hi;
-		assign we_di_lo   = prep0_raw;
-		assign we_dj_lo   = prep0_raw;
-		assign we_didj_hi = prep0_raw;
-		assign we_i8_lo   = prep1_raw;
-		assign we_j8_lo   = prep1_raw;
-		assign we_i8j8_hi = prep1_raw;
-		assign we_fi_lo   = prep2_raw;
-		assign we_fi_hi   = prep2_raw;
-		assign we_fj_lo   = prep2_raw;
-		assign we_fj_hi   = prep2_raw;
+`ifdef SYNTH_KINTEX7
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wdil (.I0(prep0_root), .O(we_di_lo));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wdjl (.I0(prep0_root), .O(we_dj_lo));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wdjh (.I0(prep0_root), .O(we_didj_hi));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wi8l (.I0(prep1_root), .O(we_i8_lo));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wj8l (.I0(prep1_root), .O(we_j8_lo));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wi8h (.I0(prep1_root), .O(we_i8j8_hi));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wfil (.I0(prep2_mid[gl / 2]), .O(we_fi_lo));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wfih (.I0(prep2_mid[gl / 2]), .O(we_fi_hi));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wfjl (.I0(prep2_mid[gl / 2]), .O(we_fj_lo));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wfjh (.I0(prep2_mid[gl / 2]), .O(we_fj_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign we_di_lo = prep0_root;
+		assign we_dj_lo = prep0_root;
+		assign we_didj_hi = prep0_root;
+		assign we_i8_lo = prep1_root;
+		assign we_j8_lo = prep1_root;
+		assign we_i8j8_hi = prep1_root;
+		assign we_fi_lo = prep2_mid[gl / 2];
+		assign we_fi_hi = prep2_mid[gl / 2];
+		assign we_fj_lo = prep2_mid[gl / 2];
+		assign we_fj_hi = prep2_mid[gl / 2];
+`else
+		assign we_di_lo   = prep0_root;
+		assign we_dj_lo   = prep0_root;
+		assign we_didj_hi = prep0_root;
+		assign we_i8_lo   = prep1_root;
+		assign we_j8_lo   = prep1_root;
+		assign we_i8j8_hi = prep1_root;
+		assign we_fi_lo   = prep2_mid[gl / 2];
+		assign we_fi_hi   = prep2_mid[gl / 2];
+		assign we_fj_lo   = prep2_mid[gl / 2];
+		assign we_fj_hi   = prep2_mid[gl / 2];
+`endif
 
 		always @(posedge clk) begin
 			if (we_di_lo) r_di[gl][15:0] <= di_comb[gl][15:0];
@@ -240,18 +305,28 @@ module atg_rx_bary (
 	wire [31:0] fa2_r [0:3];
 
 	/* Pre-computed multiplier & adder inputs (registered 1 cycle ahead for 0-LUT input to fmul/fadd) */
-	wire fm_v_nxt = !rst_sync && (
+	wire fm_v_nxt =
 		(st == S_PL && c < 6'd8) ||
 		(st == S_BC && c < 6'd2) ||
-		(st == S_DZ && c < 6'd2));
-	wire fa1_v_nxt = !rst_sync && (
+		(st == S_DZ && c < 6'd2);
+	wire fa1_v_nxt =
 		(st == S_PL && (c == 6'd6 || c == 6'd8 || c == 6'd10 || c == 6'd12)) ||
 		(st == S_BC && c == 6'd5) ||
-		(st == S_DZ && c == 6'd6));
-	wire fa2_v_nxt = !rst_sync && (
+		(st == S_DZ && c == 6'd6);
+	wire fa2_v_nxt =
 		(st == S_PL && (c == 6'd11 || c == 6'd13 || c == 6'd15 || c == 6'd17)) ||
-		(st == S_BC && c == 6'd10));
+		(st == S_BC && c == 6'd10);
 	wire is_bc_raw = (st == S_BC);
+	wire [1:0] is_bc_mid;
+`ifdef SYNTH_KINTEX7
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_bcm0 (.I0(is_bc_raw), .O(is_bc_mid[0]));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_bcm1 (.I0(is_bc_raw), .O(is_bc_mid[1]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign is_bc_mid[0] = is_bc_raw;
+	assign is_bc_mid[1] = is_bc_raw;
+`else
+	assign is_bc_mid = {2{is_bc_raw}};
+`endif
 
 	generate
 	for (gl = 0; gl < 4; gl = gl + 1) begin : g_fp_units
@@ -263,26 +338,76 @@ module atg_rx_bary (
 		wire [31:0] ds_nxt = fa1_r[gl];
 `endif
 
-		wire is_bc_l = is_bc_raw;
-		wire c0_l    = c[0];
-		wire c1_l    = c[1];
-		wire c2_l    = c[2];
+		wire is_bc_l = is_bc_mid[gl / 2];
 
 		for (gh = 0; gh < 2; gh = gh + 1) begin : g_half
-			wire is_pl_raw_h = (st == S_PL);
-			wire pl_c0_raw_h = (st == S_PL) && c[0];
-			wire dz_c0_raw_h = (st != S_PL) && (st != S_BC) && c[0];
-			wire is_pl_fmb = is_pl_raw_h;
-			wire is_bc_fma = is_bc_l;
-			wire is_bc_fmb = is_bc_l;
-			wire is_bc_fa1 = is_bc_l;
-			wire c0_fma    = c0_l;
-			wire c1_a      = c1_l;
-			wire c2_a      = c2_l;
-			wire c1_b      = c1_l;
-			wire c2_b      = c2_l;
-			wire pl_c0_fmb = pl_c0_raw_h;
-			wire dz_c0_fmb = dz_c0_raw_h;
+			wire is_pl_raw_h;
+			wire is_pl_fmb_lo, is_pl_fmb_hi, is_pl_v, nr_h;
+			wire is_bc_fma, is_bc_fmb, is_bc_fa1, fa2b_bc_s;
+			wire c0_fma, c1_a, c2_a, c1_b, c2_b;
+			wire pl_c0_fmb_lo, pl_c0_fmb_hi;
+			wire dz_c0_fmb_raw, dz_c0_fmb_lo, dz_c0_fmb_hi;
+`ifdef SYNTH_KINTEX7
+			(* keep = "true", dont_touch = "true" *) LUT3 #(.INIT(8'h08)) u_plraw (.I0(st[0]), .I1(st[1]), .I2(st[2]), .O(is_pl_raw_h));
+			(* keep = "true", dont_touch = "true" *) LUT3 #(.INIT(8'h10)) u_dzfmb (.I0(is_pl_raw_h), .I1(is_bc_l), .I2(c[0]), .O(dz_c0_fmb_raw));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_dzfmbl   (.I0(dz_c0_fmb_raw), .O(dz_c0_fmb_lo));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_dzfmbh   (.I0(dz_c0_fmb_raw), .O(dz_c0_fmb_hi));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_bc_fma   (.I0(is_bc_l),     .O(is_bc_fma));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_bc_fmb   (.I0(is_bc_l),     .O(is_bc_fmb));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_bc_fa1   (.I0(is_bc_l),     .O(is_bc_fa1));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_bc_fa2b  (.I0(is_bc_l),     .O(fa2b_bc_s));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_pl_fmbl  (.I0(is_pl_raw_h), .O(is_pl_fmb_lo));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_pl_fmbh  (.I0(is_pl_raw_h), .O(is_pl_fmb_hi));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_pl_v     (.I0(is_pl_raw_h), .O(is_pl_v));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h1)) u_nr_h     (.I0(rst_sync),    .O(nr_h));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_c0fma    (.I0(c[0]),        .O(c0_fma));
+			(* keep = "true", dont_touch = "true" *) LUT2 #(.INIT(4'h8)) u_plc0l    (.I0(is_pl_raw_h), .I1(c[0]), .O(pl_c0_fmb_lo));
+			(* keep = "true", dont_touch = "true" *) LUT2 #(.INIT(4'h8)) u_plc0h    (.I0(is_pl_raw_h), .I1(c[0]), .O(pl_c0_fmb_hi));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_c1a      (.I0(c[1]),        .O(c1_a));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_c2a      (.I0(c[2]),        .O(c2_a));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_c1b      (.I0(c[1]),        .O(c1_b));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_c2b      (.I0(c[2]),        .O(c2_b));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			(* keep = "true", dont_touch = "true" *) LUT3 #(.INIT(8'h08)) u_plraw (.I0(st[0]), .I1(st[1]), .I2(st[2]), .O(is_pl_raw_h));
+			(* keep = "true", dont_touch = "true" *) LUT3 #(.INIT(8'h10)) u_dzfmb (.I0(is_pl_raw_h), .I1(is_bc_l), .I2(c[0]), .O(dz_c0_fmb_raw));
+			assign dz_c0_fmb_lo = dz_c0_fmb_raw;
+			assign dz_c0_fmb_hi = dz_c0_fmb_raw;
+			assign is_bc_fma = is_bc_l;
+			assign is_bc_fmb = is_bc_l;
+			assign is_bc_fa1 = is_bc_l;
+			assign fa2b_bc_s = is_bc_l;
+			assign is_pl_fmb_lo = is_pl_raw_h;
+			assign is_pl_fmb_hi = is_pl_raw_h;
+			assign is_pl_v = is_pl_raw_h;
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h1)) u_nr_h     (.I0(rst_sync),    .O(nr_h));
+			assign c0_fma = c[0];
+			(* keep = "true", dont_touch = "true" *) LUT2 #(.INIT(4'h8)) u_plc0l    (.I0(is_pl_raw_h), .I1(c[0]), .O(pl_c0_fmb_lo));
+			(* keep = "true", dont_touch = "true" *) LUT2 #(.INIT(4'h8)) u_plc0h    (.I0(is_pl_raw_h), .I1(c[0]), .O(pl_c0_fmb_hi));
+			assign c1_a = c[1];
+			assign c2_a = c[2];
+			assign c1_b = c[1];
+			assign c2_b = c[2];
+`else
+			assign is_pl_raw_h  = (st == S_PL);
+			assign dz_c0_fmb_raw= !is_pl_raw_h && !is_bc_l && c[0];
+			assign dz_c0_fmb_lo = dz_c0_fmb_raw;
+			assign dz_c0_fmb_hi = dz_c0_fmb_raw;
+			assign is_bc_fma    = is_bc_l;
+			assign is_bc_fmb    = is_bc_l;
+			assign is_bc_fa1    = is_bc_l;
+			assign fa2b_bc_s    = is_bc_l;
+			assign is_pl_fmb_lo = is_pl_raw_h;
+			assign is_pl_fmb_hi = is_pl_raw_h;
+			assign is_pl_v      = is_pl_raw_h;
+			assign nr_h         = !rst_sync;
+			assign c0_fma       = c[0];
+			assign pl_c0_fmb_lo = is_pl_raw_h && c[0];
+			assign pl_c0_fmb_hi = is_pl_raw_h && c[0];
+			assign c1_a         = c[1];
+			assign c2_a         = c[2];
+			assign c1_b         = c[1];
+			assign c2_b         = c[2];
+`endif
 
 			(* keep = "true" *) wire [15:0] cur_pl_a_s = c2_a ?
 				(c1_a ? pl_a[3][16 * gh +: 16] : pl_a[2][16 * gh +: 16]) :
@@ -293,35 +418,74 @@ module atg_rx_bary (
 
 			wire [15:0] fm_a_s = is_bc_fma ? (c0_fma ? v[3][gl][16 * gh +: 16] : v[2][gl][16 * gh +: 16]) :
 				(c0_fma ? cur_pl_b_s : cur_pl_a_s);
-			wire [15:0] fm_b_s = is_pl_fmb ? (pl_c0_fmb ? r_fj[gl][16 * gh +: 16] : r_fi[gl][16 * gh +: 16]) :
-				(is_bc_fmb ? rw[gl][16 * gh +: 16] :
-				(dz_c0_fmb ? sdy_c[16 * gh +: 16] : sdx_c[16 * gh +: 16]));
+			wire [15:0] fm_b_s = {
+				is_pl_fmb_hi ? (pl_c0_fmb_hi ? r_fj[gl][16 * gh + 8 +: 8] : r_fi[gl][16 * gh + 8 +: 8]) :
+					(is_bc_fmb ? rw[gl][16 * gh + 8 +: 8] : (dz_c0_fmb_hi ? sdy_c[16 * gh + 8 +: 8] : sdx_c[16 * gh + 8 +: 8])),
+				is_pl_fmb_lo ? (pl_c0_fmb_lo ? r_fj[gl][16 * gh +: 8]     : r_fi[gl][16 * gh +: 8]) :
+					(is_bc_fmb ? rw[gl][16 * gh +: 8]     : (dz_c0_fmb_lo ? sdy_c[16 * gh +: 8]     : sdx_c[16 * gh +: 8]))
+			};
 			wire [15:0] fa1_a_s = is_bc_fa1 ? ONE[16 * gh +: 16] : r_t1_curr[gl][16 * gh +: 16];
 
-			wire we_t1_s = !rst_sync && (
-				(st == S_PL && (c == 6'd5 || c == 6'd7 || c == 6'd9 || c == 6'd11)) ||
+			wire we_t1_raw = nr_h && (
+				(is_pl_v && (c == 6'd5 || c == 6'd7 || c == 6'd9 || c == 6'd11)) ||
 				(st == S_DZ && c == 6'd5));
-			wire we_fa2b_s = !rst_sync && (
-				(st == S_PL && (c == 6'd11 || c == 6'd13 || c == 6'd15 || c == 6'd17)) ||
+			wire we_fa2b_raw = nr_h && (
+				(is_pl_v && (c == 6'd11 || c == 6'd13 || c == 6'd15 || c == 6'd17)) ||
 				(st == S_BC && c == 6'd9));
 			wire fa2b_c0_raw = (c == 6'd11);
 			wire fa2b_c1_raw = (c == 6'd13);
 			wire fa2b_c2_raw = (c == 6'd15);
-			wire fa2b_bc_s = is_bc_l;
-			wire fa2b_c0_s = fa2b_c0_raw;
-			wire fa2b_c1_s = fa2b_c1_raw;
-			wire fa2b_c2_s = fa2b_c2_raw;
+			wire fa2b_c0_s, fa2b_c1_s, fa2b_c2_s;
+`ifdef SYNTH_KINTEX7
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_fbc0 (.I0(fa2b_c0_raw), .O(fa2b_c0_s));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_fbc1 (.I0(fa2b_c1_raw), .O(fa2b_c1_s));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_fbc2 (.I0(fa2b_c2_raw), .O(fa2b_c2_s));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign fa2b_c0_s = fa2b_c0_raw;
+			assign fa2b_c1_s = fa2b_c1_raw;
+			assign fa2b_c2_s = fa2b_c2_raw;
+`else
+			assign fa2b_c0_s = fa2b_c0_raw;
+			assign fa2b_c1_s = fa2b_c1_raw;
+			assign fa2b_c2_s = fa2b_c2_raw;
+`endif
 
 			wire [15:0] fa2b_plc_s = fa2b_c0_s ? pl_c[0][16 * gh +: 16] :
 				fa2b_c1_s ? pl_c[1][16 * gh +: 16] :
 				fa2b_c2_s ? pl_c[2][16 * gh +: 16] : pl_c[3][16 * gh +: 16];
 			wire [15:0] fa2b_nxt_s = fa2b_bc_s ? b1[gl][16 * gh +: 16] : fa2b_plc_s;
 
-			wire we_rw_s = !rst_sync && (st == S_DIV) && fd_done[0];
-			wire we_b0_s = !rst_sync && (st == S_BC) && (c == 6'd5);
-			wire we_b1_s = !rst_sync && (st == S_BC) && (c == 6'd6);
-			wire we_b2_s = !rst_sync && (st == S_BC) && (c == 6'd15);
-			wire we_ds_s = !rst_sync && (st == S_DZ) && (c == 6'd11);
+			wire we_rw_raw = nr_h && (st == S_DIV) && fd_done[0];
+			wire we_b0_raw = nr_h && (st == S_BC) && (c == 6'd5);
+			wire we_b1_raw = nr_h && (st == S_BC) && (c == 6'd6);
+			wire we_b2_raw = nr_h && (st == S_BC) && (c == 6'd15);
+			wire we_ds_raw = nr_h && (st == S_DZ) && (c == 6'd11);
+			wire we_t1_s, we_fa2b_s, we_rw_s, we_b0_s, we_b1_s, we_b2_s, we_ds_s;
+`ifdef SYNTH_KINTEX7
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wt1   (.I0(we_t1_raw),   .O(we_t1_s));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wfa2b (.I0(we_fa2b_raw), .O(we_fa2b_s));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wrw   (.I0(we_rw_raw),   .O(we_rw_s));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wb0   (.I0(we_b0_raw),   .O(we_b0_s));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wb1   (.I0(we_b1_raw),   .O(we_b1_s));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wb2   (.I0(we_b2_raw),   .O(we_b2_s));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wds   (.I0(we_ds_raw),   .O(we_ds_s));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign we_t1_s = we_t1_raw;
+			assign we_fa2b_s = we_fa2b_raw;
+			assign we_rw_s = we_rw_raw;
+			assign we_b0_s = we_b0_raw;
+			assign we_b1_s = we_b1_raw;
+			assign we_b2_s = we_b2_raw;
+			assign we_ds_s = we_ds_raw;
+`else
+			assign we_t1_s   = we_t1_raw;
+			assign we_fa2b_s = we_fa2b_raw;
+			assign we_rw_s   = we_rw_raw;
+			assign we_b0_s   = we_b0_raw;
+			assign we_b1_s   = we_b1_raw;
+			assign we_b2_s   = we_b2_raw;
+			assign we_ds_s   = we_ds_raw;
+`endif
 
 			always @(posedge clk) begin
 				r_fm_a[gl][16 * gh +: 16]  <= fm_a_s;
@@ -340,7 +504,15 @@ module atg_rx_bary (
 
 			for (gp = 0; gp < 4; gp = gp + 1) begin : g_v_plane
 				localparam [5:0] V_CYC = 6'd16 + 2 * gp;
-				wire we_v_s = !rst_sync && (st == S_PL) && (c == V_CYC);
+				wire we_v_raw = nr_h && is_pl_v && (c == V_CYC);
+				wire we_v_s;
+`ifdef SYNTH_KINTEX7
+				(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_wv (.I0(we_v_raw), .O(we_v_s));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				assign we_v_s = we_v_raw;
+`else
+				assign we_v_s = we_v_raw;
+`endif
 				always @(posedge clk) begin
 					if (we_v_s)
 						v[gp][gl][16 * gh +: 16] <= fa2_r[gl][16 * gh +: 16];
@@ -364,19 +536,19 @@ module atg_rx_bary (
 			end
 		end
 
-		am_fp_mul #(.LAT(4)) u_fmul (
+		atg_rx_fmul #(.LAT(4)) u_fmul (
 			.clk(clk), .rst_n(rst_n),
 			.i_valid(r_fm_v[gl]), .i_a(r_fm_a[gl]), .i_b(r_fm_b[gl]),
 			.o_valid(fm_o[gl]), .o_r(fm_r[gl])
 		);
 
-		am_fp_add #(.LAT(4)) u_fadd1 (
+		atg_rx_fadd #(.LAT(4)) u_fadd1 (
 			.clk(clk), .rst_n(rst_n),
 			.i_valid(r_fa1_v[gl]), .i_a(r_fa1_a[gl]), .i_b(r_fa1_b[gl]),
 			.i_sub(r_fa1_sub[gl]), .o_valid(fa1_o[gl]), .o_r(fa1_r[gl])
 		);
 
-		am_fp_add #(.LAT(4)) u_fadd2 (
+		atg_rx_fadd #(.LAT(4)) u_fadd2 (
 			.clk(clk), .rst_n(rst_n),
 			.i_valid(r_fa2_v[gl]), .i_a(r_fa2_a[gl]), .i_b(r_fa2_b[gl]),
 			.i_sub(r_fa2_sub[gl]), .o_valid(fa2_o[gl]), .o_r(fa2_r[gl])
@@ -386,7 +558,7 @@ module atg_rx_bary (
 
 	generate
 	for (gl = 0; gl < 4; gl = gl + 1) begin : g_fdiv
-		am_fp_div u_fdiv (
+		atg_rx_fdiv u_fdiv (
 			.clk(clk), .rst_n(rst_n),
 			.i_start(div_start), .i_a(ONE), .i_b(v[1][gl]),
 			.busy(fd_busy[gl]), .o_done(fd_done[gl]), .o_r(fd_r[gl])

@@ -109,7 +109,7 @@ module atg_rop_ds #(
 	reg [31:0] ds_base, bmin, bmax;
 	(* keep = "true", dont_touch = "true" *) reg [31:0] ds_stride_mul, ds_stride_add;
 	reg [9:0] depth;
-	(* keep = "true", dont_touch = "true" *) reg [7:0] depth_d24_rep;
+	(* keep = "true", dont_touch = "true" *) reg [9:0] depth_d24_rep;
 	(* keep = "true", equivalent_register_removal = "no" *) reg [10:0] d16_buf;
 	reg [26:0] sfront, sback;
 	reg [24:0] sops;
@@ -127,9 +127,9 @@ module atg_rop_ds #(
 	wire we_depth_raw  = st_we && (st_idx == GHCI_S_DEPTH);
 	wire we_ms_raw     = st_we && (st_idx == GHCI_S_MS_CTRL);
 
-	wire [1:0] we_sfront_b, we_sback_b, we_sops_b, we_bmin_b, we_bmax_b, we_base_b;
+	wire [1:0] we_sfront_b, we_sback_b, we_sops_b, we_bmin_b, we_bmax_b, we_base_b, we_depth_b;
 	wire [3:0] we_dbg_b, we_stride_b;
-	wire we_depth_b, we_ms_b;
+	wire we_ms_b;
 	genvar g_st_b;
 	generate
 	for (g_st_b = 0; g_st_b < 2; g_st_b = g_st_b + 1) begin : g_st_we2
@@ -145,7 +145,8 @@ module atg_rop_ds #(
 		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_st (.I0(we_stride_raw), .O(we_stride_b[g_st_b]));
 	end
 	endgenerate
-	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_dp (.I0(we_depth_raw), .O(we_depth_b));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_dp0 (.I0(we_depth_raw), .O(we_depth_b[0]));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_dp1 (.I0(we_depth_raw), .O(we_depth_b[1]));
 	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_ms (.I0(we_ms_raw),    .O(we_ms_b));
 
 	always @(posedge clk or posedge rst_sync) begin
@@ -157,7 +158,7 @@ module atg_rop_ds #(
 			ds_stride_mul <= 32'd0;
 			ds_stride_add <= 32'd0;
 			depth <= 10'd0;
-			depth_d24_rep <= 8'd0;
+			depth_d24_rep <= 10'd0;
 			d16_buf <= 11'd0;
 			sfront <= 27'd0;
 			sback <= 27'd0;
@@ -185,10 +186,96 @@ module atg_rop_ds #(
 			if (we_stride_b[1]) ds_stride_mul[31:16] <= st_wdata[31:16];
 			if (we_stride_b[2]) ds_stride_add[15:0]  <= st_wdata[15:0];
 			if (we_stride_b[3]) ds_stride_add[31:16] <= st_wdata[31:16];
-			if (we_depth_b) begin
+			if (we_depth_b[0]) begin
 				depth <= st_wdata[9:0];
-				depth_d24_rep <= {8{st_wdata[7:5] == 3'b001}};
-				d16_buf <= {11{st_wdata[7:5] == 3'b100}};
+				d16_buf[5:0] <= {6{st_wdata[7:5] == 3'b100}};
+			end
+			if (we_depth_b[1]) begin
+				depth_d24_rep <= {10{st_wdata[7:5] == 3'b001}};
+				d16_buf[10:6] <= {5{st_wdata[7:5] == 3'b100}};
+			end
+			if (we_ms_b)
+				ms4_rep <= {3{st_wdata[3:0] == 4'd2}};
+		end
+	end
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire we_sfront_raw = st_we && (st_idx == GHCI_S_STENCIL_FRONT);
+	wire we_sback_raw  = st_we && (st_idx == GHCI_S_STENCIL_BACK);
+	wire we_sops_raw   = st_we && (st_idx == GHCI_S_STENCIL_OPS);
+	wire we_bmin_raw   = st_we && (st_idx == GHCI_S_DEPTH_BOUNDS_MIN);
+	wire we_bmax_raw   = st_we && (st_idx == GHCI_S_DEPTH_BOUNDS_MAX);
+	wire we_dbg_raw    = st_we && (st_idx == GHCI_S_DEBUG_COLOR);
+	wire we_base_raw   = st_we && (st_idx == GHCI_S_DS_BASE);
+	wire we_stride_raw = st_we && (st_idx == GHCI_S_DS_STRIDE);
+	wire we_depth_raw  = st_we && (st_idx == GHCI_S_DEPTH);
+	wire we_ms_raw     = st_we && (st_idx == GHCI_S_MS_CTRL);
+
+	wire [1:0] we_sfront_b, we_sback_b, we_sops_b, we_bmin_b, we_bmax_b, we_base_b, we_depth_b;
+	wire [3:0] we_dbg_b, we_stride_b;
+	wire we_ms_b;
+	genvar g_st_b;
+	generate
+	for (g_st_b = 0; g_st_b < 2; g_st_b = g_st_b + 1) begin : g_st_we2
+		assign we_sfront_b[g_st_b] = we_sfront_raw;
+		assign we_sback_b[g_st_b] = we_sback_raw;
+		assign we_sops_b[g_st_b] = we_sops_raw;
+		assign we_bmin_b[g_st_b] = we_bmin_raw;
+		assign we_bmax_b[g_st_b] = we_bmax_raw;
+		assign we_base_b[g_st_b] = we_base_raw;
+	end
+	for (g_st_b = 0; g_st_b < 4; g_st_b = g_st_b + 1) begin : g_st_we4
+		assign we_dbg_b[g_st_b] = we_dbg_raw;
+		assign we_stride_b[g_st_b] = we_stride_raw;
+	end
+	endgenerate
+	assign we_depth_b[0] = we_depth_raw;
+	assign we_depth_b[1] = we_depth_raw;
+	assign we_ms_b = we_ms_raw;
+
+	always @(posedge clk or posedge rst_sync) begin
+		if (rst_sync) begin
+			ms4_rep <= 3'd0;
+			dbg_color_lo <= 32'd0;
+			dbg_color_hi <= 32'd0;
+			ds_base <= 32'd0;
+			ds_stride_mul <= 32'd0;
+			ds_stride_add <= 32'd0;
+			depth <= 10'd0;
+			depth_d24_rep <= 10'd0;
+			d16_buf <= 11'd0;
+			sfront <= 27'd0;
+			sback <= 27'd0;
+			sops <= 25'd0;
+			bmin <= 32'd0;
+			bmax <= 32'd0;
+		end else begin
+			if (we_sfront_b[0]) sfront[13:0]  <= st_wdata[13:0];
+			if (we_sfront_b[1]) sfront[26:14] <= st_wdata[26:14];
+			if (we_sback_b[0])  sback[13:0]   <= st_wdata[13:0];
+			if (we_sback_b[1])  sback[26:14]  <= st_wdata[26:14];
+			if (we_sops_b[0])   sops[12:0]    <= st_wdata[12:0];
+			if (we_sops_b[1])   sops[24:13]   <= st_wdata[24:13];
+			if (we_bmin_b[0])   bmin[15:0]    <= st_wdata[15:0];
+			if (we_bmin_b[1])   bmin[31:16]   <= st_wdata[31:16];
+			if (we_bmax_b[0])   bmax[15:0]    <= st_wdata[15:0];
+			if (we_bmax_b[1])   bmax[31:16]   <= st_wdata[31:16];
+			if (we_dbg_b[0])    dbg_color_lo[15:0]  <= st_wdata[15:0];
+			if (we_dbg_b[1])    dbg_color_lo[31:16] <= st_wdata[31:16];
+			if (we_dbg_b[2])    dbg_color_hi[15:0]  <= st_wdata[15:0];
+			if (we_dbg_b[3])    dbg_color_hi[31:16] <= st_wdata[31:16];
+			if (we_base_b[0])   ds_base[15:0]  <= st_wdata[15:0];
+			if (we_base_b[1])   ds_base[31:16] <= st_wdata[31:16];
+			if (we_stride_b[0]) ds_stride_mul[15:0]  <= st_wdata[15:0];
+			if (we_stride_b[1]) ds_stride_mul[31:16] <= st_wdata[31:16];
+			if (we_stride_b[2]) ds_stride_add[15:0]  <= st_wdata[15:0];
+			if (we_stride_b[3]) ds_stride_add[31:16] <= st_wdata[31:16];
+			if (we_depth_b[0]) begin
+				depth <= st_wdata[9:0];
+				d16_buf[5:0] <= {6{st_wdata[7:5] == 3'b100}};
+			end
+			if (we_depth_b[1]) begin
+				depth_d24_rep <= {10{st_wdata[7:5] == 3'b001}};
+				d16_buf[10:6] <= {5{st_wdata[7:5] == 3'b100}};
 			end
 			if (we_ms_b)
 				ms4_rep <= {3{st_wdata[3:0] == 4'd2}};
@@ -204,7 +291,7 @@ module atg_rop_ds #(
 			ds_stride_mul <= 32'd0;
 			ds_stride_add <= 32'd0;
 			depth <= 10'd0;
-			depth_d24_rep <= 8'd0;
+			depth_d24_rep <= 10'd0;
 			d16_buf <= 11'd0;
 			sfront <= 27'd0;
 			sback <= 27'd0;
@@ -234,7 +321,7 @@ module atg_rop_ds #(
 			end
 			if (st_idx == GHCI_S_DEPTH) begin
 				depth <= st_wdata[9:0];
-				depth_d24_rep <= {8{st_wdata[7:5] == 3'b001}};
+				depth_d24_rep <= {10{st_wdata[7:5] == 3'b001}};
 				d16_buf <= {11{st_wdata[7:5] == 3'b100}};
 			end
 			if (st_idx == GHCI_S_MS_CTRL)
@@ -245,11 +332,12 @@ module atg_rop_ds #(
 	wire one_fmt = depth[7:5] == 3'b001 || depth[7:5] == 3'b010 || d16_buf[4];
 	wire test = one_fmt && (depth[0] || (depth[8] && depth[7:5] == 3'b001) || depth[9]);
 
-	localparam [3:0] S_IDLE = 4'd0, S_ROW_SETUP = 4'd1, S_ROW = 4'd2, S_RD = 4'd3,
-		S_TEST0 = 4'd4, S_TEST0A = 4'd13, S_TEST0B = 4'd10, S_TEST1 = 4'd5,
-		S_TEST2 = 4'd6, S_TEST2B = 4'd14, S_TEST3 = 4'd7,
-		S_WR = 4'd8, S_OUT = 4'd9, S_ROW_SETUP1 = 4'd11, S_ROW_SETUP2 = 4'd12;
-	(* max_fanout = 16 *) reg [3:0] st;
+	localparam [4:0] S_IDLE = 5'd0, S_ROW_SETUP = 5'd1, S_ROW = 5'd2, S_RD = 5'd3,
+		S_TEST0 = 5'd4, S_TEST0A = 5'd13, S_TEST0B = 5'd10, S_TEST1 = 5'd5,
+		S_TEST2 = 5'd6, S_TEST2B = 5'd14, S_TEST3 = 5'd7,
+		S_WR = 5'd8, S_OUT = 5'd9, S_ROW_SETUP1 = 5'd11, S_ROW_SETUP2 = 5'd12,
+		S_TEST_PRE = 5'd15, S_ROW_SETUP3 = 5'd16, S_ROW_SETUP4 = 5'd18;
+	(* max_fanout = 16 *) reg [4:0] st;
 	(* keep = "true", dont_touch = "true" *) reg [4:0] r_rep;	/* row */
 	(* keep = "true", dont_touch = "true" *) reg [31:0] ds_xy_int;
 	reg [2:0] e;	/* entry of the row: {lane of the row, sample} */
@@ -293,6 +381,19 @@ module atg_rop_ds #(
 		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_sb1 (.I0(sb[1]), .O(sb_buf[g_sb][1]));
 		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_sb2 (.I0(sb[2]), .O(sb_buf[g_sb][2]));
 		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_sb3 (.I0(sb[3]), .O(sb_buf[g_sb][3]));
+		assign zl[4 * g_sb +: 4] = z[32 * sb_buf[g_sb] + 4 * g_sb +: 4];
+	end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [3:0] sb_buf [0:7];
+	wire [31:0] zl;
+	genvar g_sb;
+	generate
+	for (g_sb = 0; g_sb < 8; g_sb = g_sb + 1) begin : g_buf_sb
+		assign sb_buf[g_sb][0] = sb[0];
+		assign sb_buf[g_sb][1] = sb[1];
+		assign sb_buf[g_sb][2] = sb[2];
+		assign sb_buf[g_sb][3] = sb[3];
 		assign zl[4 * g_sb +: 4] = z[32 * sb_buf[g_sb] + 4 * g_sb +: 4];
 	end
 	endgenerate
@@ -380,41 +481,31 @@ module atg_rop_ds #(
 		depth_d24_rep[1] ? zun_d24_pat[19:10] : zun_d16_pat[19:10],
 		depth_d24_rep[0] ? zun_d24_pat[9:0]   : zun_d16_pat[9:0]
 	};
-	reg [4:0] zun_lz;
-	reg zun_found;
-	always @(*) begin
-		zun_found = 1'b1;
-		casez (zun_r[79:56])
-		24'b1???????????????????????: zun_lz = 5'd0;
-		24'b01??????????????????????: zun_lz = 5'd1;
-		24'b001?????????????????????: zun_lz = 5'd2;
-		24'b0001????????????????????: zun_lz = 5'd3;
-		24'b00001???????????????????: zun_lz = 5'd4;
-		24'b000001??????????????????: zun_lz = 5'd5;
-		24'b0000001?????????????????: zun_lz = 5'd6;
-		24'b00000001????????????????: zun_lz = 5'd7;
-		24'b000000001???????????????: zun_lz = 5'd8;
-		24'b0000000001??????????????: zun_lz = 5'd9;
-		24'b00000000001?????????????: zun_lz = 5'd10;
-		24'b000000000001????????????: zun_lz = 5'd11;
-		24'b0000000000001???????????: zun_lz = 5'd12;
-		24'b00000000000001??????????: zun_lz = 5'd13;
-		24'b000000000000001?????????: zun_lz = 5'd14;
-		24'b0000000000000001????????: zun_lz = 5'd15;
-		24'b00000000000000001???????: zun_lz = 5'd16;
-		24'b000000000000000001??????: zun_lz = 5'd17;
-		24'b0000000000000000001?????: zun_lz = 5'd18;
-		24'b00000000000000000001????: zun_lz = 5'd19;
-		24'b000000000000000000001???: zun_lz = 5'd20;
-		24'b0000000000000000000001??: zun_lz = 5'd21;
-		24'b00000000000000000000001?: zun_lz = 5'd22;
-		24'b000000000000000000000001: zun_lz = 5'd23;
-		default: begin
-			zun_lz = 5'd0;
-			zun_found = 1'b0;
+	/* Compute d24 and d16 LZC in parallel, muxed by depth_d24_rep at the end (<= 10 cmos3) */
+	function [4:0] lzc6_fn;
+		input [5:0] v;
+		input [4:0] base;
+		begin
+			casez (v)
+			6'b1?????: lzc6_fn = base + 5'd0;
+			6'b01????: lzc6_fn = base + 5'd1;
+			6'b001???: lzc6_fn = base + 5'd2;
+			6'b0001??: lzc6_fn = base + 5'd3;
+			6'b00001?: lzc6_fn = base + 5'd4;
+			default:   lzc6_fn = base + 5'd5;
+			endcase
 		end
-		endcase
-	end
+	endfunction
+	wire [3:0] d24_gnz = {|test_stored[23:18], |test_stored[17:12], |test_stored[11:6], |test_stored[5:0]};
+	wire [4:0] d24_lz_hi = d24_gnz[3] ? lzc6_fn(test_stored[23:18], 5'd0) : lzc6_fn(test_stored[17:12], 5'd6);
+	wire [4:0] d24_lz_lo = d24_gnz[1] ? lzc6_fn(test_stored[11:6], 5'd12) : (d24_gnz[0] ? lzc6_fn(test_stored[5:0], 5'd18) : 5'd0);
+	wire [4:0] d24_lz    = (d24_gnz[3] || d24_gnz[2]) ? d24_lz_hi : d24_lz_lo;
+	wire [2:0] d16_gnz   = {|test_stored[15:10], |test_stored[9:4], |test_stored[3:0]};
+	wire [4:0] d16_lz    = d16_gnz[2] ? lzc6_fn(test_stored[15:10], 5'd0) :
+	                       (d16_gnz[1] ? lzc6_fn(test_stored[9:4], 5'd6) :
+	                       (d16_gnz[0] ? lzc6_fn({test_stored[3:0], 2'b00}, 5'd12) : 5'd0));
+	wire zun_found = depth_d24_rep[8] ? (|d24_gnz) : (|d16_gnz);
+	wire [4:0] zun_lz = depth_d24_rep[9] ? d24_lz : d16_lz;
 
 	wire [71:0] zun_mn;
 	am_shift #(.W(72), .SW(5)) u_zun_mn (.a(zun_s0a_r), .amt(zun_s0a_lz), .left(1'b1), .arith(1'b0), .y(zun_mn));
@@ -443,6 +534,12 @@ module atg_rop_ds #(
 	LUT1 #(.INIT(2'h2)) u_zq23_1 (.I0(zun_q[23]), .O(zun_q23_b[1]));
 	LUT1 #(.INIT(2'h2)) u_zq23_2 (.I0(zun_q[23]), .O(zun_q23_b[2]));
 	LUT1 #(.INIT(2'h2)) u_zq23_3 (.I0(zun_q[23]), .O(zun_q23_b[3]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [3:0] zun_q23_b;
+	assign zun_q23_b[0] = zun_q[23];
+	assign zun_q23_b[1] = zun_q[23];
+	assign zun_q23_b[2] = zun_q[23];
+	assign zun_q23_b[3] = zun_q[23];
 `else
 	wire [3:0] zun_q23_b = {4{zun_q[23]}};
 `endif
@@ -466,51 +563,267 @@ module atg_rop_ds #(
 	am_add #(.W(LINE_SHIFT)) u_bo (.a(addr[LINE_SHIFT-1:0]),
 		.b(d16_buf[4] ? {{(LINE_SHIFT-4){1'b0}}, ent, 1'b0} : {{(LINE_SHIFT-5){1'b0}}, ent, 2'b00}),
 		.ci(1'b0), .s(bo), .co(bo_co_unused));
-	/* The row's address: base + (y + r) stride + x S ps; the next entry. */
-	wire [16:0] yr;
-	wire [48:0] yrs;
+	reg [LINE_SHIFT-1:0] r_bo;
+	reg [3:0] r_sb;
+	reg r_mask_sb;
+
+	/* The row's address: base + y stride + x S ps; the next entry. */
+	wire [31:0] yrs_p3;
+	reg [31:0] yrs_r;
+`ifdef SYNTH_KINTEX7
+	wire [48:0] yrs_k7;
+	am_mul #(.AW(17), .BW(32), .LAT(3)) u_yrs (.clk(clk), .en(1'b1), .a({1'b0, ds_xy_int[31:16]}), .b(ds_stride_mul), .p(yrs_k7));
+	assign yrs_p3 = yrs_k7[31:0];
+	wire unused_yrs_hi = &{1'b0, yrs_k7[48:32]};
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [48:0] yrs_k7;
+	am_mul #(.AW(17), .BW(32), .LAT(3)) u_yrs (.clk(clk), .en(1'b1), .a({1'b0, ds_xy_int[31:16]}), .b(ds_stride_mul), .p(yrs_k7));
+	assign yrs_p3 = yrs_k7[31:0];
+	wire unused_yrs_hi = &{1'b0, yrs_k7[48:32]};
+`else
+	/* 3-stage Radix-4 Booth 16u x 32u -> 32u (<= 10 cmos3/stage, LAT=3 matching SYNTH_KINTEX7) */
+	wire [18:0] yrs_a_pad = {2'b00, ds_xy_int[31:16], 1'b0};
+	wire [7:0] yrs_neg;
+	wire [31:0] yrs_pp [0:8];
+	genvar gyk;
+	generate
+	for (gyk = 0; gyk < 8; gyk = gyk + 1) begin : g_yrs_booth
+		wire b_m1 = yrs_a_pad[2 * gyk];
+		wire b_0  = yrs_a_pad[2 * gyk + 1];
+		wire b_p1 = yrs_a_pad[2 * gyk + 2];
+		wire bo_s1 = b_m1 ^ b_0;
+		wire bo_nz = bo_s1 | (b_p1 ^ b_0);
+		wire neg_j = b_p1 && !(b_0 && b_m1);
+		assign yrs_neg[gyk] = neg_j;
+		wire [31 - 2*gyk : 0] u_w;
+		genvar guk;
+		for (guk = 0; guk <= 31 - 2*gyk; guk = guk + 1) begin : g_yu
+			wire ak = ds_stride_mul[guk] ^ b_p1;
+			wire akm1;
+			if (guk > 0) begin : g_akm
+				assign akm1 = ds_stride_mul[guk - 1] ^ b_p1;
+			end else begin : g_akz
+				assign akm1 = b_p1;
+			end
+			assign u_w[guk] = bo_nz & (bo_s1 ? ak : akm1);
+		end
+		if (gyk == 0) begin : g_yb0
+			assign yrs_pp[0] = u_w;
+		end else if (gyk == 1) begin : g_yb1
+			assign yrs_pp[1] = {u_w, 1'b0, yrs_neg[0]};
+		end else begin : g_ybm
+			assign yrs_pp[gyk] = {u_w, 1'b0, yrs_neg[gyk - 1], {(2*gyk - 2){1'b0}}};
+		end
+	end
+	assign yrs_pp[8] = {ds_xy_int[31] ? ds_stride_mul[15:0] : 16'd0, 1'b0, yrs_neg[7], 14'd0};
+
+	/* Stage 1 CSA: 9 -> 5 rows via 2x 4:2 compressors (<= 10 cmos3 total incl. Booth) */
+	wire [31:0] yrs_s1_w [0:4];
+	for (gyk = 0; gyk < 2; gyk = gyk + 1) begin : g_yc42
+		wire [31:0] a0 = yrs_pp[4 * gyk];
+		wire [31:0] a1 = yrs_pp[4 * gyk + 1];
+		wire [31:0] a2 = yrs_pp[4 * gyk + 2];
+		wire [31:0] a3 = yrs_pp[4 * gyk + 3];
+		wire [31:0] p0 = a0 ^ a1;
+		wire [31:0] p1 = a2 ^ a3;
+		wire [30:0] co_hi = (p0[30:0] & a2[30:0]) | (~p0[30:0] & a0[30:0]);
+		wire [31:0] co = {co_hi, 1'b0};
+		wire [30:0] x_hi = p0[30:0] ^ p1[30:0];
+		assign yrs_s1_w[2 * gyk]     = p0 ^ p1 ^ co;
+		assign yrs_s1_w[2 * gyk + 1] = {(x_hi & co[30:0]) | (~x_hi & a3[30:0]), 1'b0};
+	end
+	assign yrs_s1_w[4] = yrs_pp[8];
+	reg [31:0] yrs_r1 [0:4];
+	integer iy1;
+	always @(posedge clk) begin
+		for (iy1 = 0; iy1 < 5; iy1 = iy1 + 1)
+			yrs_r1[iy1] <= yrs_s1_w[iy1];
+	end
+
+	/* Stage 2 CSA: 5 -> 4 -> 2 rows via 3:2 + 4:2 compressor (<= 8 cmos3) */
+	wire [31:0] yrs_l2_0 = yrs_r1[0] ^ yrs_r1[1] ^ yrs_r1[2];
+	wire [31:0] yrs_l2_1 = {((yrs_r1[0][30:0] & yrs_r1[1][30:0]) | (yrs_r1[0][30:0] & yrs_r1[2][30:0]) | (yrs_r1[1][30:0] & yrs_r1[2][30:0])), 1'b0};
+	wire [31:0] yrs_p0 = yrs_l2_0 ^ yrs_l2_1;
+	wire [31:0] yrs_p1 = yrs_r1[3] ^ yrs_r1[4];
+	wire [31:0] yrs_co = {((yrs_p0[30:0] & yrs_r1[3][30:0]) | (~yrs_p0[30:0] & yrs_l2_0[30:0])), 1'b0};
+	wire [30:0] yrs_x2 = yrs_p0[30:0] ^ yrs_p1[30:0];
+	wire [31:0] yrs_l3_s = yrs_p0 ^ yrs_p1 ^ yrs_co;
+	wire [31:0] yrs_l3_c = {(yrs_x2 & yrs_co[30:0]) | (~yrs_x2 & yrs_r1[4][30:0]), 1'b0};
+	reg [31:0] yrs_r2_s, yrs_r2_c;
+	always @(posedge clk) begin
+		yrs_r2_s <= yrs_l3_s;
+		yrs_r2_c <= yrs_l3_c;
+	end
+
+	/* Stage 3: 32-bit Kogge-Stone am_add */
+	wire yrs_co_unused;
+	am_add #(.W(32)) u_yrs_fin (.a(yrs_r2_s), .b(yrs_r2_c), .ci(1'b0), .s(yrs_p3), .co(yrs_co_unused));
+	wire unused_yrs_hi = yrs_co_unused;
+	endgenerate
+`endif
 	wire [15:0] xo_lo = ms4_rep[0] ? (d16_buf[5] ? {ds_xy_int[12:0], 3'b000} : {ds_xy_int[11:0], 4'b0000}) :
 		(d16_buf[5] ? {ds_xy_int[14:0], 1'b0} : {ds_xy_int[13:0], 2'b00});
 	wire [15:0] xo_hi = ms4_rep[1] ? (d16_buf[5] ? {13'd0, ds_xy_int[15:13]} : {12'd0, ds_xy_int[15:12]}) :
 		(d16_buf[5] ? {15'd0, ds_xy_int[15]} : {14'd0, ds_xy_int[15:14]});
 	wire [31:0] xo = {xo_hi, xo_lo};
+	reg [31:0] r_xo;
 	wire [31:0] row_a, row_base1_comb, cur_row_base, row_addr;
 	wire [2:0] e_next = ms4_rep[2] ? {e[2] ^ (e[1] & e[0]), e[1] ^ e[0], ~e[0]} : {~e[2], e[1:0]};
-	wire yr_co_unused, ra_co_unused, rb1_co_unused, rd_co_unused;
-	am_add #(.W(17)) u_yr (.a({1'b0, (st == S_IDLE) ? q_xy[31:16] : ds_xy_int[31:16]}), .b(17'd0), .ci(1'b0), .s(yr), .co(yr_co_unused));
-	am_mul #(.AW(17), .BW(32), .LAT(2)) u_yrs (.clk(clk), .en(1'b1), .a(yr), .b(ds_stride_mul), .p(yrs));
-	am_add #(.W(32)) u_ra (.a(ds_base), .b(yrs[31:0]), .ci(1'b0), .s(row_a), .co(ra_co_unused));
+	wire ra_co_unused, rb1_co_unused, rd_co_unused;
+	am_add #(.W(32)) u_ra (.a(ds_base), .b(yrs_r), .ci(1'b0), .s(row_a), .co(ra_co_unused));
+`ifdef SYNTH_KINTEX7
 	am_add #(.W(32)) u_rb1 (.a(row_base0_rb1), .b(ds_stride_add), .ci(1'b0), .s(row_base1_comb), .co(rb1_co_unused));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	am_add #(.W(32)) u_rb1 (.a(row_base0_rb1), .b(ds_stride_add), .ci(1'b0), .s(row_base1_comb), .co(rb1_co_unused));
+`else
+	/* 4+4 split carry-select with flat 8-bit CLA for row_base0_rb1 + ds_stride_add (<= 9 cmos3) */
+	wire [31:0] rb1_g1 = row_base0_rb1 & ds_stride_add;
+	wire [31:0] rb1_p1 = row_base0_rb1 | ds_stride_add;
+	wire [7:0] rb1_g4, rb1_p4;
+	genvar grb;
+	for (grb = 0; grb < 8; grb = grb + 1) begin : g_rb1_gp4
+		wire [3:0] g4 = rb1_g1[4*grb +: 4];
+		wire [3:0] p4 = rb1_p1[4*grb +: 4];
+		assign rb1_p4[grb] = &p4;
+		assign rb1_g4[grb] = g4[3] | (p4[3] & g4[2]) | (p4[3] & p4[2] & g4[1]) | (p4[3] & p4[2] & p4[1] & g4[0]);
+	end
+	wire [2:0] rb1_g8 = {
+		rb1_g4[5] | (rb1_p4[5] & rb1_g4[4]),
+		rb1_g4[3] | (rb1_p4[3] & rb1_g4[2]),
+		rb1_g4[1] | (rb1_p4[1] & rb1_g4[0])
+	};
+	wire [2:0] rb1_p8 = {rb1_p4[5] & rb1_p4[4], rb1_p4[3] & rb1_p4[2], rb1_p4[1] & rb1_p4[0]};
+	wire [3:0] rb1_cin8 = {
+		rb1_g8[2] | (rb1_p8[2] & rb1_g8[1]) | (rb1_p8[2] & rb1_p8[1] & rb1_g8[0]),
+		rb1_g8[1] | (rb1_p8[1] & rb1_g8[0]),
+		rb1_g8[0],
+		1'b0
+	};
+	wire [31:0] rb1_s0, rb1_s1;
+	wire [7:0] rb1_c4_s0, rb1_c4_s1, rb1_u_s0, rb1_u_s1;
+	for (grb = 0; grb < 4; grb = grb + 1) begin : g_rb1_add
+		am_add #(.W(4)) u_bl0 (.a(row_base0_rb1[8*grb +: 4]),   .b(ds_stride_add[8*grb +: 4]),   .ci(1'b0), .s(rb1_s0[8*grb +: 4]),   .co(rb1_c4_s0[grb]));
+		am_add #(.W(4)) u_bl1 (.a(row_base0_rb1[8*grb +: 4]),   .b(ds_stride_add[8*grb +: 4]),   .ci(1'b1), .s(rb1_s1[8*grb +: 4]),   .co(rb1_c4_s1[grb]));
+		am_add #(.W(4)) u_bh0 (.a(row_base0_rb1[8*grb+4 +: 4]), .b(ds_stride_add[8*grb+4 +: 4]), .ci(1'b0), .s(rb1_s0[8*grb+4 +: 4]), .co(rb1_u_s0[grb]));
+		am_add #(.W(4)) u_bh1 (.a(row_base0_rb1[8*grb+4 +: 4]), .b(ds_stride_add[8*grb+4 +: 4]), .ci(1'b1), .s(rb1_s1[8*grb+4 +: 4]), .co(rb1_u_s1[grb]));
+		wire c_lo = rb1_cin8[grb];
+		wire c_hi = c_lo ? rb1_c4_s1[grb] : rb1_c4_s0[grb];
+		assign row_base1_comb[8*grb +: 4]   = c_lo ? rb1_s1[8*grb +: 4]   : rb1_s0[8*grb +: 4];
+		assign row_base1_comb[8*grb+4 +: 4] = c_hi ? rb1_s1[8*grb+4 +: 4] : rb1_s0[8*grb+4 +: 4];
+	end
+	assign rb1_co_unused = (&rb1_u_s0) & (&rb1_u_s1) & rb1_g4[7] & rb1_p4[7] & rb1_g4[6] & rb1_p4[6];
+`endif
 	assign cur_row_base = {
 		r_rep[3] ? row_base1[31:24] : row_base0[31:24],
 		r_rep[2] ? row_base1[23:16] : row_base0[23:16],
 		r_rep[1] ? row_base1[15:8]  : row_base0[15:8],
 		r_rep[0] ? row_base1[7:0]   : row_base0[7:0]
 	};
-	am_add #(.W(32)) u_rd (.a(cur_row_base), .b(xo), .ci(1'b0), .s(row_addr), .co(rd_co_unused));
-	/* The entry's 32-bit word of the line and its half (D16), with buffered bo to keep fanout <= 12 */
-	wire [31:0] lword;
 `ifdef SYNTH_KINTEX7
-	wire [LINE_SHIFT-1:2] bo_w_buf [0:3];
+	am_add #(.W(32)) u_rd (.a(cur_row_base), .b(r_xo), .ci(1'b0), .s(row_addr), .co(rd_co_unused));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	am_add #(.W(32)) u_rd (.a(cur_row_base), .b(r_xo), .ci(1'b0), .s(row_addr), .co(rd_co_unused));
+`else
+	/* 4+4 split carry-select with flat 8-bit CLA for cur_row_base + r_xo (<= 9 cmos3) */
+	wire [31:0] rd_g1 = cur_row_base & r_xo;
+	wire [31:0] rd_p1 = cur_row_base | r_xo;
+	wire [7:0] rd_g4, rd_p4;
+	genvar grd;
+	for (grd = 0; grd < 8; grd = grd + 1) begin : g_rd_gp4
+		wire [3:0] g4 = rd_g1[4*grd +: 4];
+		wire [3:0] p4 = rd_p1[4*grd +: 4];
+		assign rd_p4[grd] = &p4;
+		assign rd_g4[grd] = g4[3] | (p4[3] & g4[2]) | (p4[3] & p4[2] & g4[1]) | (p4[3] & p4[2] & p4[1] & g4[0]);
+	end
+	wire [2:0] rd_g8 = {
+		rd_g4[5] | (rd_p4[5] & rd_g4[4]),
+		rd_g4[3] | (rd_p4[3] & rd_g4[2]),
+		rd_g4[1] | (rd_p4[1] & rd_g4[0])
+	};
+	wire [2:0] rd_p8 = {rd_p4[5] & rd_p4[4], rd_p4[3] & rd_p4[2], rd_p4[1] & rd_p4[0]};
+	wire [3:0] rd_cin8 = {
+		rd_g8[2] | (rd_p8[2] & rd_g8[1]) | (rd_p8[2] & rd_p8[1] & rd_g8[0]),
+		rd_g8[1] | (rd_p8[1] & rd_g8[0]),
+		rd_g8[0],
+		1'b0
+	};
+	function [4:0] ds_cla4;
+		input [3:0] a, b;
+		input ci;
+		reg [3:0] p, g, c;
+		begin
+			p = a ^ b;
+			g = a & b;
+			c[0] = ci;
+			c[1] = g[0] | (p[0] & ci);
+			c[2] = g[1] | (p[1] & g[0]) | (p[1] & p[0] & ci);
+			c[3] = g[2] | (p[2] & g[1]) | (p[2] & p[1] & g[0]) | (p[2] & p[1] & p[0] & ci);
+			ds_cla4 = {
+				g[3] | (p[3] & g[2]) | (p[3] & p[2] & g[1]) | (p[3] & p[2] & p[1] & g[0]) | (&p & ci),
+				p ^ c
+			};
+		end
+	endfunction
+
+	wire [31:0] rd_s0, rd_s1;
+	wire [7:0] rd_c4_s0, rd_c4_s1, rd_u_s0, rd_u_s1;
+	for (grd = 0; grd < 4; grd = grd + 1) begin : g_rd_add
+		wire [4:0] rl0_5 = ds_cla4(cur_row_base[8*grd +: 4],   r_xo[8*grd +: 4],   1'b0);
+		wire [4:0] rl1_5 = ds_cla4(cur_row_base[8*grd +: 4],   r_xo[8*grd +: 4],   1'b1);
+		wire [4:0] rh0_5 = ds_cla4(cur_row_base[8*grd+4 +: 4], r_xo[8*grd+4 +: 4], 1'b0);
+		wire [4:0] rh1_5 = ds_cla4(cur_row_base[8*grd+4 +: 4], r_xo[8*grd+4 +: 4], 1'b1);
+		assign rd_s0[8*grd +: 4]   = rl0_5[3:0]; assign rd_c4_s0[grd] = rl0_5[4];
+		assign rd_s1[8*grd +: 4]   = rl1_5[3:0]; assign rd_c4_s1[grd] = rl1_5[4];
+		assign rd_s0[8*grd+4 +: 4] = rh0_5[3:0]; assign rd_u_s0[grd]  = rh0_5[4];
+		assign rd_s1[8*grd+4 +: 4] = rh1_5[3:0]; assign rd_u_s1[grd]  = rh1_5[4];
+		wire c_lo = rd_cin8[grd];
+		wire c_hi = c_lo ? rd_c4_s1[grd] : rd_c4_s0[grd];
+		assign row_addr[8*grd +: 4]   = c_lo ? rd_s1[8*grd +: 4]   : rd_s0[8*grd +: 4];
+		assign row_addr[8*grd+4 +: 4] = c_hi ? rd_s1[8*grd+4 +: 4] : rd_s0[8*grd+4 +: 4];
+	end
+	assign rd_co_unused = (&rd_u_s0) & (&rd_u_s1) & rd_g4[7] & rd_p4[7] & rd_g4[6] & rd_p4[6];
+`endif
+	/* The entry's 32-bit word of the line and its half (D16), from pre-registered r_bo */
+	(* keep = "true" *) wire [31:0] lword;
+`ifdef SYNTH_KINTEX7
+	wire [LINE_SHIFT-1:2] bo_w_buf [0:7];
 	wire [1:0] bo_h_buf;
 	genvar g_bo, g_bob;
 	generate
-	for (g_bo = 0; g_bo < 4; g_bo = g_bo + 1) begin : g_bow
+	for (g_bo = 0; g_bo < 8; g_bo = g_bo + 1) begin : g_bow
 		for (g_bob = 2; g_bob < LINE_SHIFT; g_bob = g_bob + 1) begin : g_bob_bit
-			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_bow (.I0(bo[g_bob]), .O(bo_w_buf[g_bo][g_bob]));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_bow (.I0(r_bo[g_bob]), .O(bo_w_buf[g_bo][g_bob]));
 		end
-		assign lword[8 * g_bo +: 8] = line[32 * bo_w_buf[g_bo] + 8 * g_bo +: 8];
+		assign lword[4 * g_bo +: 4] = line[32 * bo_w_buf[g_bo] + 4 * g_bo +: 4];
 	end
-	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_boh0 (.I0(bo[1]), .O(bo_h_buf[0]));
-	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_boh1 (.I0(bo[1]), .O(bo_h_buf[1]));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_boh0 (.I0(r_bo[1]), .O(bo_h_buf[0]));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_boh1 (.I0(r_bo[1]), .O(bo_h_buf[1]));
 	endgenerate
-	wire [15:0] stored_lo = {
+	(* keep = "true" *) wire [15:0] stored_lo = {
+		d16_buf[8] ? lword[16 * bo_h_buf[1] + 8 +: 8] : lword[15:8],
+		d16_buf[6] ? lword[16 * bo_h_buf[0] +: 8]     : lword[7:0]
+	};
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [LINE_SHIFT-1:2] bo_w_buf [0:7];
+	wire [1:0] bo_h_buf;
+	genvar g_bo, g_bob;
+	generate
+	for (g_bo = 0; g_bo < 8; g_bo = g_bo + 1) begin : g_bow
+		for (g_bob = 2; g_bob < LINE_SHIFT; g_bob = g_bob + 1) begin : g_bob_bit
+			assign bo_w_buf[g_bo][g_bob] = r_bo[g_bob];
+		end
+		assign lword[4 * g_bo +: 4] = line[32 * bo_w_buf[g_bo] + 4 * g_bo +: 4];
+	end
+	assign bo_h_buf[0] = r_bo[1];
+	assign bo_h_buf[1] = r_bo[1];
+	endgenerate
+	(* keep = "true" *) wire [15:0] stored_lo = {
 		d16_buf[8] ? lword[16 * bo_h_buf[1] + 8 +: 8] : lword[15:8],
 		d16_buf[6] ? lword[16 * bo_h_buf[0] +: 8]     : lword[7:0]
 	};
 `else
-	assign lword = line[32 * bo[LINE_SHIFT-1:2] +: 32];
-	wire [15:0] stored_lo = d16_buf[6] ? lword[16 * bo[1] +: 16] : lword[15:0];
+	assign lword = line[32 * r_bo[LINE_SHIFT-1:2] +: 32];
+	wire [15:0] stored_lo = d16_buf[6] ? lword[16 * r_bo[1] +: 16] : lword[15:0];
 `endif
 
 	/* Pure-LUT keys and stencil +/-1 (0 CARRY4s on stencil, buffered zero-mask on depth keys) */
@@ -527,26 +840,142 @@ module atg_rop_ds #(
 		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_senz (.I0(st_exp_nz), .O(st_enz_buf[g_kz]));
 	end
 	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar g_kz;
+	generate
+	for (g_kz = 0; g_kz < 3; g_kz = g_kz + 1) begin : g_key_enz
+		assign zl_enz_buf[g_kz] = zl_exp_nz;
+		assign st_enz_buf[g_kz] = st_exp_nz;
+	end
+	endgenerate
 `else
 	assign zl_enz_buf = {3{zl_exp_nz}};
 	assign st_enz_buf = {3{st_exp_nz}};
 `endif
+`ifdef SYNTH_KINTEX7
 	am_addsub #(.W(33)) u_zkey_sm (.a(33'd0), .b({2'b00, test_zl[30:0]}), .sub(test_zl[31]), .s(zkey_sm), .co(zkey_co_unused));
 	am_addsub #(.W(33)) u_skey_sm (.a(33'd0), .b({2'b00, test_stored[30:0]}), .sub(test_stored[31]), .s(skey_sm), .co(skey_co_unused));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	am_addsub #(.W(33)) u_zkey_sm (.a(33'd0), .b({2'b00, test_zl[30:0]}), .sub(test_zl[31]), .s(zkey_sm), .co(zkey_co_unused));
+	am_addsub #(.W(33)) u_skey_sm (.a(33'd0), .b({2'b00, test_stored[30:0]}), .sub(test_stored[31]), .s(skey_sm), .co(skey_co_unused));
+`else
+	/* Pure-LUT 3->9->27->33 prefix-OR signed-magnitude conversion (<= 9 cmos3) */
+	wire [32:0] z_mag_b = {2'b00, test_zl[30:0]};
+	wire [32:0] s_mag_b = {2'b00, test_stored[30:0]};
+	wire [32:0] z_or_below, s_or_below;
+	wire [10:0] z_or3, s_or3;
+	wire [2:0] z_or9, s_or9;
+	genvar go3;
+	generate
+	for (go3 = 0; go3 < 10; go3 = go3 + 1) begin : g_key_or3
+		assign z_or3[go3] = |z_mag_b[3 * go3 +: 3];
+		assign s_or3[go3] = |s_mag_b[3 * go3 +: 3];
+	end
+	assign z_or3[10] = z_mag_b[30];
+	assign s_or3[10] = s_mag_b[30];
+	endgenerate
+	assign z_or9[0] = |z_or3[2:0];
+	assign z_or9[1] = |z_or3[5:3];
+	assign z_or9[2] = |z_or3[8:6];
+	assign s_or9[0] = |s_or3[2:0];
+	assign s_or9[1] = |s_or3[5:3];
+	assign s_or9[2] = |s_or3[8:6];
+	wire z_or18 = z_or9[0] | z_or9[1];
+	wire s_or18 = s_or9[0] | s_or9[1];
+	wire z_or27 = z_or18 | z_or9[2];
+	wire s_or27 = s_or18 | s_or9[2];
+	genvar gk_bit;
+	generate
+	for (gk_bit = 0; gk_bit < 33; gk_bit = gk_bit + 1) begin : g_key_sm_bit
+		if (gk_bit == 0) begin : gb0
+			assign z_or_below[0] = 1'b0;
+			assign s_or_below[0] = 1'b0;
+		end else begin : gbn
+			localparam integer G3 = (gk_bit - 1) / 3;
+			localparam integer R3 = (gk_bit - 1) % 3;
+			wire z_lo3 = (R3 == 0) ? z_mag_b[3 * G3] : (R3 == 1) ? |z_mag_b[3 * G3 +: 2] : z_or3[G3];
+			wire s_lo3 = (R3 == 0) ? s_mag_b[3 * G3] : (R3 == 1) ? |s_mag_b[3 * G3 +: 2] : s_or3[G3];
+			wire z_mid =
+				(G3 == 0) ? 1'b0 :
+				(G3 == 1) ? z_or3[0] :
+				(G3 == 2) ? |z_or3[1:0] :
+				(G3 == 3) ? z_or9[0] :
+				(G3 == 4) ? (z_or9[0] | z_or3[3]) :
+				(G3 == 5) ? (z_or9[0] | |z_or3[4:3]) :
+				(G3 == 6) ? z_or18 :
+				(G3 == 7) ? (z_or18 | z_or3[6]) :
+				(G3 == 8) ? (z_or18 | |z_or3[7:6]) :
+				(G3 == 9) ? z_or27 :
+				(G3 == 10) ? (z_or27 | z_or3[9]) : 1'b0;
+			wire s_mid =
+				(G3 == 0) ? 1'b0 :
+				(G3 == 1) ? s_or3[0] :
+				(G3 == 2) ? |s_or3[1:0] :
+				(G3 == 3) ? s_or9[0] :
+				(G3 == 4) ? (s_or9[0] | s_or3[3]) :
+				(G3 == 5) ? (s_or9[0] | |s_or3[4:3]) :
+				(G3 == 6) ? s_or18 :
+				(G3 == 7) ? (s_or18 | s_or3[6]) :
+				(G3 == 8) ? (s_or18 | |s_or3[7:6]) :
+				(G3 == 9) ? s_or27 :
+				(G3 == 10) ? (s_or27 | s_or3[9]) : 1'b0;
+			assign z_or_below[gk_bit] = z_lo3 | z_mid;
+			assign s_or_below[gk_bit] = s_lo3 | s_mid;
+		end
+		assign zkey_sm[gk_bit] = z_mag_b[gk_bit] ^ (test_zl[31]     & z_or_below[gk_bit]);
+		assign skey_sm[gk_bit] = s_mag_b[gk_bit] ^ (test_stored[31] & s_or_below[gk_bit]);
+	end
+	endgenerate
+	assign zkey_co_unused = 1'b0;
+	assign skey_co_unused = 1'b0;
+	reg [32:0] skey_sm_s0_r;
+`endif
 	wire [32:0] conv_zkey = {
 		zl_enz_buf[2] ? zkey_sm[32:22] : 11'd0,
 		zl_enz_buf[1] ? zkey_sm[21:11] : 11'd0,
 		zl_enz_buf[0] ? zkey_sm[10:0]  : 11'd0
 	};
+`ifdef SYNTH_KINTEX7
 	wire [32:0] conv_skey = {
 		st_enz_buf[2] ? skey_sm[32:22] : 11'd0,
 		st_enz_buf[1] ? skey_sm[21:11] : 11'd0,
 		st_enz_buf[0] ? skey_sm[10:0]  : 11'd0
 	};
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [32:0] conv_skey = {
+		st_enz_buf[2] ? skey_sm[32:22] : 11'd0,
+		st_enz_buf[1] ? skey_sm[21:11] : 11'd0,
+		st_enz_buf[0] ? skey_sm[10:0]  : 11'd0
+	};
+`else
+	wire [32:0] conv_skey = {
+		st_enz_buf[2] ? skey_sm_s0_r[32:22] : 11'd0,
+		st_enz_buf[1] ? skey_sm_s0_r[21:11] : 11'd0,
+		st_enz_buf[0] ? skey_sm_s0_r[10:0]  : 11'd0
+	};
+`endif
 	wire [7:0] conv_s_inc, conv_s_dec;
 	wire sinc_co_unused, sdec_bo_unused;
+`ifdef SYNTH_KINTEX7
 	am_add #(.W(8)) u_s_inc (.a(test_stored[31:24]), .b(8'd1), .ci(1'b0), .s(conv_s_inc), .co(sinc_co_unused));
 	am_sub #(.W(8)) u_s_dec (.a(test_stored[31:24]), .b(8'd1), .bi(1'b0), .d(conv_s_dec), .bo(sdec_bo_unused));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	am_add #(.W(8)) u_s_inc (.a(test_stored[31:24]), .b(8'd1), .ci(1'b0), .s(conv_s_inc), .co(sinc_co_unused));
+	am_sub #(.W(8)) u_s_dec (.a(test_stored[31:24]), .b(8'd1), .bi(1'b0), .d(conv_s_dec), .bo(sdec_bo_unused));
+`else
+	/* 2-stage pure-LUT 8-bit +1/-1 for stencil ops (S_TEST0B -> S_TEST1, <= 5 cmos3) */
+	wire [7:0] sb_in = test_stored[31:24];
+	wire [3:0] sinc_lo = {sb_in[3] ^ (&sb_in[2:0]), sb_in[2] ^ (sb_in[1] & sb_in[0]), sb_in[1] ^ sb_in[0], ~sb_in[0]};
+	wire [3:0] sinc_h1 = {sb_in[7] ^ (&sb_in[6:4]), sb_in[6] ^ (sb_in[5] & sb_in[4]), sb_in[5] ^ sb_in[4], ~sb_in[4]};
+	wire [3:0] sdec_lo = {sb_in[3] ^ !(|sb_in[2:0]), sb_in[2] ^ !(|sb_in[1:0]), sb_in[1] ^ ~sb_in[0], ~sb_in[0]};
+	wire [3:0] sdec_h1 = {sb_in[7] ^ !(|sb_in[6:4]), sb_in[6] ^ !(|sb_in[5:4]), sb_in[5] ^ ~sb_in[4], ~sb_in[4]};
+	reg [7:0] sb_s0_inc_r, sb_s0_dec_r, sb_s0_in_r;
+	reg sb_s0_lo_all1, sb_s0_lo_all0;
+	assign conv_s_inc = {sb_s0_lo_all1 ? sb_s0_inc_r[7:4] : sb_s0_in_r[7:4], sb_s0_inc_r[3:0]};
+	assign sinc_co_unused = &sb_in;
+	assign conv_s_dec = {sb_s0_lo_all0 ? sb_s0_dec_r[7:4] : sb_s0_in_r[7:4], sb_s0_dec_r[3:0]};
+	assign sdec_bo_unused = !(|sb_in);
+`endif
 
 	/* 2-stage pure-LUT depth/stencil evaluation (S_TEST2 -> S_TEST2B, 0 CARRY4s, <= 4 LUTs/stage) */
 `ifdef MUT_STENCIL_FACE
@@ -829,6 +1258,103 @@ module atg_rop_ds #(
 		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_s3b (.I0(s3_byte_we[g_cl]), .O(s3_bwe_leaf[g_cl]));
 	end
 	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire en_idle_qv = (st == S_IDLE) && q_valid;
+	wire en_idle_qf = en_idle_qv && q_beat[0];
+	wire en_rd_rsp = (st == S_RD) && wait_rsp && rsp_valid;
+	wire [4:0] en_col_mid;
+	wire [67:0] en_col_leaf;
+	wire [2:0] en_qf_mid;
+	wire [32:0] en_qf_leaf;
+	wire [1:0] en_rd_mid;
+	wire [N_L16-1:0] en_rd_leaf;
+	wire [31:0] q_dbg_leaf;
+	wire [1:0] q_dbg_mid;
+	wire [LINE_BYTES-1:0] s3_bwe_leaf;
+	genvar g_cm, g_cl, g_cq;
+	generate
+	for (g_cm = 0; g_cm < 2; g_cm = g_cm + 1) begin : g_buf_ar
+		assign en_addr_buf[g_cm] = en_row_addr;
+		assign en_rline_buf[g_cm] = en_req_line;
+	end
+	for (g_cm = 0; g_cm < 5; g_cm = g_cm + 1) begin : g_mid_col
+		assign en_col_mid[g_cm] = en_idle_qv;
+	end
+	for (g_cl = 0; g_cl < 68; g_cl = g_cl + 1) begin : g_leaf_col
+		assign en_col_leaf[g_cl] = en_col_mid[g_cl / 14];
+	end
+	for (g_cm = 0; g_cm < 2; g_cm = g_cm + 1) begin : g_mid_dbg
+		assign q_dbg_mid[g_cm] = q_dbg;
+	end
+	for (g_cl = 0; g_cl < 32; g_cl = g_cl + 1) begin : g_leaf_dbg
+		assign q_dbg_leaf[g_cl] = q_dbg_mid[g_cl / 16];
+	end
+	wire [511:0] dbg_quad_col = {4{dbgf_r}};
+	for (g_cq = 0; g_cq < 32; g_cq = g_cq + 1) begin : g_reg_dcol
+		always @(posedge clk) begin
+			if (en_col_leaf[g_cq])
+				d_color[16 * g_cq +: 16] <= q_dbg_leaf[g_cq] ?
+					dbg_quad_col[16 * g_cq +: 16] : q_color[16 * g_cq +: 16];
+		end
+		always @(posedge clk or posedge rst_sync) begin
+			if (rst_sync)
+				d_color1[16 * g_cq +: 16] <= 16'd0;
+			else if (en_col_leaf[32 + g_cq])
+				d_color1[16 * g_cq +: 16] <= q_color1[16 * g_cq +: 16];
+		end
+	end
+	for (g_cq = 0; g_cq < 2; g_cq = g_cq + 1) begin : g_reg_dxy
+		always @(posedge clk) begin
+			if (en_col_leaf[64 + g_cq])
+				d_xy[16 * g_cq +: 16] <= q_xy[16 * g_cq +: 16];
+			if (en_col_leaf[66 + g_cq])
+				ds_xy_int[16 * g_cq +: 16] <= q_xy[16 * g_cq +: 16];
+		end
+	end
+
+	/* Buffer en_idle_qf for z[511:0], mask[15:0] */
+	for (g_cm = 0; g_cm < 3; g_cm = g_cm + 1) begin : g_mid_qf
+		assign en_qf_mid[g_cm] = en_idle_qf;
+	end
+	for (g_cl = 0; g_cl < 33; g_cl = g_cl + 1) begin : g_leaf_qf
+		assign en_qf_leaf[g_cl] = en_qf_mid[g_cl / 11];
+	end
+	for (g_cq = 0; g_cq < 32; g_cq = g_cq + 1) begin : g_reg_z
+		always @(posedge clk) begin
+			if (en_qf_leaf[g_cq])
+				z[16 * g_cq +: 16] <= q_sdepth[16 * g_cq +: 16];
+		end
+	end
+	always @(posedge clk) begin
+		if (en_qf_leaf[32])
+			mask <= q_smask;
+	end
+
+	/* Buffer en_rd_rsp for line and req_be */
+	for (g_cm = 0; g_cm < 2; g_cm = g_cm + 1) begin : g_mid_rd
+		assign en_rd_mid[g_cm] = en_rd_rsp;
+	end
+	for (g_cl = 0; g_cl < N_L16; g_cl = g_cl + 1) begin : g_leaf_rd
+		assign en_rd_leaf[g_cl] = en_rd_mid[g_cl / (N_L16 / 2)];
+	end
+	for (g_cq = 0; g_cq < N_L16; g_cq = g_cq + 1) begin : g_reg_line
+		always @(posedge clk) begin
+			if (en_rd_leaf[g_cq]) begin
+				line[16 * g_cq +: 16] <= rsp_rdata[16 * g_cq +: 16];
+				req_be[2 * g_cq +: 2] <= 2'b00;
+			end else begin
+				if (s3_bwe_leaf[2 * g_cq])
+					req_be[2 * g_cq] <= 1'b1;
+				if (s3_bwe_leaf[2 * g_cq + 1])
+					req_be[2 * g_cq + 1] <= 1'b1;
+			end
+		end
+	end
+
+	for (g_cl = 0; g_cl < LINE_BYTES; g_cl = g_cl + 1) begin : g_s3_buf
+		assign s3_bwe_leaf[g_cl] = s3_byte_we[g_cl];
+	end
+	endgenerate
 `else
 	assign en_addr_buf = {2{en_row_addr}};
 	assign en_rline_buf = {2{en_req_line}};
@@ -845,6 +1371,8 @@ module atg_rop_ds #(
 	wire [63:0] addr_ext = {32'd0, addr};
 	/* Free-running datapath registers for row base setup and S_TEST0..S_TEST2B pipeline */
 	always @(posedge clk) begin
+		r_xo <= xo;
+		yrs_r <= yrs_p3;
 		row_base0 <= row_a;
 		row_base0_rb1 <= row_a;
 		row_base1 <= row_base1_comb;
@@ -853,6 +1381,11 @@ module atg_rop_ds #(
 		if (en_addr_buf[1]) addr[31:16] <= row_addr[31:16];
 		if (en_rline_buf[0]) req_line[13:0] <= addr_ext[LINE_SHIFT + 13 : LINE_SHIFT];
 		if (en_rline_buf[1]) req_line[ADDR_W - LINE_SHIFT - 1 : 14] <= addr_ext[ADDR_W - 1 : LINE_SHIFT + 14];
+
+		/* S_TEST_PRE latches */
+		r_bo <= bo;
+		r_sb <= sb;
+		r_mask_sb <= mask[sb];
 
 		/* S_TEST0 latches (inputs stationary throughout S_TEST0..S_TEST3) */
 		test_stored[15:0] <= stored_lo;
@@ -865,12 +1398,12 @@ module atg_rop_ds #(
 		else
 			test_stored[31:24] <= lword[31:24];
 		test_zl <= zl;
-		test_bo_rep[0] <= bo;
-		test_bo_rep[1] <= bo;
-		test_bo_rep[2] <= bo;
-		test_bo_rep[3] <= bo;
-		test_sb <= sb;
-		test_mask_rep <= {4{mask[sb]}};
+		test_bo_rep[0] <= r_bo;
+		test_bo_rep[1] <= r_bo;
+		test_bo_rep[2] <= r_bo;
+		test_bo_rep[3] <= r_bo;
+		test_sb <= r_sb;
+		test_mask_rep <= {4{r_mask_sb}};
 
 		/* S_TEST0A latches */
 		u24_s0a_p <= u24_p;
@@ -895,6 +1428,16 @@ module atg_rop_ds #(
 		zun_s0_mn_hi <= zun_mn[70:48];
 		zun_s0_e0 <= sub126_w;
 		zun_s0_e1 <= {3'b011, ~zun_s0a_lz};
+`ifdef SYNTH_KINTEX7
+`elsif SYNTH_KINTEX_ULTRASCALE
+`else
+		sb_s0_in_r <= sb_in;
+		sb_s0_lo_all1 <= &sb_in[3:0];
+		sb_s0_lo_all0 <= !(|sb_in[3:0]);
+		sb_s0_inc_r <= {sinc_h1, sinc_lo};
+		sb_s0_dec_r <= {sdec_h1, sdec_lo};
+		skey_sm_s0_r <= skey_sm;
+`endif
 
 		/* S_TEST1 latches */
 		test_zun <= zun_final;
@@ -946,7 +1489,9 @@ module atg_rop_ds #(
 
 	/* Rule 1 fix: decouple st[2:1] from d_ready, and compute st[0], st[3], d_valid next-state
 	 * via explicit single LUT4s on d_ready (so wb/cached_tag_x0/1 -> d_ready (3 LUTs) + 1 LUT = 4 LUTs) */
-	reg [3:0] ds_st_next_nodr;
+	reg [4:0] ds_st_next_nodr;
+	reg [1:0] r_row_nz;
+	reg r_e_last;
 	always @(*) begin
 		ds_st_next_nodr = st;
 		case (st)
@@ -966,23 +1511,26 @@ module atg_rop_ds #(
 		end
 		S_ROW_SETUP:  ds_st_next_nodr = S_ROW_SETUP1;
 		S_ROW_SETUP1: ds_st_next_nodr = S_ROW_SETUP2;
-		S_ROW_SETUP2: ds_st_next_nodr = S_ROW;
+		S_ROW_SETUP2: ds_st_next_nodr = S_ROW_SETUP3;
+		S_ROW_SETUP3: ds_st_next_nodr = S_ROW_SETUP4;
+		S_ROW_SETUP4: ds_st_next_nodr = S_ROW;
 		S_ROW: begin
-			if (mask[8 * r_rep[4] +: 8] != 8'd0)
+			if (r_row_nz[r_rep[4]])
 				ds_st_next_nodr = S_RD;
 			else if (r_rep[4])
 				ds_st_next_nodr = S_OUT;
 			else
 				ds_st_next_nodr = S_ROW;
 		end
-		S_RD:     ds_st_next_nodr = (wait_rsp && rsp_valid) ? S_TEST0 : S_RD;
-		S_TEST0:  ds_st_next_nodr = S_TEST0A;
-		S_TEST0A: ds_st_next_nodr = S_TEST0B;
-		S_TEST0B: ds_st_next_nodr = S_TEST1;
-		S_TEST1:  ds_st_next_nodr = S_TEST2;
-		S_TEST2:  ds_st_next_nodr = S_TEST2B;
-		S_TEST2B: ds_st_next_nodr = S_TEST3;
-		S_TEST3:  ds_st_next_nodr = (e == (ms4_rep[2] ? 3'd7 : 3'd4)) ? S_WR : S_TEST0;
+		S_RD:       ds_st_next_nodr = (wait_rsp && rsp_valid) ? S_TEST_PRE : S_RD;
+		S_TEST_PRE: ds_st_next_nodr = S_TEST0;
+		S_TEST0:    ds_st_next_nodr = S_TEST0A;
+		S_TEST0A:   ds_st_next_nodr = S_TEST0B;
+		S_TEST0B:   ds_st_next_nodr = S_TEST1;
+		S_TEST1:    ds_st_next_nodr = S_TEST2;
+		S_TEST2:    ds_st_next_nodr = S_TEST2B;
+		S_TEST2B:   ds_st_next_nodr = S_TEST3;
+		S_TEST3:    ds_st_next_nodr = r_e_last ? S_WR : S_TEST_PRE;
 		S_WR: begin
 			if (!wr_any || (wait_rsp && rsp_valid))
 				ds_st_next_nodr = r_rep[4] ? S_OUT : S_ROW;
@@ -994,9 +1542,9 @@ module atg_rop_ds #(
 		endcase
 	end
 
-	(* keep = "true" *) wire ds_st0_base = !rst_sync && ds_st_next_nodr[0];
-	(* keep = "true" *) wire ds_st3_base = !rst_sync && ds_st_next_nodr[3];
-	(* keep = "true" *) wire ds_dval_set = !rst_sync && (st == S_OUT) && (pm != 16'd0);
+	(* keep = "true" *) wire ds_st0_base = ds_st_next_nodr[0];
+	(* keep = "true" *) wire ds_st3_base = ds_st_next_nodr[3];
+	(* keep = "true" *) wire ds_dval_set = (st == S_OUT) && (pm != 16'd0);
 	wire ds_st0_next, ds_st3_next, ds_dval_next;
 `ifdef SYNTH_KINTEX7
 	(* keep = "true", dont_touch = "true" *) LUT4 #(.INIT(16'h222E)) u_ds_st0 (
@@ -1008,19 +1556,30 @@ module atg_rop_ds #(
 	(* keep = "true", dont_touch = "true" *) LUT4 #(.INIT(16'h222E)) u_ds_dval (
 		.I0(ds_dval_set), .I1(d_valid), .I2(d_ready), .I3(rst_sync), .O(ds_dval_next)
 	);
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", dont_touch = "true" *) LUT4 #(.INIT(16'h222E)) u_ds_st0 (
+		.I0(ds_st0_base), .I1(d_valid), .I2(d_ready), .I3(rst_sync), .O(ds_st0_next)
+	);
+	(* keep = "true", dont_touch = "true" *) LUT4 #(.INIT(16'h222E)) u_ds_st3 (
+		.I0(ds_st3_base), .I1(d_valid), .I2(d_ready), .I3(rst_sync), .O(ds_st3_next)
+	);
+	(* keep = "true", dont_touch = "true" *) LUT4 #(.INIT(16'h222E)) u_ds_dval (
+		.I0(ds_dval_set), .I1(d_valid), .I2(d_ready), .I3(rst_sync), .O(ds_dval_next)
+	);
 `else
-	assign ds_st0_next  = d_valid ? (!rst_sync && !d_ready) : ds_st0_base;
-	assign ds_st3_next  = d_valid ? (!rst_sync && !d_ready) : ds_st3_base;
-	assign ds_dval_next = d_valid ? (!rst_sync && !d_ready) : ds_dval_set;
+	assign ds_st0_next  = d_valid ? !d_ready : ds_st0_base;
+	assign ds_st3_next  = d_valid ? !d_ready : ds_st3_base;
+	assign ds_dval_next = d_valid ? !d_ready : ds_dval_set;
 `endif
 
 	always @(posedge clk or posedge rst_sync) begin
 		if (rst_sync) begin
-			st      <= 4'd0;
+			st      <= 5'd0;
 			d_valid <= 1'b0;
 		end else begin
 			st[0]   <= ds_st0_next;
 			st[3]   <= ds_st3_next;
+			st[4]   <= ds_st_next_nodr[4];
 			st[2:1] <= ds_st_next_nodr[2:1];
 			d_valid <= ds_dval_next;
 		end
@@ -1028,7 +1587,9 @@ module atg_rop_ds #(
 
 	always @(posedge clk or posedge rst_sync) begin
 		if (rst_sync) begin
-`ifndef SYNTH_KINTEX7
+`ifdef SYNTH_KINTEX7
+`elsif SYNTH_KINTEX_ULTRASCALE
+`else
 			d_color1 <= 512'd0;
 `endif
 			d_beat <= 5'd0;
@@ -1039,17 +1600,23 @@ module atg_rop_ds #(
 			r_rep <= 5'd0;
 			wr_any <= 1'b0;
 			e <= 3'd0;
+			r_row_nz <= 2'd0;
+			r_e_last <= 1'b0;
 			req_write <= 1'b0;
 			d_smask <= 16'd0;
 		end else begin
-`ifndef SYNTH_KINTEX7
+`ifdef SYNTH_KINTEX7
+`elsif SYNTH_KINTEX_ULTRASCALE
+`else
 			if (st == S_TEST3)
 				req_be <= req_be | s3_bwe_leaf;
 `endif
 			case (st)
 			S_IDLE:
 				if (q_valid) begin
-`ifndef SYNTH_KINTEX7
+`ifdef SYNTH_KINTEX7
+`elsif SYNTH_KINTEX_ULTRASCALE
+`else
 					d_xy <= q_xy;
 					ds_xy_int <= q_xy;
 					d_color <= q_dbg ? {4{dbgf_r}} : q_color;
@@ -1061,8 +1628,11 @@ module atg_rop_ds #(
 `else
 					if (q_beat[0]) begin
 `endif
-`ifndef SYNTH_KINTEX7
+`ifdef SYNTH_KINTEX7
+`elsif SYNTH_KINTEX_ULTRASCALE
+`else
 						mask <= q_smask;
+						r_row_nz <= {|q_smask[15:8], |q_smask[7:0]};
 						z <= q_sdepth;
 `endif
 						pm <= q_smask;
@@ -1070,9 +1640,11 @@ module atg_rop_ds #(
 						r_rep <= 5'd0;
 					end
 				end
-			S_ROW_SETUP: begin end
+			S_ROW_SETUP:  begin end
 			S_ROW_SETUP1: begin end
 			S_ROW_SETUP2: begin end
+			S_ROW_SETUP3: begin end
+			S_ROW_SETUP4: begin end
 			S_ROW:
 				/* the row's address; skip a row without lanes */
 				if (mask[8 * r_rep[4] +: 8] == 8'd0 && !r_rep[4])
@@ -1088,14 +1660,18 @@ module atg_rop_ds #(
 					end
 				end else if (rsp_valid) begin
 					wait_rsp <= 1'b0;
-`ifndef SYNTH_KINTEX7
+`ifdef SYNTH_KINTEX7
+`elsif SYNTH_KINTEX_ULTRASCALE
+`else
 					line <= rsp_rdata;
 					req_be <= {LINE_BYTES{1'b0}};
 `endif
 					wr_any <= 1'b0;
 					e <= 3'd0;
+					r_e_last <= 1'b0;
 				end
-			S_TEST0:  begin end
+			S_TEST_PRE: begin end
+			S_TEST0:    begin end
 			S_TEST0A: begin end
 			S_TEST0B: begin end
 			S_TEST1:  begin end
@@ -1109,6 +1685,7 @@ module atg_rop_ds #(
 						wr_any <= 1'b1;
 				end
 				e <= e_next;
+				r_e_last <= (e_next == (ms4_rep[2] ? 3'd7 : 3'd4));
 			end
 			S_WR:
 				if (!wr_any) begin
@@ -1134,8 +1711,8 @@ module atg_rop_ds #(
 		end
 	end
 
-	wire unused_ok = &{1'b0, rsp_write, rsp_tag, rsp_error, STENCIL != 0, WPL != 0, WB != 0, bo[0], yrs[48:32],
-		yr_co_unused, ra_co_unused, rb1_co_unused, rd_co_unused, bo_co_unused,
+	wire unused_ok = &{1'b0, rsp_write, rsp_tag, rsp_error, STENCIL != 0, WPL != 0, WB != 0, bo[0], r_bo[0], unused_yrs_hi,
+		ra_co_unused, rb1_co_unused, rd_co_unused, bo_co_unused,
 		sub30_bo_unused, sub126_bo_unused,
 		u24_p_bo, u16_p_bo, u24_r_co, u16_r_co, u24_sh[22:0], u16_sh[22:0],
 		zun_mn[71], zun_mn[46:0], zun_carry_unused, sinc_co_unused, sdec_bo_unused,
@@ -1281,19 +1858,34 @@ module atg_rop_ds_eval_s2a #(
 	end
 	endgenerate
 
-	/* 2. stencil compare & pre-masked stencil write words (pure LUT, <= 3 LUTs) */
+	/* 2. stencil compare & pre-masked stencil write words (<= 9 cmos3 total) */
 	wire [7:0] s_a = stored[31:24];
 	wire [7:0] lhs = ss_ref & cm;
 	wire [7:0] rhs = s_a & cm;
-	(* keep = "true" *) wire [2:0] slt0, seq0;
-	assign seq0[0] = (lhs[2:0] == rhs[2:0]);
-	assign slt0[0] = (~lhs[2] & rhs[2]) | ((lhs[2] ~^ rhs[2]) & ((~lhs[1] & rhs[1]) | ((lhs[1] ~^ rhs[1]) & (~lhs[0] & rhs[0]))));
-	assign seq0[1] = (lhs[5:3] == rhs[5:3]);
-	assign slt0[1] = (~lhs[5] & rhs[5]) | ((lhs[5] ~^ rhs[5]) & ((~lhs[4] & rhs[4]) | ((lhs[4] ~^ rhs[4]) & (~lhs[3] & rhs[3]))));
-	assign seq0[2] = (lhs[7:6] == rhs[7:6]);
-	assign slt0[2] = (~lhs[7] & rhs[7]) | ((lhs[7] ~^ rhs[7]) & (~lhs[6] & rhs[6]));
-	(* keep = "true" *) wire slt = slt0[2] | (seq0[2] & slt0[1]) | (seq0[2] & seq0[1] & slt0[0]);
-	(* keep = "true" *) wire seq = &seq0;
+	/* Balanced 2->4->8 OAI3/AOI3 stencil comparator (depth 6 to slt/seq, 9 total to s_cmp) */
+	(* keep = "true" *) wire [7:0] sc_eq_raw_k0 = ~(ss_ref & s_a);
+	(* keep = "true" *) wire [7:0] sc_eq_raw    = ~(sc_eq_raw_k0 & (ss_ref | s_a));
+	(* keep = "true" *) wire [7:0] sc_eq_n      = ~(sc_eq_raw | ~cm);
+	(* keep = "true" *) wire [7:0] sc_lt_n      = ~((~ss_ref) & cm & s_a);
+	(* keep = "true" *) wire [3:0] sc_lt2, sc_en2;
+	genvar gsc;
+	generate
+	for (gsc = 0; gsc < 4; gsc = gsc + 1) begin : g_sc2
+		assign sc_lt2[gsc] = !(sc_lt_n[2*gsc+1] & (sc_eq_n[2*gsc+1] | sc_lt_n[2*gsc]));
+		assign sc_en2[gsc] = !(sc_eq_n[2*gsc+1] | sc_eq_n[2*gsc]);
+	end
+	endgenerate
+	(* keep = "true" *) wire [1:0] sc_lt4_n = {
+		!(sc_lt2[3] | (sc_en2[3] & sc_lt2[2])),
+		!(sc_lt2[1] | (sc_en2[1] & sc_lt2[0]))
+	};
+	(* keep = "true" *) wire [1:0] sc_en4_n = {
+		!(sc_en2[3] & sc_en2[2]),
+		!(sc_en2[1] & sc_en2[0])
+	};
+	(* keep = "true" *) wire slt = !(sc_lt4_n[1] & (sc_en4_n[1] | sc_lt4_n[0]));
+	(* keep = "true" *) wire seq = !(sc_en4_n[1] | sc_en4_n[0]);
+	wire unused_lhs_rhs = &{1'b0, lhs, rhs};
 
 	reg s_cmp_r;
 	always @(*) begin
@@ -1337,33 +1929,106 @@ module atg_rop_ds_eval_s2a #(
 		end
 	endfunction
 
-	(* keep = "true" *) wire sa_ff_lo = (s_a == 8'hFF);
-	(* keep = "true" *) wire sa_ff_hi = (s_a == 8'hFF);
-	(* keep = "true" *) wire sa_z_lo  = (s_a == 8'd0);
-	(* keep = "true" *) wire sa_z_hi  = (s_a == 8'd0);
-	(* keep = "true" *) wire [7:0] snew_f = {
-		get_snew4(so_hi[2:0], s_a[7:4], ss_ref[7:4], s_inc[7:4], s_dec[7:4], sa_ff_hi, sa_z_hi),
-		get_snew4(so_lo[2:0], s_a[3:0], ss_ref[3:0], s_inc[3:0], s_dec[3:0], sa_ff_lo, sa_z_lo)
+	wire sa_ff_raw = (s_a == 8'hFF);
+	wire sa_z_raw = (s_a == 8'd0);
+`ifdef SYNTH_KINTEX7
+	wire sa_ff_lo, sa_ff_hi;
+	wire sa_z_lo, sa_z_hi;
+	wire [7:0] s_inc_f, s_inc_dp, s_inc_df;
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_saffl (.I0(sa_ff_raw), .O(sa_ff_lo));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_saffh (.I0(sa_ff_raw), .O(sa_ff_hi));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_sazl (.I0(sa_z_raw), .O(sa_z_lo));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_sazh (.I0(sa_z_raw), .O(sa_z_hi));
+	genvar gsi;
+	generate
+	for (gsi = 0; gsi < 8; gsi = gsi + 1) begin : g_sinc_b
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_sif (.I0(s_inc[gsi]), .O(s_inc_f[gsi]));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_sidp (.I0(s_inc[gsi]), .O(s_inc_dp[gsi]));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_sidf (.I0(s_inc[gsi]), .O(s_inc_df[gsi]));
+	end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire sa_ff_lo, sa_ff_hi;
+	wire sa_z_lo, sa_z_hi;
+	wire [7:0] s_inc_f, s_inc_dp, s_inc_df;
+	assign sa_ff_lo = sa_ff_raw;
+	assign sa_ff_hi = sa_ff_raw;
+	assign sa_z_lo = sa_z_raw;
+	assign sa_z_hi = sa_z_raw;
+	genvar gsi;
+	generate
+	for (gsi = 0; gsi < 8; gsi = gsi + 1) begin : g_sinc_b
+		assign s_inc_f[gsi] = s_inc[gsi];
+		assign s_inc_dp[gsi] = s_inc[gsi];
+		assign s_inc_df[gsi] = s_inc[gsi];
+	end
+	endgenerate
+`else
+	wire sa_ff_lo = sa_ff_raw;
+	wire sa_ff_hi = sa_ff_raw;
+	wire sa_z_lo  = sa_z_raw;
+	wire sa_z_hi  = sa_z_raw;
+	wire [7:0] s_inc_f  = s_inc;
+	wire [7:0] s_inc_dp = s_inc;
+	wire [7:0] s_inc_df = s_inc;
+`endif
+	wire [7:0] snew_f = {
+		get_snew4(so_hi[2:0], s_a[7:4], ss_ref[7:4], s_inc_f[7:4], s_dec[7:4], sa_ff_hi, sa_z_hi),
+		get_snew4(so_lo[2:0], s_a[3:0], ss_ref[3:0], s_inc_f[3:0], s_dec[3:0], sa_ff_lo, sa_z_lo)
 	};
-	(* keep = "true" *) wire [7:0] snew_dp = {
-		get_snew4(so_hi[5:3], s_a[7:4], ss_ref[7:4], s_inc[7:4], s_dec[7:4], sa_ff_hi, sa_z_hi),
-		get_snew4(so_lo[5:3], s_a[3:0], ss_ref[3:0], s_inc[3:0], s_dec[3:0], sa_ff_lo, sa_z_lo)
+	wire [7:0] snew_dp = {
+		get_snew4(so_hi[5:3], s_a[7:4], ss_ref[7:4], s_inc_dp[7:4], s_dec[7:4], sa_ff_hi, sa_z_hi),
+		get_snew4(so_lo[5:3], s_a[3:0], ss_ref[3:0], s_inc_dp[3:0], s_dec[3:0], sa_ff_lo, sa_z_lo)
 	};
-	(* keep = "true" *) wire [7:0] snew_df = {
-		get_snew4(so_hi[8:6], s_a[7:4], ss_ref[7:4], s_inc[7:4], s_dec[7:4], sa_ff_hi, sa_z_hi),
-		get_snew4(so_lo[8:6], s_a[3:0], ss_ref[3:0], s_inc[3:0], s_dec[3:0], sa_ff_lo, sa_z_lo)
+	wire [7:0] snew_df = {
+		get_snew4(so_hi[8:6], s_a[7:4], ss_ref[7:4], s_inc_df[7:4], s_dec[7:4], sa_ff_hi, sa_z_hi),
+		get_snew4(so_lo[8:6], s_a[3:0], ss_ref[3:0], s_inc_df[3:0], s_dec[3:0], sa_ff_lo, sa_z_lo)
 	};
 	assign swr_fail  = (s_a & ~wm) | (snew_f  & wm);
 	assign swr_dpass = (s_a & ~wm) | (snew_dp & wm);
 	assign swr_dfail = (s_a & ~wm) | (snew_df & wm);
 
-	(* keep = "true" *) wire [1:0] sch_f_n, sch_dp_n, sch_df_n;
-	assign sch_f_n[0]  = (((snew_f[3:0]  ^ s_a[3:0]) & wm[3:0]) != 4'd0);
-	assign sch_f_n[1]  = (((snew_f[7:4]  ^ s_a[7:4]) & wm[7:4]) != 4'd0);
-	assign sch_dp_n[0] = (((snew_dp[3:0] ^ s_a[3:0]) & wm[3:0]) != 4'd0);
-	assign sch_dp_n[1] = (((snew_dp[7:4] ^ s_a[7:4]) & wm[7:4]) != 4'd0);
-	assign sch_df_n[0] = (((snew_df[3:0] ^ s_a[3:0]) & wm[3:0]) != 4'd0);
-	assign sch_df_n[1] = (((snew_df[7:4] ^ s_a[7:4]) & wm[7:4]) != 4'd0);
+	wire [1:0] sch_f_n, sch_dp_n, sch_df_n;
+	wire [3:0] dx_rep_lo = (ss_ref[3:0] ^ s_a[3:0]) & wm[3:0];
+	wire [3:0] dx_rep_hi = (ss_ref[7:4] ^ s_a[7:4]) & wm[7:4];
+	wire [3:0] dx_zer_lo = s_a[3:0] & wm[3:0];
+	wire [3:0] dx_zer_hi = s_a[7:4] & wm[7:4];
+	wire [3:0] dx_inv_lo = wm[3:0];
+	wire [3:0] dx_inv_hi = wm[7:4];
+	wire nz_z_lo   = |dx_zer_lo, nz_z_hi   = |dx_zer_hi;
+	wire nz_rep_lo = |dx_rep_lo, nz_rep_hi = |dx_rep_hi;
+	wire nz_inv_lo = |dx_inv_lo, nz_inv_hi = |dx_inv_hi;
+	wire nz_inc_lo = wm[0] | (wm[1] & s_a[0]) | (wm[2] & s_a[1] & s_a[0]) | (wm[3] & s_a[2] & s_a[1] & s_a[0]);
+	wire nz_dec_lo = wm[0] | (wm[1] & !s_a[0]) | (wm[2] & !s_a[1] & !s_a[0]) | (wm[3] & !s_a[2] & !s_a[1] & !s_a[0]);
+	wire nz_inc_hi = (&s_a[3:0]) && (wm[4] | (wm[5] & s_a[4]) | (wm[6] & s_a[5] & s_a[4]) | (wm[7] & s_a[6] & s_a[5] & s_a[4]));
+	wire nz_dec_hi = (~(|s_a[3:0])) && (wm[4] | (wm[5] & !s_a[4]) | (wm[6] & !s_a[5] & !s_a[4]) | (wm[7] & !s_a[6] & !s_a[5] & !s_a[4]));
+	function get_sch4;
+		input [2:0] op;
+		input nz_z, nz_rep, nz_inc, nz_dec, nz_inv, is_ff, is_z;
+		begin
+			case (op)
+			3'd0: get_sch4 = 1'b0;
+			3'd1: get_sch4 = nz_z;
+			3'd2: get_sch4 = nz_rep;
+			3'd3: get_sch4 = !is_ff && nz_inc;
+			3'd4: get_sch4 = !is_z  && nz_dec;
+			3'd5: get_sch4 = nz_inv;
+`ifdef MUT_STENCIL_WRAP
+			3'd6: get_sch4 = !is_ff && nz_inc;
+			default: get_sch4 = !is_z && nz_dec;
+`else
+			3'd6: get_sch4 = nz_inc;
+			default: get_sch4 = nz_dec;
+`endif
+			endcase
+		end
+	endfunction
+	assign sch_f_n[0]  = get_sch4(so_lo[2:0], nz_z_lo, nz_rep_lo, nz_inc_lo, nz_dec_lo, nz_inv_lo, sa_ff_lo, sa_z_lo);
+	assign sch_f_n[1]  = get_sch4(so_hi[2:0], nz_z_hi, nz_rep_hi, nz_inc_hi, nz_dec_hi, nz_inv_hi, sa_ff_hi, sa_z_hi);
+	assign sch_dp_n[0] = get_sch4(so_lo[5:3], nz_z_lo, nz_rep_lo, nz_inc_lo, nz_dec_lo, nz_inv_lo, sa_ff_lo, sa_z_lo);
+	assign sch_dp_n[1] = get_sch4(so_hi[5:3], nz_z_hi, nz_rep_hi, nz_inc_hi, nz_dec_hi, nz_inv_hi, sa_ff_hi, sa_z_hi);
+	assign sch_df_n[0] = get_sch4(so_lo[8:6], nz_z_lo, nz_rep_lo, nz_inc_lo, nz_dec_lo, nz_inv_lo, sa_ff_lo, sa_z_lo);
+	assign sch_df_n[1] = get_sch4(so_hi[8:6], nz_z_hi, nz_rep_hi, nz_inc_hi, nz_dec_hi, nz_inv_hi, sa_ff_hi, sa_z_hi);
 	assign sch_fail  = |sch_f_n;
 	assign sch_dpass = |sch_dp_n;
 	assign sch_dfail = |sch_df_n;
@@ -1412,6 +2077,11 @@ module atg_rop_ds_eval_s2b #(
 	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_d24h (.I0(d24_raw), .O(d24_hi));
 	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_d32l (.I0(d32_raw), .O(d32_lo));
 	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_d32h (.I0(d32_raw), .O(d32_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign d24_lo = d24_raw;
+	assign d24_hi = d24_raw;
+	assign d32_lo = d32_raw;
+	assign d32_hi = d32_raw;
 `else
 	assign d24_lo = d24_raw;
 	assign d24_hi = d24_raw;
@@ -1421,7 +2091,7 @@ module atg_rop_ds_eval_s2b #(
 	wire has = d24_lo || d32_lo || d16;
 
 	/* Level 1: format mux for depth lt/eq/nan, depth fn decode, and b_ok (each <= 6 inputs) */
-	(* keep = "true" *) wire b_ok = !depth[9] || (d32_raw ? (bmin_st && bmax_st) : (bmin_zun && bmax_zun));
+	wire b_ok = !depth[9] || (d32_raw ? (bmin_st && bmax_st) : (bmin_zun && bmax_zun));
 	(* keep = "true" *) wire d_lt = d32_raw ? (!nan_32 && lt_32) : (d24_raw ? lt_24 : lt_16);
 	(* keep = "true" *) wire d_eq = d32_raw ? (!nan_32 && eq_32) : (d24_raw ? eq_24 : eq_16);
 
@@ -1435,7 +2105,6 @@ module atg_rop_ds_eval_s2b #(
 	(* keep = "true" *) wire d_ok = d_lt ? allow_lt : (d_eq ? allow_eq : allow_gt);
 
 	wire s_on = depth[8] && d24_lo;
-	wire [7:0] s_wr = !s_cmp ? swr_fail : (d_ok ? swr_dpass : swr_dfail);
 	wire s_diff     = !s_cmp ? sch_fail : (d_ok ? sch_dpass : sch_dfail);
 	wire s_ok = !s_on || s_cmp;
 
@@ -1443,9 +2112,15 @@ module atg_rop_ds_eval_s2b #(
 	assign pass = !has ? 1'b1 : (live && s_ok && d_ok);
 	wire d_wr = live && s_ok && d_ok && depth[1];
 	wire s_ch = live && s_on && s_diff;
+	wire [7:0] wword_hi =
+		({8{d32_hi}}                     & zf[31:24]) |
+		({8{d24_hi && !s_cmp}}           & swr_fail)  |
+		({8{d24_hi &&  s_cmp &&  d_ok}}  & swr_dpass) |
+		({8{d24_hi &&  s_cmp && !d_ok}}  & swr_dfail);
 	assign wword = {
-		d32_hi ? zf[31:16] : (d24_hi ? {s_wr, zu24[23:16]} : 16'd0),
-		d32_lo ? zf[15:0]  : (d24_lo ? zu24[15:0]          : zu16)
+		wword_hi,
+		d32_hi ? zf[23:16] : (d24_hi ? zu24[23:16] : 8'd0),
+		d32_lo ? zf[15:0]  : (d24_lo ? zu24[15:0]  : zu16)
 	};
 	assign wbe = d32_lo ? {4{d_wr}} : (d24_lo ? {s_ch, {3{d_wr}}} : {2'b00, {2{d_wr}}});
 endmodule

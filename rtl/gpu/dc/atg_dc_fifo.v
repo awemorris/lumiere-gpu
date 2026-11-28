@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -47,35 +47,57 @@ module atg_dc_fifo #(
 	// -------------------------------------------------------------
 	// Write side (w_clk domain)
 	// -------------------------------------------------------------
-	(* max_fanout = 16 *) reg [P-1:0] w_bin;
-	reg [P-1:0] w_gray;
+	(* max_fanout = 16 *) reg [P-1:0] w_bin, w_bin_p1;
+	reg [P-1:0] w_gray, w_gray_p1;
 	(* ASYNC_REG = "TRUE" *) reg [P-1:0] w_rgray1;
 	(* ASYNC_REG = "TRUE" *) reg [P-1:0] w_rgray2;
+	(* max_fanout = 16 *) reg w_ready_r;
 
-	wire w_push = w_valid && w_ready;
-	wire [P-1:0] w_bin_next;
+	wire w_push = w_valid && w_ready_r;
+	wire [P-1:0] w_bin_p2;
 	wire unused_w_co;
 	am_add #(.W(P)) u_w_bin (
-		.a(w_bin), .b({P{1'b0}}), .ci(w_push), .s(w_bin_next), .co(unused_w_co)
+		.a(w_bin_p1), .b({P{1'b0}}), .ci(1'b1), .s(w_bin_p2), .co(unused_w_co)
 	);
-	wire [P-1:0] w_gray_next = w_bin_next ^ (w_bin_next >> 1);
+	wire [P-1:0] w_gray_p2 = w_bin_p2 ^ (w_bin_p2 >> 1);
 
 	wire [P-1:0] full_gray = {~w_rgray2[P-1:P-2], w_rgray2[P-3:0]};
-	wire [3:0] w_diff_eq;
+	wire [3:0] w_diff_eq, w_almost_eq;
 	assign w_diff_eq[0] = (w_gray[2:0]   == full_gray[2:0]);
 	assign w_diff_eq[1] = (w_gray[5:3]   == full_gray[5:3]);
 	assign w_diff_eq[2] = (w_gray[8:6]   == full_gray[8:6]);
 	assign w_diff_eq[3] = (w_gray[11:9]  == full_gray[11:9]);
-	(* max_fanout = 16 *) wire w_ready_w = !(&w_diff_eq);
-	assign w_ready = w_ready_w;
+	assign w_almost_eq[0] = (w_gray_p1[2:0]  == full_gray[2:0]);
+	assign w_almost_eq[1] = (w_gray_p1[5:3]  == full_gray[5:3]);
+	assign w_almost_eq[2] = (w_gray_p1[8:6]  == full_gray[8:6]);
+	assign w_almost_eq[3] = (w_gray_p1[11:9] == full_gray[11:9]);
+	wire w_at_full = &w_diff_eq;
+	wire w_almost_full = &w_almost_eq;
+	assign w_ready = w_ready_r;
 
 `ifdef SYNTH_KINTEX7
-	wire w_push_lo, w_push_hi;
-	LUT1 #(.INIT(2'b10)) u_buf_wp0 (.I0(w_push), .O(w_push_lo));
-	LUT1 #(.INIT(2'b10)) u_buf_wp1 (.I0(w_push), .O(w_push_hi));
+	wire w_push_lo, w_push_hi, w_push_bin, w_push_bp1, w_push_gray, w_push_gp1;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wp0 (.I0(w_push), .O(w_push_lo));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wp1 (.I0(w_push), .O(w_push_hi));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wpb (.I0(w_push), .O(w_push_bin));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wpp (.I0(w_push), .O(w_push_bp1));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wpg (.I0(w_push), .O(w_push_gray));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wpq (.I0(w_push), .O(w_push_gp1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire w_push_lo, w_push_hi, w_push_bin, w_push_bp1, w_push_gray, w_push_gp1;
+	assign w_push_lo = w_push;
+	assign w_push_hi = w_push;
+	assign w_push_bin = w_push;
+	assign w_push_bp1 = w_push;
+	assign w_push_gray = w_push;
+	assign w_push_gp1 = w_push;
 `else
 	wire w_push_lo = w_push;
 	wire w_push_hi = w_push;
+	wire w_push_bin = w_push;
+	wire w_push_bp1 = w_push;
+	wire w_push_gray = w_push;
+	wire w_push_gp1 = w_push;
 `endif
 
 	// Write port (0 logic levels to RAM address pin)
@@ -88,15 +110,25 @@ module atg_dc_fifo #(
 
 	always @(posedge w_clk) begin
 		if (w_rst_high) begin
-			w_bin    <= {P{1'b0}};
-			w_gray   <= {P{1'b0}};
-			w_rgray1 <= {P{1'b0}};
-			w_rgray2 <= {P{1'b0}};
+			w_bin     <= {P{1'b0}};
+			w_bin_p1  <= {{(P-1){1'b0}}, 1'b1};
+			w_gray    <= {P{1'b0}};
+			w_gray_p1 <= {{(P-1){1'b0}}, 1'b1};
+			w_rgray1  <= {P{1'b0}};
+			w_rgray2  <= {P{1'b0}};
+			w_ready_r <= 1'b1;
 		end else begin
-			w_bin    <= w_bin_next;
-			w_gray   <= w_gray_next;
-			w_rgray1 <= r_gray;
-			w_rgray2 <= w_rgray1;
+			if (w_push_bin)
+				w_bin     <= w_bin_p1;
+			if (w_push_bp1)
+				w_bin_p1  <= w_bin_p2;
+			if (w_push_gray)
+				w_gray    <= w_gray_p1;
+			if (w_push_gp1)
+				w_gray_p1 <= w_gray_p2;
+			w_rgray1  <= r_gray;
+			w_rgray2  <= w_rgray1;
+			w_ready_r <= !(w_at_full || (w_push && w_almost_full));
 		end
 	end
 
@@ -140,6 +172,13 @@ module atg_dc_fifo #(
 	LUT1 #(.INIT(2'b10)) u_buf_ren_c (.I0(ram_ren), .O(ram_ren_ctl));
 	LUT1 #(.INIT(2'b10)) u_buf_ren_b (.I0(ram_ren), .O(ram_ren_bin));
 	LUT1 #(.INIT(2'b10)) u_buf_ren_g (.I0(ram_ren), .O(ram_ren_gray));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire ram_ren_lo, ram_ren_hi, ram_ren_ctl, ram_ren_bin, ram_ren_gray;
+	assign ram_ren_lo = ram_ren;
+	assign ram_ren_hi = ram_ren;
+	assign ram_ren_ctl = ram_ren;
+	assign ram_ren_bin = ram_ren;
+	assign ram_ren_gray = ram_ren;
 `else
 	wire ram_ren_lo = ram_ren;
 	wire ram_ren_hi = ram_ren;
@@ -266,9 +305,13 @@ module atg_dc_fifo #(
 	wire [P-1:0] bram_count;
 	wire unused_bram_bo;
 	reg [P-1:0] w_bin_in_rclk_q, r_bin_wm_q;
+	reg [P-1:0] bram_count_q;
+	reg [2:0] occ_wm_q;
 	always @(posedge r_clk) begin
 		w_bin_in_rclk_q <= w_bin_in_rclk;
 		r_bin_wm_q      <= r_bin;
+		bram_count_q    <= bram_count;
+		occ_wm_q        <= occ;
 	end
 	am_sub #(.W(P)) u_bram_count (
 		.a(w_bin_in_rclk_q), .b(r_bin_wm_q), .bi(1'b0), .d(bram_count), .bo(unused_bram_bo)
@@ -277,7 +320,7 @@ module atg_dc_fifo #(
 	wire [P-1:0] total_count;
 	wire unused_tot_co;
 	am_add #(.W(P)) u_tot_count (
-		.a(bram_count), .b({{(P-3){1'b0}}, occ}), .ci(1'b0), .s(total_count), .co(unused_tot_co)
+		.a(bram_count_q), .b({{(P-3){1'b0}}, occ_wm_q}), .ci(1'b0), .s(total_count), .co(unused_tot_co)
 	);
 
 	reg [P-1:0] r_count_q;

@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -53,10 +53,76 @@ module atg_su_dec #(
 	wire [31:0] d_w0 = d_instr[31:0];
 	wire [31:0] d_w1 = d_instr[63:32];
 	wire [6:0] d_opc = d_w0[6:0];
-	wire [2:0] d_f3 = d_w0[14:12];
-	wire [6:0] d_f7 = d_w0[31:25];
-	wire [4:0] d_rs2f = d_w0[24:20];
-	wire [4:0] d_sub = d_w1[21:17];
+	wire [2:0] d_f3_t0, d_f3_t1, d_f3_c0, d_f3_c1, d_f3_c2, d_f3_c3;
+	wire [6:0] d_f7_t0, d_f7_t1, d_f7_t2, d_f7_t3, d_f7_c0, d_f7_c1;
+	wire [4:0] d_rs2f;
+	wire [4:0] d_sub;
+`ifdef SYNTH_KINTEX7
+	genvar gdb_f;
+	generate
+		for (gdb_f = 0; gdb_f < 3; gdb_f = gdb_f + 1) begin : g_bf3
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bf3t0 (.I0(d_w0[12+gdb_f]), .O(d_f3_t0[gdb_f]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bf3t1 (.I0(d_w0[12+gdb_f]), .O(d_f3_t1[gdb_f]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bf3c0 (.I0(d_w0[12+gdb_f]), .O(d_f3_c0[gdb_f]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bf3c1 (.I0(d_w0[12+gdb_f]), .O(d_f3_c1[gdb_f]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bf3c2 (.I0(d_w0[12+gdb_f]), .O(d_f3_c2[gdb_f]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bf3c3 (.I0(d_w0[12+gdb_f]), .O(d_f3_c3[gdb_f]));
+		end
+		for (gdb_f = 0; gdb_f < 7; gdb_f = gdb_f + 1) begin : g_bf7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bf7t0 (.I0(d_w0[25+gdb_f]), .O(d_f7_t0[gdb_f]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bf7t1 (.I0(d_w0[25+gdb_f]), .O(d_f7_t1[gdb_f]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bf7t2 (.I0(d_w0[25+gdb_f]), .O(d_f7_t2[gdb_f]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bf7t3 (.I0(d_w0[25+gdb_f]), .O(d_f7_t3[gdb_f]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bf7c0 (.I0(d_w0[25+gdb_f]), .O(d_f7_c0[gdb_f]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bf7c1 (.I0(d_w0[25+gdb_f]), .O(d_f7_c1[gdb_f]));
+		end
+		for (gdb_f = 0; gdb_f < 5; gdb_f = gdb_f + 1) begin : g_br2
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_br2 (.I0(d_w0[20+gdb_f]), .O(d_rs2f[gdb_f]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bsb (.I0(d_w1[17+gdb_f]), .O(d_sub[gdb_f]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar gdb_f;
+	generate
+		for (gdb_f = 0; gdb_f < 3; gdb_f = gdb_f + 1) begin : g_bf3
+			assign d_f3_t0[gdb_f] = d_w0[12+gdb_f];
+			assign d_f3_t1[gdb_f] = d_w0[12+gdb_f];
+			assign d_f3_c0[gdb_f] = d_w0[12+gdb_f];
+			assign d_f3_c1[gdb_f] = d_w0[12+gdb_f];
+			assign d_f3_c2[gdb_f] = d_w0[12+gdb_f];
+			assign d_f3_c3[gdb_f] = d_w0[12+gdb_f];
+		end
+		for (gdb_f = 0; gdb_f < 7; gdb_f = gdb_f + 1) begin : g_bf7
+			assign d_f7_t0[gdb_f] = d_w0[25+gdb_f];
+			assign d_f7_t1[gdb_f] = d_w0[25+gdb_f];
+			assign d_f7_t2[gdb_f] = d_w0[25+gdb_f];
+			assign d_f7_t3[gdb_f] = d_w0[25+gdb_f];
+			assign d_f7_c0[gdb_f] = d_w0[25+gdb_f];
+			assign d_f7_c1[gdb_f] = d_w0[25+gdb_f];
+		end
+		for (gdb_f = 0; gdb_f < 5; gdb_f = gdb_f + 1) begin : g_br2
+			assign d_rs2f[gdb_f] = d_w0[20+gdb_f];
+			assign d_sub[gdb_f] = d_w1[17+gdb_f];
+		end
+	endgenerate
+`else
+	assign d_f3_t0 = d_w0[14:12];
+	assign d_f3_t1 = d_w0[14:12];
+	assign d_f3_c0 = d_w0[14:12];
+	assign d_f3_c1 = d_w0[14:12];
+	assign d_f3_c2 = d_w0[14:12];
+	assign d_f3_c3 = d_w0[14:12];
+	assign d_f7_t0 = d_w0[31:25];
+	assign d_f7_t1 = d_w0[31:25];
+	assign d_f7_t2 = d_w0[31:25];
+	assign d_f7_t3 = d_w0[31:25];
+	assign d_f7_c0 = d_w0[31:25];
+	assign d_f7_c1 = d_w0[31:25];
+	assign d_rs2f  = d_w0[24:20];
+	assign d_sub   = d_w1[21:17];
+`endif
+	wire [2:0] d_f3 = d_f3_t0;
+	wire [6:0] d_f7 = d_f7_t0;
 	wire [6:0] d_rs1 = {d_w1[3:2], d_w0[19:15]};
 	wire [31:0] d_hi = {{12{d_w1[31]}}, d_w1[31:22], 10'd0} << 2;
 
@@ -71,32 +137,24 @@ module atg_su_dec #(
 			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bopc_c (.I0(d_opc[g_opc]), .O(d_opc_ctl[g_opc]));
 		end
 	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar g_opc;
+	generate
+		for (g_opc = 0; g_opc < 7; g_opc = g_opc + 1) begin : g_buf_opc
+			assign d_opc_tab_r[g_opc] = d_opc[g_opc];
+			assign d_opc_tab_c[g_opc] = d_opc[g_opc];
+			assign d_opc_ctl[g_opc] = d_opc[g_opc];
+		end
+	endgenerate
 `else
 	assign d_opc_tab_r = d_opc;
 	assign d_opc_tab_c = d_opc;
 	assign d_opc_ctl   = d_opc;
 `endif
 	wire [28:0] tr, tc;
-	wire custom_lo = d_opc_ctl == 7'b0001011 || d_opc_ctl == 7'b0101011 || d_opc_ctl == 7'b1011011 ||
-		d_opc_ctl == 7'b1111011;
-	wire custom_hi = d_opc_ctl == 7'b0001011 || d_opc_ctl == 7'b0101011 || d_opc_ctl == 7'b1011011 ||
-		d_opc_ctl == 7'b1111011;
-	atg_su_dec_tab tab (
-		.opc(d_opc_tab_r), .f3(d_f3), .f7(d_f7), .rs2f(d_rs2f), .sub(d_sub), .fmt2(d_w0[26:25]),
-		.def(tr[0]), .fmt(tr[3:1]), .unit(tr[7:4]), .op(tr[15:8]), .cls(tr[18:16]),
-		.use1(tr[19]), .use2(tr[20]), .use3(tr[21]), .wrd(tr[22]), .pair(tr[23]),
-		.side(tr[24]), .need_pk(tr[25]), .need_sg(tr[26]), .need_sa(tr[27]), .tex(tr[28])
-	);
-	atg_su_dec_tabc tabc (
-		.opc(d_opc_tab_c), .f3(d_f3), .f7(d_f7), .rs2f(d_rs2f), .sub(d_sub), .fmt2(d_w0[26:25]),
-		.def(tc[0]), .fmt(tc[3:1]), .unit(tc[7:4]), .op(tc[15:8]), .cls(tc[18:16]),
-		.use1(tc[19]), .use2(tc[20]), .use3(tc[21]), .wrd(tc[22]), .pair(tc[23]),
-		.side(tc[24]), .need_pk(tc[25]), .need_sg(tc[26]), .need_sa(tc[27]), .tex(tc[28])
-	);
-	wire [28:0] d_tab_out = {custom_hi ? tc[28:15] : tr[28:15], custom_lo ? tc[14:0] : tr[14:0]};
-	wire [2:0] d_fmt = d_tab_out[3:1];
-
-	/* Precompute rs1 + 2 and immediate adder in Stage 0 (0 post-CARRY LUTs when PIPE_TAB=1). */
+	wire [28:0] d_tab_out;
+	wire [31:0] d_imm_isb;
+	wire im_co_unused;
 	wire [6:0] d_rs1_2;
 	wire r2_co_unused;
 	am_add #(.W(7)) u_rs1_2 (.a(d_rs1), .b(7'd2), .ci(1'b0), .s(d_rs1_2), .co(r2_co_unused));
@@ -107,18 +165,50 @@ module atg_su_dec #(
 	wire d_is_s = (d_opc_ctl == 7'b0100011) ||
 		(d_opc_ctl == 7'b0001011 && d_f3 == 3'd1) ||
 		(d_opc_ctl == 7'b0101011 && d_f3 == 3'd4);
+	wire d_is_u = (d_opc_ctl == 7'b0110111);
 	wire [31:0] d_lo_i = {{20{d_w0[31]}}, d_w0[31:20]};
 	wire [31:0] d_lo_s = {{20{d_w0[31]}}, d_w0[31:25], d_w0[11:7]};
 	wire [31:0] d_lo_b = {{21{d_w0[31]}}, d_w0[7], d_w0[30:25], d_w0[11:8]};
-	wire [31:0] d_imm_isb;
-	wire im_co_unused;
-	am_add #(.W(32)) u_imm (
-		.a( (PIPE_TAB != 0 ? d_is_s : (d_fmt == FM_S)) ? d_lo_s :
-		    (PIPE_TAB != 0 ? d_is_b : (d_fmt == FM_B)) ? d_lo_b : d_lo_i ),
-		.b(d_hi), .ci(1'b0), .s(d_imm_isb), .co(im_co_unused)
-	);
+	wire [31:0] d_imm_a_w = d_is_s ? d_lo_s : d_is_b ? d_lo_b : d_lo_i;
 
-	reg s0_valid;
+	wire [6:0] d_rd = {d_w1[1:0], d_w0[11:7]};
+	wire [6:0] d_rs2 = {d_w1[5:4], d_rs2f};
+	wire [6:0] d_rs3f = {d_w1[7:6], d_w0[31:27]};
+
+	/* Operand checks (design §3.4.1: registers beyond NREGS, rq without SA). */
+	function src_bad;
+		input [6:0] r;
+		begin
+			if (r == 7'd63)
+				src_bad = HAS_SA == 0;
+			else
+				src_bad = !r[6] && ({25'd0, r} >= NREGS);
+		end
+	endfunction
+
+	wire d_rs1_lt_60 = (d_rs1 < 7'd60);
+	wire d_rs1_lt_61 = (d_rs1 < 7'd61);
+	wire d_rs1_lt_62 = (d_rs1 < 7'd62);
+	wire d_rs1_bad_t4 = !d_rs1[6] ? ({25'd0, d_rs1} >= NREGS - 3 || !d_rs1_lt_60) :
+		(d_rs1 == 7'd93 || d_rs1 == 7'd94 || d_rs1 == 7'd95 || d_rs1 == 7'd125 || d_rs1 == 7'd126 || d_rs1 == 7'd127);
+	wire d_rs1_bad_t3 = !d_rs1[6] ? ({25'd0, d_rs1} >= NREGS - 2 || !d_rs1_lt_61) :
+		(d_rs1 == 7'd94 || d_rs1 == 7'd95 || d_rs1 == 7'd126 || d_rs1 == 7'd127);
+	wire d_pair_bad = !d_rs1[6] ? ({25'd0, d_rs1} >= NREGS - 1 || !d_rs1_lt_62) :
+		(d_rs1 == 7'd95 || d_rs1 == 7'd127);
+	wire d_src1_bad = src_bad(d_rs1);
+	wire d_src2_bad = src_bad(d_rs2);
+	wire d_src3_bad = src_bad(d_rs3f);
+	wire d_dst_bad_64 = d_rd[6];
+	wire d_dst_bad_63 = (d_rd == 7'd63);
+	wire d_dst_bad_tex = ({25'd0, d_rd} >= NREGS - 3) || (&d_rd[5:2]);
+	wire d_dst_bad_ge = ({25'd0, d_rd} >= NREGS);
+	wire d_rqs1 = (d_rs1 == 7'd63);
+	wire d_rqs2 = (d_rs2 == 7'd63);
+	wire d_rqs3 = (d_rs3f == 7'd63);
+	wire d_rqs1_2 = (d_rs1_2 == 7'd63);
+	wire d_w0_11_bad = (d_w0[1:0] != 2'b11);
+
+	(* keep = "true" *) reg s0_valid;
 	reg [WARP_W-1:0] s0_warp;
 	reg [15:0] s0_pc;
 	reg [31:0] s0_w0, s0_w1;
@@ -126,65 +216,334 @@ module atg_su_dec #(
 	reg [6:0] s0_rs1_2;
 	reg [31:0] s0_imm_isb;
 	(* dont_touch = "true" *) reg [2:0] s0_not_fmu_r;
+	reg s0_rs1_bad_t4_r, s0_rs1_bad_t3_r, s0_pair_bad_r, s0_tthree_r;
+	reg s0_src1_bad_r, s0_src2_bad_r, s0_src3_bad_r;
+	reg s0_dst_bad_64_r, s0_dst_bad_63_r, s0_dst_bad_tex_r, s0_dst_bad_ge_r;
+	reg s0_rqs1_r, s0_rqs2_r, s0_rqs3_r, s0_rqs1_2_r, s0_w0_11_bad_r;
 
 	wire u_adv = !u_valid || u_ready;
-	assign d_ready = (PIPE_TAB != 0) ? (!s0_valid || u_adv) : u_adv;
-
-	(* keep = "true" *) wire s0_ce_0  = d_ready && d_valid;
-	(* keep = "true" *) wire s0_ce_1  = d_ready && d_valid;
-	(* keep = "true" *) wire s0_ce_2  = d_ready && d_valid;
-	(* keep = "true" *) wire s0_ce_3  = d_ready && d_valid;
-	(* keep = "true" *) wire s0_ce_4  = d_ready && d_valid;
-	(* keep = "true" *) wire s0_ce_5  = d_ready && d_valid;
-	(* keep = "true" *) wire s0_ce_6  = d_ready && d_valid;
-	(* keep = "true" *) wire s0_ce_7  = d_ready && d_valid;
-	(* keep = "true" *) wire s0_ce_8  = d_ready && d_valid;
-	(* keep = "true" *) wire s0_ce_9  = d_ready && d_valid;
-	(* keep = "true" *) wire s0_ce_10 = d_ready && d_valid;
-
 	(* dont_touch = "true" *) wire rst_p = !rst_n;
 
-	always @(posedge clk or posedge rst_p) begin
-		if (rst_p) begin
+	generate
+	if (PIPE_TAB != 0) begin : g_pipe_tab2
+		/* Stage 0a: Parallel constant-opc sub-table pre-decodes (<= 9 cmos3) -> p0_* FFs */
+		wire [28:0] tr_op, tr_opimm, tr_fp, tr_other;
+		wire [28:0] tc_c0, tc_c1, tc_c2, tc_c3;
+		wire d_is_op    = (d_opc_ctl == 7'b0110011);
+		wire d_is_opimm = (d_opc_ctl == 7'b0010011);
+		wire d_is_opfp  = (d_opc_ctl == 7'b1010011);
+		wire d_is_c0    = (d_opc_ctl == 7'b0001011);
+		wire d_is_c1    = (d_opc_ctl == 7'b0101011);
+		wire d_is_c2    = (d_opc_ctl == 7'b1011011);
+		wire d_is_c3    = (d_opc_ctl == 7'b1111011);
+		wire d_is_other = !d_is_op && !d_is_opimm && !d_is_opfp && !d_is_c0 && !d_is_c1 && !d_is_c2 && !d_is_c3;
+
+		atg_su_dec_tab tab_op (
+			.opc(7'b0110011), .f3(d_f3_t0), .f7(d_f7_t0), .rs2f(d_rs2f), .sub(d_sub), .fmt2(d_w0[26:25]),
+			.def(tr_op[0]), .fmt(tr_op[3:1]), .unit(tr_op[7:4]), .op(tr_op[15:8]), .cls(tr_op[18:16]),
+			.use1(tr_op[19]), .use2(tr_op[20]), .use3(tr_op[21]), .wrd(tr_op[22]), .pair(tr_op[23]),
+			.side(tr_op[24]), .need_pk(tr_op[25]), .need_sg(tr_op[26]), .need_sa(tr_op[27]), .tex(tr_op[28])
+		);
+		atg_su_dec_tab tab_opimm (
+			.opc(7'b0010011), .f3(d_f3_t0), .f7(d_f7_t1), .rs2f(d_rs2f), .sub(d_sub), .fmt2(d_w0[26:25]),
+			.def(tr_opimm[0]), .fmt(tr_opimm[3:1]), .unit(tr_opimm[7:4]), .op(tr_opimm[15:8]), .cls(tr_opimm[18:16]),
+			.use1(tr_opimm[19]), .use2(tr_opimm[20]), .use3(tr_opimm[21]), .wrd(tr_opimm[22]), .pair(tr_opimm[23]),
+			.side(tr_opimm[24]), .need_pk(tr_opimm[25]), .need_sg(tr_opimm[26]), .need_sa(tr_opimm[27]), .tex(tr_opimm[28])
+		);
+		atg_su_dec_tab tab_fp (
+			.opc(7'b1010011), .f3(d_f3_t1), .f7(d_f7_t2), .rs2f(d_rs2f), .sub(d_sub), .fmt2(d_w0[26:25]),
+			.def(tr_fp[0]), .fmt(tr_fp[3:1]), .unit(tr_fp[7:4]), .op(tr_fp[15:8]), .cls(tr_fp[18:16]),
+			.use1(tr_fp[19]), .use2(tr_fp[20]), .use3(tr_fp[21]), .wrd(tr_fp[22]), .pair(tr_fp[23]),
+			.side(tr_fp[24]), .need_pk(tr_fp[25]), .need_sg(tr_fp[26]), .need_sa(tr_fp[27]), .tex(tr_fp[28])
+		);
+		atg_su_dec_tab #(.OTHER_ONLY(1)) tab_other (
+			.opc(d_opc_tab_r), .f3(d_f3_t1), .f7(d_f7_t3), .rs2f(d_rs2f), .sub(d_sub), .fmt2(d_w0[26:25]),
+			.def(tr_other[0]), .fmt(tr_other[3:1]), .unit(tr_other[7:4]), .op(tr_other[15:8]), .cls(tr_other[18:16]),
+			.use1(tr_other[19]), .use2(tr_other[20]), .use3(tr_other[21]), .wrd(tr_other[22]), .pair(tr_other[23]),
+			.side(tr_other[24]), .need_pk(tr_other[25]), .need_sg(tr_other[26]), .need_sa(tr_other[27]), .tex(tr_other[28])
+		);
+		atg_su_dec_tabc tab_c0 (
+			.opc(7'b0001011), .f3(d_f3_c0), .f7(d_f7_c0), .rs2f(d_rs2f), .sub(d_sub), .fmt2(d_w0[26:25]),
+			.def(tc_c0[0]), .fmt(tc_c0[3:1]), .unit(tc_c0[7:4]), .op(tc_c0[15:8]), .cls(tc_c0[18:16]),
+			.use1(tc_c0[19]), .use2(tc_c0[20]), .use3(tc_c0[21]), .wrd(tc_c0[22]), .pair(tc_c0[23]),
+			.side(tc_c0[24]), .need_pk(tc_c0[25]), .need_sg(tc_c0[26]), .need_sa(tc_c0[27]), .tex(tc_c0[28])
+		);
+		atg_su_dec_tabc tab_c1 (
+			.opc(7'b0101011), .f3(d_f3_c1), .f7(d_f7_c0), .rs2f(d_rs2f), .sub(d_sub), .fmt2(d_w0[26:25]),
+			.def(tc_c1[0]), .fmt(tc_c1[3:1]), .unit(tc_c1[7:4]), .op(tc_c1[15:8]), .cls(tc_c1[18:16]),
+			.use1(tc_c1[19]), .use2(tc_c1[20]), .use3(tc_c1[21]), .wrd(tc_c1[22]), .pair(tc_c1[23]),
+			.side(tc_c1[24]), .need_pk(tc_c1[25]), .need_sg(tc_c1[26]), .need_sa(tc_c1[27]), .tex(tc_c1[28])
+		);
+		atg_su_dec_tabc tab_c2 (
+			.opc(7'b1011011), .f3(d_f3_c2), .f7(d_f7_c1), .rs2f(d_rs2f), .sub(d_sub), .fmt2(d_w0[26:25]),
+			.def(tc_c2[0]), .fmt(tc_c2[3:1]), .unit(tc_c2[7:4]), .op(tc_c2[15:8]), .cls(tc_c2[18:16]),
+			.use1(tc_c2[19]), .use2(tc_c2[20]), .use3(tc_c2[21]), .wrd(tc_c2[22]), .pair(tc_c2[23]),
+			.side(tc_c2[24]), .need_pk(tc_c2[25]), .need_sg(tc_c2[26]), .need_sa(tc_c2[27]), .tex(tc_c2[28])
+		);
+		atg_su_dec_tabc tab_c3 (
+			.opc(7'b1111011), .f3(d_f3_c3), .f7(d_f7_c1), .rs2f(d_rs2f), .sub(d_sub), .fmt2(d_w0[26:25]),
+			.def(tc_c3[0]), .fmt(tc_c3[3:1]), .unit(tc_c3[7:4]), .op(tc_c3[15:8]), .cls(tc_c3[18:16]),
+			.use1(tc_c3[19]), .use2(tc_c3[20]), .use3(tc_c3[21]), .wrd(tc_c3[22]), .pair(tc_c3[23]),
+			.side(tc_c3[24]), .need_pk(tc_c3[25]), .need_sg(tc_c3[26]), .need_sa(tc_c3[27]), .tex(tc_c3[28])
+		);
+
+		(* keep = "true" *) reg p0_valid;
+		reg [WARP_W-1:0] p0_warp;
+		reg [15:0] p0_pc;
+		(* dont_touch = "true" *) reg [31:0] p0_w0, p0_w1;
+		reg [6:0]  p0_rs1_2;
+		(* dont_touch = "true" *) reg [31:0] p0_imm_a, p0_imm_b;
+		reg [2:0]  p0_not_fmu_r;
+		reg        p0_rs1_bad_t4_r, p0_rs1_bad_t3_r, p0_pair_bad_r;
+		reg        p0_src1_bad_r, p0_src2_bad_r, p0_src3_bad_r;
+		reg        p0_dst_bad_64_r, p0_dst_bad_63_r, p0_dst_bad_tex_r, p0_dst_bad_ge_r;
+		reg        p0_rqs1_r, p0_rqs2_r, p0_rqs3_r, p0_rqs1_2_r, p0_w0_11_bad_r;
+		reg [7:0]  p0_opc_sel;
+		reg [28:0] p0_tr_op, p0_tr_opimm, p0_tr_fp, p0_tr_other;
+		reg [28:0] p0_tc_c0, p0_tc_c1, p0_tc_c2, p0_tc_c3;
+
+		wire s0_adv = !s0_valid || u_adv;
+		wire p0_ready = !p0_valid || s0_adv;
+		assign d_ready = p0_ready;
+		wire p0_ce = p0_ready && d_valid;
+		wire s0_ce = s0_adv && p0_valid;
+		wire [19:0] p0_ce_b;
+		wire [11:0] s0_ce_b;
+		genvar gdce;
+		for (gdce = 0; gdce < 20; gdce = gdce + 1) begin : g_p0ce
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_pce (.I0(p0_ce), .O(p0_ce_b[gdce]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign p0_ce_b[gdce] = p0_ce;
+`else
+			assign p0_ce_b[gdce] = p0_ce;
+`endif
+		end
+		for (gdce = 0; gdce < 12; gdce = gdce + 1) begin : g_s0ce
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_sce (.I0(s0_ce), .O(s0_ce_b[gdce]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign s0_ce_b[gdce] = s0_ce;
+`else
+			assign s0_ce_b[gdce] = s0_ce;
+`endif
+		end
+
+		always @(posedge clk or posedge rst_p) begin
+			if (rst_p) begin
+				p0_valid        <= 1'b0;
+				p0_warp         <= {WARP_W{1'b0}};
+				p0_pc           <= 16'd0;
+				p0_w0           <= 32'd0;
+				p0_w1           <= 32'd0;
+				p0_rs1_2        <= 7'd0;
+				p0_imm_a        <= 32'd0;
+				p0_imm_b        <= 32'd0;
+				p0_not_fmu_r    <= 3'd0;
+				p0_rs1_bad_t4_r <= 1'b0;
+				p0_rs1_bad_t3_r <= 1'b0;
+				p0_pair_bad_r   <= 1'b0;
+				p0_src1_bad_r   <= 1'b0;
+				p0_src2_bad_r   <= 1'b0;
+				p0_src3_bad_r   <= 1'b0;
+				p0_dst_bad_64_r <= 1'b0;
+				p0_dst_bad_63_r <= 1'b0;
+				p0_dst_bad_tex_r <= 1'b0;
+				p0_dst_bad_ge_r <= 1'b0;
+				p0_rqs1_r       <= 1'b0;
+				p0_rqs2_r       <= 1'b0;
+				p0_rqs3_r       <= 1'b0;
+				p0_rqs1_2_r     <= 1'b0;
+				p0_w0_11_bad_r  <= 1'b0;
+				p0_opc_sel      <= 8'd0;
+				p0_tr_op        <= 29'd0;
+				p0_tr_opimm     <= 29'd0;
+				p0_tr_fp        <= 29'd0;
+				p0_tr_other     <= 29'd0;
+				p0_tc_c0        <= 29'd0;
+				p0_tc_c1        <= 29'd0;
+				p0_tc_c2        <= 29'd0;
+				p0_tc_c3        <= 29'd0;
+			end else begin
+				if (p0_ready)
+					p0_valid <= d_valid;
+				if (p0_ce_b[0]) begin
+					p0_warp         <= d_warp;
+					p0_rs1_2        <= d_rs1_2;
+					p0_not_fmu_r    <= {3{!d_is_u}};
+				end
+				if (p0_ce_b[1])  p0_pc <= d_pc;
+				if (p0_ce_b[2])  p0_w0[15:0]  <= d_w0[15:0];
+				if (p0_ce_b[3])  p0_w0[31:16] <= d_w0[31:16];
+				if (p0_ce_b[4])  p0_w1[15:0]  <= d_w1[15:0];
+				if (p0_ce_b[5])  p0_w1[31:16] <= d_w1[31:16];
+				if (p0_ce_b[6])  p0_imm_a[15:0]  <= d_imm_a_w[15:0];
+				if (p0_ce_b[7])  p0_imm_a[31:16] <= d_imm_a_w[31:16];
+				if (p0_ce_b[8])  p0_imm_b[15:0]  <= d_hi[15:0];
+				if (p0_ce_b[9])  p0_imm_b[31:16] <= d_hi[31:16];
+				if (p0_ce_b[10]) begin
+					p0_rs1_bad_t4_r <= d_rs1_bad_t4;
+					p0_rs1_bad_t3_r <= d_rs1_bad_t3;
+					p0_pair_bad_r   <= d_pair_bad;
+					p0_src1_bad_r   <= d_src1_bad;
+					p0_src2_bad_r   <= d_src2_bad;
+					p0_src3_bad_r   <= d_src3_bad;
+					p0_dst_bad_64_r <= d_dst_bad_64;
+					p0_dst_bad_63_r <= d_dst_bad_63;
+					p0_dst_bad_tex_r <= d_dst_bad_tex;
+					p0_dst_bad_ge_r <= d_dst_bad_ge;
+					p0_rqs1_r       <= d_rqs1;
+					p0_rqs2_r       <= d_rqs2;
+					p0_rqs3_r       <= d_rqs3;
+					p0_rqs1_2_r     <= d_rqs1_2;
+					p0_w0_11_bad_r  <= d_w0_11_bad;
+				end
+				if (p0_ce_b[11]) begin
+					p0_opc_sel      <= {d_is_c3, d_is_c2, d_is_c1, d_is_c0, d_is_other, d_is_opfp, d_is_opimm, d_is_op};
+					p0_tr_op[7:0]   <= tr_op[7:0];
+				end
+				if (p0_ce_b[12]) begin
+					p0_tr_op[28:8]  <= tr_op[28:8];
+					p0_tr_opimm     <= tr_opimm;
+				end
+				if (p0_ce_b[13]) p0_tr_fp    <= tr_fp;
+				if (p0_ce_b[14]) p0_tc_c0    <= tc_c0;
+				if (p0_ce_b[15]) p0_tc_c2    <= tc_c2;
+				if (p0_ce_b[16]) p0_tr_other <= tr_other;
+				if (p0_ce_b[17]) p0_tc_c1    <= tc_c1;
+				if (p0_ce_b[18]) p0_tc_c3    <= tc_c3;
+				if (p0_ce_b[19]) ;
+			end
+		end
+
+		/* Stage 0b: One-hot SOP combine + 32-bit immediate adder (<= 10 cmos3) -> s0_* FFs */
+		wire [31:0] p0_imm_isb;
+		am_add #(.W(32)) u_imm (.a(p0_imm_a), .b(p0_imm_b), .ci(1'b0), .s(p0_imm_isb), .co(im_co_unused));
+		assign d_imm_isb = 32'd0;
+		wire [28:0] p0_tab_nxt =
+			(p0_opc_sel[0] ? p0_tr_op    : 29'd0) |
+			(p0_opc_sel[1] ? p0_tr_opimm : 29'd0) |
+			(p0_opc_sel[2] ? p0_tr_fp    : 29'd0) |
+			(p0_opc_sel[3] ? p0_tr_other : 29'd0) |
+			(p0_opc_sel[4] ? p0_tc_c0    : 29'd0) |
+			(p0_opc_sel[5] ? p0_tc_c1    : 29'd0) |
+			(p0_opc_sel[6] ? p0_tc_c2    : 29'd0) |
+			(p0_opc_sel[7] ? p0_tc_c3    : 29'd0);
+		wire p0_tthree_nxt = p0_tab_nxt[28] && p0_w0[30];
+
+		always @(posedge clk or posedge rst_p) begin
+			if (rst_p) begin
+				s0_valid        <= 1'b0;
+				s0_warp         <= {WARP_W{1'b0}};
+				s0_pc           <= 16'd0;
+				s0_w0           <= 32'd0;
+				s0_w1           <= 32'd0;
+				s0_tab          <= 29'd0;
+				s0_rs1_2        <= 7'd0;
+				s0_imm_isb      <= 32'd0;
+				s0_not_fmu_r    <= 3'd0;
+				s0_rs1_bad_t4_r <= 1'b0;
+				s0_rs1_bad_t3_r <= 1'b0;
+				s0_pair_bad_r   <= 1'b0;
+				s0_tthree_r     <= 1'b0;
+				s0_src1_bad_r   <= 1'b0;
+				s0_src2_bad_r   <= 1'b0;
+				s0_src3_bad_r   <= 1'b0;
+				s0_dst_bad_64_r <= 1'b0;
+				s0_dst_bad_63_r <= 1'b0;
+				s0_dst_bad_tex_r <= 1'b0;
+				s0_dst_bad_ge_r <= 1'b0;
+				s0_rqs1_r       <= 1'b0;
+				s0_rqs2_r       <= 1'b0;
+				s0_rqs3_r       <= 1'b0;
+				s0_rqs1_2_r     <= 1'b0;
+				s0_w0_11_bad_r  <= 1'b0;
+			end else begin
+				if (s0_adv)
+					s0_valid <= p0_valid;
+				if (s0_ce_b[0]) begin
+					s0_warp         <= p0_warp;
+					s0_rs1_2        <= p0_rs1_2;
+					s0_not_fmu_r    <= p0_not_fmu_r;
+				end
+				if (s0_ce_b[1])  s0_pc <= p0_pc;
+				if (s0_ce_b[2])  s0_w0[15:0]  <= p0_w0[15:0];
+				if (s0_ce_b[3])  s0_w0[31:16] <= p0_w0[31:16];
+				if (s0_ce_b[4])  s0_w1[15:0]  <= p0_w1[15:0];
+				if (s0_ce_b[5])  s0_w1[31:16] <= p0_w1[31:16];
+				if (s0_ce_b[6])  begin
+					s0_tab[14:0] <= p0_tab_nxt[14:0];
+					s0_tthree_r  <= p0_tthree_nxt;
+				end
+				if (s0_ce_b[7])  s0_tab[28:15] <= p0_tab_nxt[28:15];
+				if (s0_ce_b[8])  s0_imm_isb[15:0]  <= p0_imm_isb[15:0];
+				if (s0_ce_b[9])  s0_imm_isb[31:16] <= p0_imm_isb[31:16];
+				if (s0_ce_b[10]) begin
+					s0_rs1_bad_t4_r <= p0_rs1_bad_t4_r;
+					s0_rs1_bad_t3_r <= p0_rs1_bad_t3_r;
+					s0_pair_bad_r   <= p0_pair_bad_r;
+					s0_src1_bad_r   <= p0_src1_bad_r;
+					s0_src2_bad_r   <= p0_src2_bad_r;
+					s0_src3_bad_r   <= p0_src3_bad_r;
+					s0_dst_bad_64_r <= p0_dst_bad_64_r;
+					s0_dst_bad_63_r <= p0_dst_bad_63_r;
+				end
+				if (s0_ce_b[11]) begin
+					s0_dst_bad_tex_r <= p0_dst_bad_tex_r;
+					s0_dst_bad_ge_r <= p0_dst_bad_ge_r;
+					s0_rqs1_r       <= p0_rqs1_r;
+					s0_rqs2_r       <= p0_rqs2_r;
+					s0_rqs3_r       <= p0_rqs3_r;
+					s0_rqs1_2_r     <= p0_rqs1_2_r;
+					s0_w0_11_bad_r  <= p0_w0_11_bad_r;
+				end
+			end
+		end
+		assign tr = 29'd0;
+		assign tc = 29'd0;
+		assign d_tab_out = 29'd0;
+		wire unused_pt2 = &{1'b0, d_opc_tab_c, d_rd, im_co_unused};
+	end else begin : g_comb_tab
+		wire custom_lo = d_opc_ctl == 7'b0001011 || d_opc_ctl == 7'b0101011 || d_opc_ctl == 7'b1011011 ||
+			d_opc_ctl == 7'b1111011;
+		wire custom_hi = d_opc_ctl == 7'b0001011 || d_opc_ctl == 7'b0101011 || d_opc_ctl == 7'b1011011 ||
+			d_opc_ctl == 7'b1111011;
+		atg_su_dec_tab tab (
+			.opc(d_opc_tab_r), .f3(d_f3), .f7(d_f7), .rs2f(d_rs2f), .sub(d_sub), .fmt2(d_w0[26:25]),
+			.def(tr[0]), .fmt(tr[3:1]), .unit(tr[7:4]), .op(tr[15:8]), .cls(tr[18:16]),
+			.use1(tr[19]), .use2(tr[20]), .use3(tr[21]), .wrd(tr[22]), .pair(tr[23]),
+			.side(tr[24]), .need_pk(tr[25]), .need_sg(tr[26]), .need_sa(tr[27]), .tex(tr[28])
+		);
+		atg_su_dec_tabc tabc (
+			.opc(d_opc_tab_c), .f3(d_f3), .f7(d_f7), .rs2f(d_rs2f), .sub(d_sub), .fmt2(d_w0[26:25]),
+			.def(tc[0]), .fmt(tc[3:1]), .unit(tc[7:4]), .op(tc[15:8]), .cls(tc[18:16]),
+			.use1(tc[19]), .use2(tc[20]), .use3(tc[21]), .wrd(tc[22]), .pair(tc[23]),
+			.side(tc[24]), .need_pk(tc[25]), .need_sg(tc[26]), .need_sa(tc[27]), .tex(tc[28])
+		);
+		wire [28:0] d_tab_comb = {custom_hi ? tc[28:15] : tr[28:15], custom_lo ? tc[14:0] : tr[14:0]};
+		wire [2:0] d_fmt = d_tab_comb[3:1];
+		assign d_tab_out = d_tab_comb;
+		assign d_ready = u_adv;
+		wire [31:0] d_imm_a_comb = (d_fmt == FM_S) ? d_lo_s : (d_fmt == FM_B) ? d_lo_b : d_lo_i;
+		am_add #(.W(32)) u_imm (.a(d_imm_a_comb), .b(d_hi), .ci(1'b0), .s(d_imm_isb), .co(im_co_unused));
+		always @(posedge clk) begin
 			s0_valid <= 1'b0;
 			s0_warp <= {WARP_W{1'b0}};
-			s0_rs1_2 <= 7'd0;
-			s0_not_fmu_r <= 3'd0;
 			s0_pc <= 16'd0;
 			s0_w0 <= 32'd0;
 			s0_w1 <= 32'd0;
 			s0_tab <= 29'd0;
+			s0_rs1_2 <= 7'd0;
 			s0_imm_isb <= 32'd0;
-		end else begin
-			if (d_ready)
-				s0_valid <= d_valid;
-			if (s0_ce_0) begin
-				s0_rs1_2 <= d_rs1_2;
-				s0_not_fmu_r <= {3{d_fmt != FM_U}};
-			end
-			if (s0_ce_10) begin
-				s0_warp <= d_warp;
-			end
-			if (s0_ce_1)
-				s0_pc <= d_pc;
-			if (s0_ce_2)
-				s0_w0[15:0] <= d_w0[15:0];
-			if (s0_ce_3)
-				s0_w0[31:16] <= d_w0[31:16];
-			if (s0_ce_4)
-				s0_w1[15:0] <= d_w1[15:0];
-			if (s0_ce_5)
-				s0_w1[31:16] <= d_w1[31:16];
-			if (s0_ce_6)
-				s0_tab[14:0] <= d_tab_out[14:0];
-			if (s0_ce_7)
-				s0_tab[28:15] <= d_tab_out[28:15];
-			if (s0_ce_8)
-				s0_imm_isb[15:0] <= d_imm_isb[15:0];
-			if (s0_ce_9)
-				s0_imm_isb[31:16] <= d_imm_isb[31:16];
+			s0_not_fmu_r <= 3'd0;
+			s0_rs1_bad_t4_r <= 1'b0;
+			s0_rs1_bad_t3_r <= 1'b0;
+			s0_pair_bad_r <= 1'b0;
+			s0_tthree_r <= 1'b0;
 		end
+		wire unused_comb_tab = &{1'b0, d_imm_a_w, d_rs1_bad_t4, d_rs1_bad_t3, d_pair_bad, d_is_u, d_rd, d_rs1_2};
 	end
+	endgenerate
 
 	wire [31:0] w0 = (PIPE_TAB != 0) ? s0_w0 : d_w0;
 	wire [31:0] w1 = (PIPE_TAB != 0) ? s0_w1 : d_w1;
@@ -208,42 +567,43 @@ module atg_su_dec #(
 	assign {tex, need_sa, need_sg, need_pk, side, pair, wrd, use3, use2, use1, cls, op, unit,
 		fmt, def} = tab_out;
 
-	/* Operand checks (design §3.4.1: registers beyond NREGS, rq without SA). */
-	function src_bad;
-		input [6:0] r;
-		begin
-			if (r == 7'd63)
-				src_bad = HAS_SA == 0;
-			else
-				src_bad = r < 7'd64 && {25'd0, r} >= NREGS;
-		end
-	endfunction
+	/* Operand checks use pre-decoded Stage-0 flags when PIPE_TAB != 0. */
+	wire src1_bad = (PIPE_TAB != 0) ? s0_src1_bad_r : d_src1_bad;
+	wire src2_bad = (PIPE_TAB != 0) ? s0_src2_bad_r : d_src2_bad;
+	wire src3_bad = (PIPE_TAB != 0) ? s0_src3_bad_r : d_src3_bad;
+	wire dst_bad_64  = (PIPE_TAB != 0) ? s0_dst_bad_64_r  : d_dst_bad_64;
+	wire dst_bad_63  = (PIPE_TAB != 0) ? s0_dst_bad_63_r  : d_dst_bad_63;
+	wire dst_bad_tex = (PIPE_TAB != 0) ? s0_dst_bad_tex_r : d_dst_bad_tex;
+	wire dst_bad_ge  = (PIPE_TAB != 0) ? s0_dst_bad_ge_r  : d_dst_bad_ge;
+	wire rqs1_w   = (PIPE_TAB != 0) ? s0_rqs1_r   : d_rqs1;
+	wire rqs2_w   = (PIPE_TAB != 0) ? s0_rqs2_r   : d_rqs2;
+	wire rqs3f_w  = (PIPE_TAB != 0) ? s0_rqs3_r   : d_rqs3;
+	wire rqs1_2_w = (PIPE_TAB != 0) ? s0_rqs1_2_r : d_rqs1_2;
+	wire w0_11_bad = (PIPE_TAB != 0) ? s0_w0_11_bad_r : d_w0_11_bad;
 
 	/* A texture .c or .3 form reads rs1+2 (Dref or the third coordinate) as
 	 * its rs3; .3 with .c also rs1+3 (Dref). */
-	wire tthree = tex && f7[5];
+	wire tthree = (PIPE_TAB != 0) ? s0_tthree_r : (tex && f7[5]);
 	wire tcmp = tex && (op[ATG_TEX_CFORM] || tthree);
 	wire [6:0] rs3 = tcmp ? rs1_2 : rs3f;
 	wire t4 = tthree && op[ATG_TEX_CFORM];
-	wire [6:0] lim = t4 ? 7'd60 : 7'd61;
-	wire cmp_bad = tcmp && (rs1 < 7'd64 ? ({25'd0, rs1} >= (t4 ? NREGS - 3 : NREGS - 2) ||
-		rs1 >= lim) : (rs1 == 7'd94 || rs1 == 7'd95 || rs1 == 7'd126 || rs1 == 7'd127 ||
-		(t4 && (rs1 == 7'd93 || rs1 == 7'd125))));
+	wire cmp_bad = (PIPE_TAB != 0) ? (tcmp && (t4 ? s0_rs1_bad_t4_r : s0_rs1_bad_t3_r)) :
+		(tcmp && (t4 ? d_rs1_bad_t4 : d_rs1_bad_t3));
 	/* A texture R form's texel offsets: word1 [25:22], [29:26], [13:10]. */
 	wire [31:0] imm_t = {20'd0, w1[13:10], w1[29:26], w1[25:22]};
 	wire [2:0] ndst = !wrd ? 3'd0 : tex ? 3'd4 : 3'd1;
-	wire pair_bad = pair && (rs1 < 7'd64 ? ({25'd0, rs1} >= NREGS - 1 || rs1 >= 7'd62)
-		: (rs1 == 7'd95 || rs1 == 7'd127));
-	wire dst_bad = wrd && (rd >= 7'd64 ||
-		(rd == 7'd63 ? (HAS_SA == 0 || cls != ATG_CLS_A || tex) :
-		(tex ? ({25'd0, rd} >= NREGS - 3 || rd >= 7'd60) : ({25'd0, rd} >= NREGS))));
+	wire pair_bad = (PIPE_TAB != 0) ? (pair && s0_pair_bad_r) : (pair && d_pair_bad);
+	wire dst_bad = wrd && (dst_bad_64 ||
+		(dst_bad_63 ? (HAS_SA == 0 || cls != ATG_CLS_A || tex) :
+		(tex ? dst_bad_tex : dst_bad_ge)));
 	/* texsz.s (texsz with op[6] and op[3]) needs MS4. */
 	wire need_ms = unit == ATG_UNIT_TEX && op[1:0] == 2'd3 && op[6] && op[3];
-	(* keep = "true" *) wire ill = w0[1:0] != 2'b11 || !def || (need_pk && PACKED == 0) || (need_ms && MS4 == 0) ||
+	(* keep = "true" *) wire ill = w0_11_bad || !def || (need_pk && PACKED == 0) || (need_ms && MS4 == 0) ||
 		(need_sg && SUBGROUP == 0) || (need_sa && HAS_SA == 0) ||
-		(use1 && src_bad(rs1)) || (use2 && src_bad(rs2)) || (use3 && !tcmp && src_bad(rs3f)) ||
+		(use1 && src1_bad) || (use2 && src2_bad) || (use3 && !tcmp && src3_bad) ||
 		pair_bad || cmp_bad || dst_bad;
-	wire rqs = (use1 && rs1 == 7'd63) || (use2 && rs2 == 7'd63) || (use3 && rs3 == 7'd63);
+	wire rqs = (use1 && rqs1_w) || (use2 && rqs2_w) || (use3 && (tcmp ? rqs1_2_w : rqs3f_w));
+	wire rqd = wrd && dst_bad_63;
 
 	(* keep = "true" *) wire [2:0] fmt_lo = fmt;
 	(* keep = "true" *) wire [2:0] fmt_hi = fmt;
@@ -279,7 +639,7 @@ module atg_su_dec #(
 		uop_raw[ATG_UOP_WRD] = wrd;
 		uop_raw[ATG_UOP_PAIR] = pair;
 		uop_raw[ATG_UOP_RQS] = rqs;
-		uop_raw[ATG_UOP_RQD] = wrd && rd == 7'd63;
+		uop_raw[ATG_UOP_RQD] = rqd;
 		uop_raw[ATG_UOP_SIDE] = side;
 		if (not_fmu_0) begin
 			uop_raw[ATG_UOP_RS1 +: 7] = rs1;

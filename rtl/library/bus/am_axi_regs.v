@@ -85,6 +85,9 @@ module am_axi_regs #(
 `ifdef SYNTH_KINTEX7
 	(* keep = "true", dont_touch = "true" *) wire rst_axi_regs_high;
 	(* dont_touch = "true" *) LUT1 #(.INIT(2'b01)) u_rst_axi_regs (.I0(rst_n), .O(rst_axi_regs_high));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", dont_touch = "true" *) wire rst_axi_regs_high;
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b01)) u_rst_axi_regs (.I0(rst_n), .O(rst_axi_regs_high));
 `else
 	wire rst_axi_regs_high = !rst_n;
 `endif
@@ -150,6 +153,24 @@ module am_axi_regs #(
 		end
 		for (gi = 0; gi < 3; gi = gi + 1) begin : g_wst_buf
 			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_wstb (.I0(w_step_any), .O(w_step_b[gi]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", dont_touch = "true" *) wire [4:0] w_fire_b;
+	(* keep = "true", dont_touch = "true" *) wire [1:0] aw_fire_b;
+	(* keep = "true", dont_touch = "true" *) wire [1:0] w_sel_up_b;
+	(* keep = "true", dont_touch = "true" *) wire [2:0] w_step_b;
+	genvar gi;
+	generate
+		for (gi = 0; gi < 5; gi = gi + 1) begin : g_wf_buf
+			assign w_fire_b[gi] = w_fire;
+		end
+		for (gi = 0; gi < 2; gi = gi + 1) begin : g_awf_buf
+			assign aw_fire_b[gi] = aw_fire;
+			assign w_sel_up_b[gi] = w_sel_upper;
+		end
+		for (gi = 0; gi < 3; gi = gi + 1) begin : g_wst_buf
+			assign w_step_b[gi] = w_step_any;
 		end
 	endgenerate
 `else
@@ -313,6 +334,21 @@ module am_axi_regs #(
 	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rdwb3 (.I0(r_is_fd), .O(r_data_we_b[3]));
 	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rfhb0 (.I0(r_is_fh), .O(r_fh_sel_b[0]));
 	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rfhb1 (.I0(r_is_fh), .O(r_fh_sel_b[1]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", dont_touch = "true" *) wire [1:0] ar_fire_b;
+	(* keep = "true", dont_touch = "true" *) wire [1:0] r_dlo_we_b;
+	(* keep = "true", dont_touch = "true" *) wire [3:0] r_data_we_b;
+	(* keep = "true", dont_touch = "true" *) wire [1:0] r_fh_sel_b;
+	assign ar_fire_b[0] = ar_fire;
+	assign ar_fire_b[1] = ar_fire;
+	assign r_dlo_we_b[0] = r_is_fl;
+	assign r_dlo_we_b[1] = r_is_fl;
+	assign r_data_we_b[0] = r_is_fd;
+	assign r_data_we_b[1] = r_is_fd;
+	assign r_data_we_b[2] = r_is_fd;
+	assign r_data_we_b[3] = r_is_fd;
+	assign r_fh_sel_b[0] = r_is_fh;
+	assign r_fh_sel_b[1] = r_is_fh;
 `else
 	wire [1:0] ar_fire_b   = {2{ar_fire}};
 	wire [1:0] r_dlo_we_b  = {2{r_is_fl}};

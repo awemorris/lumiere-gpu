@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -93,6 +93,8 @@ module atg_blt #(
 	reg op2;
 `ifdef SYNTH_KINTEX7
 	reg own;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	reg own;
 `else
 	(* keep = "true", dont_touch = "true" *) reg own;
 	(* keep = "true", dont_touch = "true" *) reg [3:0] own_wd_r;
@@ -104,7 +106,9 @@ module atg_blt #(
 		if (rst_blt_high) begin
 			op2 <= 1'b0;
 			own <= 1'b0;
-`ifndef SYNTH_KINTEX7
+`ifdef SYNTH_KINTEX7
+`elsif SYNTH_KINTEX_ULTRASCALE
+`else
 			own_wd_r <= 4'd0;
 			own_be_r <= 1'b0;
 			own_ctl_r <= 1'b0;
@@ -114,7 +118,9 @@ module atg_blt #(
 				op2 <= st_wdata[2];
 			if (kick && !busy) begin
 				own <= op2 && MS4 != 0;
-`ifndef SYNTH_KINTEX7
+`ifdef SYNTH_KINTEX7
+`elsif SYNTH_KINTEX_ULTRASCALE
+`else
 				own_wd_r <= {4{op2 && MS4 != 0}};
 				own_be_r <= op2 && MS4 != 0;
 				own_ctl_r <= op2 && MS4 != 0;
@@ -124,6 +130,8 @@ module atg_blt #(
 	end
 
 `ifdef SYNTH_KINTEX7
+	wire blt_int_req_ready = req_ready;
+`elsif SYNTH_KINTEX_ULTRASCALE
 	wire blt_int_req_ready = req_ready;
 `else
 	reg req_valid_r;
@@ -146,6 +154,11 @@ module atg_blt #(
 	(* max_fanout = 16 *) wire rsp_write_b2d;
 	LUT1 #(.INIT(2'b10)) u_buf_rv (.I0(rsp_valid && !own), .O(rsp_valid_b2d));
 	LUT1 #(.INIT(2'b10)) u_buf_rw (.I0(rsp_write), .O(rsp_write_b2d));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* max_fanout = 16 *) wire rsp_valid_b2d;
+	(* max_fanout = 16 *) wire rsp_write_b2d;
+	assign rsp_valid_b2d = rsp_valid && !own;
+	assign rsp_write_b2d = rsp_write;
 `else
 	wire rsp_valid_b2d = rsp_valid && !own;
 	wire rsp_write_b2d = rsp_write;
@@ -319,6 +332,67 @@ module atg_blt #(
 	assign req_be    = req_be_r;
 	assign req_wdata = req_wdata_r;
 	assign req_tag   = req_tag_r;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	localparam NUM_WDATA_SLICES = LBITS / 16;
+	localparam NUM_BE_SLICES = LINE_BYTES / 16;
+	(* dont_touch = "true" *) wire [NUM_WDATA_SLICES-1:0] own_wd;
+	(* dont_touch = "true" *) wire [NUM_BE_SLICES-1:0] own_be;
+	(* dont_touch = "true" *) wire [1:0] own_line;
+	(* dont_touch = "true" *) wire own_wr;
+	(* dont_touch = "true" *) wire own_tg;
+
+	assign own_wr = own;
+	assign own_tg = own;
+	assign own_line[0] = own;
+	assign own_line[1] = own;
+
+	wire [LBITS-1:0] blt_req_wdata;
+	wire [LINE_BYTES-1:0] blt_req_be;
+	genvar owi;
+	generate
+		for (owi = 0; owi < NUM_WDATA_SLICES; owi = owi + 1) begin : g_own_wd
+			assign own_wd[owi] = own;
+			assign blt_req_wdata[owi*16 +: 16] = own_wd[owi] ? r_req_wdata[owi*16 +: 16] : d_req_wdata[owi*16 +: 16];
+		end
+		for (owi = 0; owi < NUM_BE_SLICES; owi = owi + 1) begin : g_own_be
+			assign own_be[owi] = own;
+			assign blt_req_be[owi*16 +: 16] = own_be[owi] ? r_req_be[owi*16 +: 16] : d_req_be[owi*16 +: 16];
+		end
+	endgenerate
+
+	wire blt_req_write = own_wr ? r_req_write : d_req_write;
+	wire [LA_W-1:0] blt_req_line = {
+		own_line[1] ? r_req_line[LA_W-1:14] : d_req_line[LA_W-1:14],
+		own_line[0] ? r_req_line[13:0] : d_req_line[13:0]
+	};
+	wire [7:0] blt_req_tag = own_tg ? r_req_tag : d_req_tag;
+
+	reg req_valid_r;
+	(* extract_reset = "no" *) reg req_write_r;
+	(* extract_reset = "no" *) reg [LA_W-1:0] req_line_r;
+	(* extract_reset = "no" *) reg [LINE_BYTES-1:0] req_be_r;
+	(* extract_reset = "no" *) reg [LBITS-1:0] req_wdata_r;
+	(* extract_reset = "no" *) reg [7:0] req_tag_r;
+	always @(posedge clk or posedge rst_blt_high) begin
+		if (rst_blt_high)
+			req_valid_r <= 1'b0;
+		else
+			req_valid_r <= d_req_valid || r_req_valid;
+	end
+
+	always @(posedge clk) begin
+		req_write_r <= blt_req_write;
+		req_line_r  <= blt_req_line;
+		req_be_r    <= blt_req_be;
+		req_wdata_r <= blt_req_wdata;
+		req_tag_r   <= blt_req_tag;
+	end
+	assign req_valid = req_valid_r;
+	assign req_write = req_write_r;
+	assign req_line  = req_line_r;
+	assign req_be    = req_be_r;
+	assign req_wdata = req_wdata_r;
+	assign req_tag   = req_tag_r;
 `else
 	(* extract_reset = "no" *) reg req_write_r;
 	(* extract_reset = "no" *) reg [LA_W-1:0] req_line_r;
@@ -371,6 +445,15 @@ module atg_blt #(
 	generate
 		for (g_fsm = 0; g_fsm < 4; g_fsm = g_fsm + 1) begin : g_fsm_b
 			LUT1 #(.INIT(2'b10)) u_fsm (.I0(d_fsm[g_fsm]), .O(fsm_buf[g_fsm]));
+		end
+	endgenerate
+	assign fsm = fsm_buf;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true" *) wire [3:0] fsm_buf;
+	genvar g_fsm;
+	generate
+		for (g_fsm = 0; g_fsm < 4; g_fsm = g_fsm + 1) begin : g_fsm_b
+			assign fsm_buf[g_fsm] = d_fsm[g_fsm];
 		end
 	endgenerate
 	assign fsm = fsm_buf;

@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -98,6 +98,13 @@ module atg_cp_regs #(
 	output wire [31:0] hcr_wdata,
 	output wire [31:0] hcr_wmask,
 	output wire [9:0] hcr_ridx,
+`ifdef SYNTH_KINTEX7
+	output wire [9:0] hcr_ridx_ctl,
+	output wire [9:0] hcr_ridx_ring,
+`elsif SYNTH_KINTEX_ULTRASCALE
+	output wire [9:0] hcr_ridx_ctl,
+	output wire [9:0] hcr_ridx_ring,
+`endif
 	/* STATE alias (0x1000-0x1BFC, to atg_cp_state) */
 	output wire alias_we,
 	output wire [9:0] alias_idx,
@@ -132,33 +139,37 @@ module atg_cp_regs #(
 	wire waddr_page0 = (reg_waddr[16:10] == 7'd0);
 	wire waddr_in_win = waddr_page0 && (reg_waddr[9] || (reg_waddr[8] && (|reg_waddr[7:6])));
 
-	function [9:0] hcr_reg_widx_page0;
+	/* {is_valid_non_scratch, is_named, widx[9:0]} decoded directly from reg_waddr[9:0]. */
+	function [11:0] hcr_reg_wdec_page0;
 		input [9:0] addr10;
 		case (addr10)
-		GHCI_REG_CTRL[9:0]:          hcr_reg_widx_page0 = HCR_IDX_CTRL;
-		GHCI_REG_FAULT_INFO[9:0]:    hcr_reg_widx_page0 = HCR_IDX_FAULT_INFO;
-		GHCI_REG_RING_BASE_LO[9:0]:  hcr_reg_widx_page0 = HCR_IDX_RING_BASE_LO;
-		GHCI_REG_RING_BASE_HI[9:0]:  hcr_reg_widx_page0 = HCR_IDX_RING_BASE_HI;
-		GHCI_REG_RING_SIZE[9:0]:     hcr_reg_widx_page0 = HCR_IDX_RING_SIZE;
-		GHCI_REG_RING_WPTR[9:0]:     hcr_reg_widx_page0 = HCR_IDX_RING_WPTR;
-		GHCI_REG_IRQ_STATUS[9:0]:    hcr_reg_widx_page0 = HCR_IDX_IRQ_STATUS;
-		GHCI_REG_IRQ_ENABLE[9:0]:    hcr_reg_widx_page0 = HCR_IDX_IRQ_ENABLE;
-		GHCI_REG_IRQ_SET[9:0]:       hcr_reg_widx_page0 = HCR_IDX_IRQ_SET;
-		GHCI_REG_SCRATCH[9:0]:       hcr_reg_widx_page0 = HCR_IDX_SCRATCH;
-		GHCI_REG_WDT_CYCLES[9:0]:    hcr_reg_widx_page0 = HCR_IDX_WDT_CYCLES;
-		GHCI_REG_CP_HEAP_BASE[9:0]:  hcr_reg_widx_page0 = HCR_IDX_CP_HEAP_BASE;
-		GHCI_REG_CP_HEAP_LIMIT[9:0]: hcr_reg_widx_page0 = HCR_IDX_CP_HEAP_LIMIT;
-		GHCI_LEGACY_FENCE_LAST[9:0]: hcr_reg_widx_page0 = HCR_IDX_FENCE_LAST;
-		default:                     hcr_reg_widx_page0 = HCR_IDX_INVALID;
+		GHCI_REG_CTRL[9:0]:          hcr_reg_wdec_page0 = {2'b11, HCR_IDX_CTRL};
+		GHCI_REG_FAULT_INFO[9:0]:    hcr_reg_wdec_page0 = {2'b11, HCR_IDX_FAULT_INFO};
+		GHCI_REG_RING_BASE_LO[9:0]:  hcr_reg_wdec_page0 = {2'b11, HCR_IDX_RING_BASE_LO};
+		GHCI_REG_RING_BASE_HI[9:0]:  hcr_reg_wdec_page0 = {2'b11, HCR_IDX_RING_BASE_HI};
+		GHCI_REG_RING_SIZE[9:0]:     hcr_reg_wdec_page0 = {2'b11, HCR_IDX_RING_SIZE};
+		GHCI_REG_RING_WPTR[9:0]:     hcr_reg_wdec_page0 = {2'b11, HCR_IDX_RING_WPTR};
+		GHCI_REG_IRQ_STATUS[9:0]:    hcr_reg_wdec_page0 = {2'b11, HCR_IDX_IRQ_STATUS};
+		GHCI_REG_IRQ_ENABLE[9:0]:    hcr_reg_wdec_page0 = {2'b11, HCR_IDX_IRQ_ENABLE};
+		GHCI_REG_IRQ_SET[9:0]:       hcr_reg_wdec_page0 = {2'b11, HCR_IDX_IRQ_SET};
+		GHCI_REG_SCRATCH[9:0]:       hcr_reg_wdec_page0 = {2'b01, HCR_IDX_SCRATCH};
+		GHCI_REG_WDT_CYCLES[9:0]:    hcr_reg_wdec_page0 = {2'b11, HCR_IDX_WDT_CYCLES};
+		GHCI_REG_CP_HEAP_BASE[9:0]:  hcr_reg_wdec_page0 = {2'b11, HCR_IDX_CP_HEAP_BASE};
+		GHCI_REG_CP_HEAP_LIMIT[9:0]: hcr_reg_wdec_page0 = {2'b11, HCR_IDX_CP_HEAP_LIMIT};
+		GHCI_LEGACY_FENCE_LAST[9:0]: hcr_reg_wdec_page0 = {2'b11, HCR_IDX_FENCE_LAST};
+		default:                     hcr_reg_wdec_page0 = {2'b00, HCR_IDX_INVALID};
 		endcase
 	endfunction
 
-	wire [9:0] widx_named = waddr_page0 ? hcr_reg_widx_page0(reg_waddr[9:0]) : HCR_IDX_INVALID;
-	wire hcr_we_ok = waddr_in_win || ((widx_named != HCR_IDX_INVALID) && (widx_named != HCR_IDX_SCRATCH));
+	wire [11:0] wdec_p0 = hcr_reg_wdec_page0(reg_waddr[9:0]);
+	wire widx_named_ok    = waddr_page0 && wdec_p0[11];
+	wire widx_named_sel   = waddr_page0 && wdec_p0[10];
+	wire [9:0] widx_named = wdec_p0[9:0];
+	wire hcr_we_ok = waddr_in_win || widx_named_ok;
 
 	/* Writes. */
 	assign hcr_we = reg_wr && hcr_we_ok;
-	assign hcr_widx = (widx_named != HCR_IDX_INVALID) ? widx_named :
+	assign hcr_widx = widx_named_sel ? widx_named :
 		(waddr_in_win ? {2'b00, reg_waddr[9:2]} : HCR_IDX_INVALID);
 	assign hcr_wdata = reg_wdata;
 `ifdef SYNTH_KINTEX7
@@ -173,6 +184,22 @@ module atg_cp_regs #(
 			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sb (.I0(reg_wstrb[g_sb]), .O(reg_wstrb_m[g_sb]));
 			for (g_sbit = 0; g_sbit < 8; g_sbit = g_sbit + 1) begin : g_sbit_gen
 				(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sbit (.I0(reg_wstrb_m[g_sb]), .O(hcr_wmask_b[g_sb*8 + g_sbit]));
+			end
+		end
+	endgenerate
+	assign hcr_wmask = hcr_wmask_b;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", dont_touch = "true" *) wire regs_rst_high;
+	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h1)) u_regs_rst (.I0(rst_n), .O(regs_rst_high));
+
+	wire [3:0] reg_wstrb_m;
+	wire [31:0] hcr_wmask_b;
+	genvar g_sb, g_sbit;
+	generate
+		for (g_sb = 0; g_sb < 4; g_sb = g_sb + 1) begin : g_sb_gen
+			assign reg_wstrb_m[g_sb] = reg_wstrb[g_sb];
+			for (g_sbit = 0; g_sbit < 8; g_sbit = g_sbit + 1) begin : g_sbit_gen
+				assign hcr_wmask_b[g_sb*8 + g_sbit] = reg_wstrb_m[g_sb];
 			end
 		end
 	endgenerate
@@ -206,32 +233,64 @@ module atg_cp_regs #(
 		end
 	endgenerate
 	wire perf_clear = perf_clear_raw;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [1:0] scratch_we_b;
+	assign scratch_we_b[0] = is_scratch_wr;
+	assign scratch_we_b[1] = is_scratch_wr;
+
+	(* keep = "true", dont_touch = "true" *) wire [7:0] perf_rst_b;
+	genvar g_pc;
+	generate
+		for (g_pc = 0; g_pc < 8; g_pc = g_pc + 1) begin : g_perf_clr
+			(* DONT_TOUCH = "TRUE" *) LUT2 #(.INIT(4'hE)) u_pc (.I0(regs_rst_high), .I1(perf_clear_raw), .O(perf_rst_b[g_pc]));
+		end
+	endgenerate
+	wire perf_clear = perf_clear_raw;
 `else
 	wire perf_clear = perf_clear_raw;
 `endif
 	integer i;
 
-	/* COUNTER + 1 and PERFn + busy: one incrementer each. */
+	/* COUNTER + 1, COUNTER_HI + 1, PERFn + busy via pure-Boolean parallel prefix incrementers (no +). */
+	function [32:0] fn_inc32_co;
+		input [31:0] a;
+		reg [31:0] p1, p2, p3, p4, c_in;
+		reg co;
+		begin
+			p1 = a & {a[30:0], 1'b1};
+			p2 = p1 & {p1[29:0], 2'b11};
+			p3 = p2 & {p2[27:0], 4'hF};
+			p4 = p3 & {p3[23:0], 8'hFF};
+			c_in[0] = 1'b1;
+			c_in[15:1] = p4[14:0];
+			c_in[31:16] = p4[30:15] & {16{p4[15]}};
+			co = p4[31] & p4[15];
+			fn_inc32_co = {co, a ^ c_in};
+		end
+	endfunction
+
 	wire [31:0] counter_n;
 	wire [31:0] counter_hi_n;
 	wire counter_hi_co;
 	wire [127:0] perf_n;
 	wire [4:0] inc_co;
 
-	am_add #(.W(32)) counter_add (
-		.a(counter), .b(32'd0), .ci(1'b1), .s(counter_n), .co(inc_co[4])
-	);
-	am_add #(.W(32)) counter_hi_add (
-		.a(counter_hi), .b(32'd0), .ci(inc_co[4]), .s(counter_hi_n), .co(counter_hi_co)
-	);
+	wire [32:0] cnt_res = fn_inc32_co(counter);
+	assign inc_co[4] = cnt_res[32];
+	assign counter_n = cnt_res[31:0];
+	wire [32:0] cth_res = fn_inc32_co(counter_hi);
+	assign counter_hi_co = cth_res[32];
+	assign counter_hi_n  = cth_res[31:0];
+	(* keep = "true", equivalent_register_removal = "no" *) reg counter_co_r0, counter_co_r1;
 
 	genvar g;
 	generate
 		for (g = 0; g < 4; g = g + 1) begin : perf_inc
-			am_add #(.W(32)) perf_add (
-				.a(perf[g*32 +: 32]), .b(32'd0), .ci(perf_busy[g]), .s(perf_n[g*32 +: 32]),
-				.co(inc_co[g])
-			);
+			wire [32:0] pf_res = fn_inc32_co(perf[g*32 +: 32]);
+			wire [31:0] pf_p1 = pf_res[31:0];
+			wire pf_co = pf_res[32];
+			assign perf_n[g*32 +: 32] = perf_busy[g] ? pf_p1 : perf[g*32 +: 32];
+			assign inc_co[g] = perf_busy[g] ? pf_co : 1'b0;
 		end
 	endgenerate
 
@@ -241,11 +300,49 @@ module atg_cp_regs #(
 			scratch <= 32'd0;
 			counter <= TIMESTAMP_INIT[31:0];
 			counter_hi <= TIMESTAMP_INIT[63:32];
+			counter_co_r0 <= (TIMESTAMP_INIT[31:0] == 32'hFFFF_FFFF);
+			counter_co_r1 <= (TIMESTAMP_INIT[31:0] == 32'hFFFF_FFFF);
 			win_q <= HAS_WINDOW;
 			perf <= 128'd0;
 		end else begin
 			counter <= counter_n;
-			counter_hi <= counter_hi_n;
+			counter_co_r0 <= (counter == 32'hFFFF_FFFE);
+			counter_co_r1 <= (counter == 32'hFFFF_FFFE);
+			if (counter_co_r0)
+				counter_hi[15:0] <= counter_hi_n[15:0];
+			if (counter_co_r1)
+				counter_hi[31:16] <= counter_hi_n[31:16];
+			if (scratch_we_b[0])
+				scratch[15:0] <= (scratch[15:0] & ~hcr_wmask[15:0]) | (hcr_wdata[15:0] & hcr_wmask[15:0]);
+			if (scratch_we_b[1])
+				scratch[31:16] <= (scratch[31:16] & ~hcr_wmask[31:16]) | (hcr_wdata[31:16] & hcr_wmask[31:16]);
+			if (HAS_WINDOW && hcr_we && hcr_widx == I_WINDOW_CTRL && reg_wstrb[0])
+				win_q <= hcr_wdata[0];
+			for (i = 0; i < 8; i = i + 1)
+				if (perf_rst_b[i])
+					perf[i * 16 +: 16] <= 16'd0;
+				else
+					perf[i * 16 +: 16] <= perf_n[i * 16 +: 16];
+		end
+	end
+`elsif SYNTH_KINTEX_ULTRASCALE
+	always @(posedge clk or posedge regs_rst_high) begin
+		if (regs_rst_high) begin
+			scratch <= 32'd0;
+			counter <= TIMESTAMP_INIT[31:0];
+			counter_hi <= TIMESTAMP_INIT[63:32];
+			counter_co_r0 <= (TIMESTAMP_INIT[31:0] == 32'hFFFF_FFFF);
+			counter_co_r1 <= (TIMESTAMP_INIT[31:0] == 32'hFFFF_FFFF);
+			win_q <= HAS_WINDOW;
+			perf <= 128'd0;
+		end else begin
+			counter <= counter_n;
+			counter_co_r0 <= (counter == 32'hFFFF_FFFE);
+			counter_co_r1 <= (counter == 32'hFFFF_FFFE);
+			if (counter_co_r0)
+				counter_hi[15:0] <= counter_hi_n[15:0];
+			if (counter_co_r1)
+				counter_hi[31:16] <= counter_hi_n[31:16];
 			if (scratch_we_b[0])
 				scratch[15:0] <= (scratch[15:0] & ~hcr_wmask[15:0]) | (hcr_wdata[15:0] & hcr_wmask[15:0]);
 			if (scratch_we_b[1])
@@ -265,11 +362,18 @@ module atg_cp_regs #(
 			scratch <= 32'd0;
 			counter <= TIMESTAMP_INIT[31:0];
 			counter_hi <= TIMESTAMP_INIT[63:32];
+			counter_co_r0 <= (TIMESTAMP_INIT[31:0] == 32'hFFFF_FFFF);
+			counter_co_r1 <= (TIMESTAMP_INIT[31:0] == 32'hFFFF_FFFF);
 			win_q <= HAS_WINDOW;
 			perf <= 128'd0;
 		end else begin
 			counter <= counter_n;
-			counter_hi <= counter_hi_n;
+			counter_co_r0 <= (counter == 32'hFFFF_FFFE);
+			counter_co_r1 <= (counter == 32'hFFFF_FFFE);
+			if (counter_co_r0)
+				counter_hi[15:0] <= counter_hi_n[15:0];
+			if (counter_co_r1)
+				counter_hi[31:16] <= counter_hi_n[31:16];
 			if (is_scratch_wr)
 				scratch <= (scratch & ~hcr_wmask) | (hcr_wdata & hcr_wmask);
 			if (HAS_WINDOW && hcr_we && hcr_widx == I_WINDOW_CTRL && reg_wstrb[0])
@@ -318,24 +422,37 @@ module atg_cp_regs #(
 	endfunction
 
 	/* Reads: the registered index, answered the next cycle. */
-	(* max_fanout = 12 *) reg [9:0] ridx_q;
+	(* max_fanout = 16 *) reg [9:0] ridx_q;
+	(* max_fanout = 16, keep = "true", equivalent_register_removal = "no" *) reg [9:0] ridx_q_ext;
+`ifdef SYNTH_KINTEX7
+	(* max_fanout = 16, keep = "true", equivalent_register_removal = "no" *) reg [9:0] ridx_q_ctl;
+	(* max_fanout = 16, keep = "true", equivalent_register_removal = "no" *) reg [9:0] ridx_q_ring;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* max_fanout = 16, keep = "true", equivalent_register_removal = "no" *) reg [9:0] ridx_q_ctl;
+	(* max_fanout = 16, keep = "true", equivalent_register_removal = "no" *) reg [9:0] ridx_q_ring;
+`endif
 	reg [16:0] raddr_q;
 	reg rd_hcr_q;
+	reg rd_hcr_lo_q, rd_hcr_hi_q;
 	reg rd_state_q;
 
 `ifdef SYNTH_KINTEX7
-	wire [3:0] reg_rd_b;
+	wire [6:0] reg_rd_b;
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_rdb0 (.I0(reg_rd), .O(reg_rd_b[0]));
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_rdb1 (.I0(reg_rd), .O(reg_rd_b[1]));
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_rdb2 (.I0(reg_rd), .O(reg_rd_b[2]));
 	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_rdb3 (.I0(reg_rd), .O(reg_rd_b[3]));
+	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_rdb4 (.I0(reg_rd), .O(reg_rd_b[4]));
+	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_rdb5 (.I0(reg_rd), .O(reg_rd_b[5]));
+	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_rdb6 (.I0(reg_rd), .O(reg_rd_b[6]));
 
-	wire [16:0] raddr_b0;
+	wire [16:0] raddr_b0, raddr_case;
 	wire [11:2] raddr_b1_lo, raddr_b1_hi;
 	genvar g_ra;
 	generate
 		for (g_ra = 0; g_ra < 17; g_ra = g_ra + 1) begin : g_raddr_buf
 			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_rab0 (.I0(reg_raddr[g_ra]), .O(raddr_b0[g_ra]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_racase (.I0(reg_raddr[g_ra]), .O(raddr_case[g_ra]));
 		end
 		for (g_ra = 2; g_ra < 12; g_ra = g_ra + 1) begin : g_raddr_b1_buf
 			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_rab1l (.I0(reg_raddr[g_ra]), .O(raddr_b1_lo[g_ra]));
@@ -343,13 +460,15 @@ module atg_cp_regs #(
 		end
 	endgenerate
 
-	wire [9:0] ridx_next = hcr_reg_ridx(raddr_b0);
+	wire [9:0] ridx_next = hcr_reg_ridx(raddr_case);
 	wire rd_hcr_next = (ridx_next != HCR_IDX_INVALID);
-	reg rd_hcr_lo_q, rd_hcr_hi_q;
 
 	always @(posedge clk or posedge regs_rst_high) begin
 		if (regs_rst_high) begin
 			ridx_q <= 10'd0;
+			ridx_q_ext <= 10'd0;
+			ridx_q_ctl <= 10'd0;
+			ridx_q_ring <= 10'd0;
 			raddr_q <= 17'd0;
 			rd_hcr_q <= 1'b0;
 			rd_hcr_lo_q <= 1'b0;
@@ -358,6 +477,61 @@ module atg_cp_regs #(
 		end else begin
 			if (reg_rd_b[0]) raddr_q <= raddr_b0;
 			if (reg_rd_b[1]) ridx_q <= ridx_next;
+			if (reg_rd_b[4]) ridx_q_ext <= ridx_next;
+			if (reg_rd_b[5]) ridx_q_ctl <= ridx_next;
+			if (reg_rd_b[6]) ridx_q_ring <= ridx_next;
+			if (reg_rd_b[2]) begin
+				rd_hcr_q <= rd_hcr_next;
+				rd_hcr_lo_q <= rd_hcr_next && (ridx_next[9:6] == 4'd0);
+				rd_hcr_hi_q <= rd_hcr_next && (ridx_next[9:6] != 4'd0);
+			end
+			if (reg_rd_b[3]) rd_state_q <= 1'b0;
+		end
+	end
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [6:0] reg_rd_b;
+	assign reg_rd_b[0] = reg_rd;
+	assign reg_rd_b[1] = reg_rd;
+	assign reg_rd_b[2] = reg_rd;
+	assign reg_rd_b[3] = reg_rd;
+	assign reg_rd_b[4] = reg_rd;
+	assign reg_rd_b[5] = reg_rd;
+	assign reg_rd_b[6] = reg_rd;
+
+	wire [16:0] raddr_b0, raddr_case;
+	wire [11:2] raddr_b1_lo, raddr_b1_hi;
+	genvar g_ra;
+	generate
+		for (g_ra = 0; g_ra < 17; g_ra = g_ra + 1) begin : g_raddr_buf
+			assign raddr_b0[g_ra] = reg_raddr[g_ra];
+			assign raddr_case[g_ra] = reg_raddr[g_ra];
+		end
+		for (g_ra = 2; g_ra < 12; g_ra = g_ra + 1) begin : g_raddr_b1_buf
+			assign raddr_b1_lo[g_ra] = reg_raddr[g_ra];
+			assign raddr_b1_hi[g_ra] = reg_raddr[g_ra];
+		end
+	endgenerate
+
+	wire [9:0] ridx_next = hcr_reg_ridx(raddr_case);
+	wire rd_hcr_next = (ridx_next != HCR_IDX_INVALID);
+
+	always @(posedge clk or posedge regs_rst_high) begin
+		if (regs_rst_high) begin
+			ridx_q <= 10'd0;
+			ridx_q_ext <= 10'd0;
+			ridx_q_ctl <= 10'd0;
+			ridx_q_ring <= 10'd0;
+			raddr_q <= 17'd0;
+			rd_hcr_q <= 1'b0;
+			rd_hcr_lo_q <= 1'b0;
+			rd_hcr_hi_q <= 1'b0;
+			rd_state_q <= 1'b0;
+		end else begin
+			if (reg_rd_b[0]) raddr_q <= raddr_b0;
+			if (reg_rd_b[1]) ridx_q <= ridx_next;
+			if (reg_rd_b[4]) ridx_q_ext <= ridx_next;
+			if (reg_rd_b[5]) ridx_q_ctl <= ridx_next;
+			if (reg_rd_b[6]) ridx_q_ring <= ridx_next;
 			if (reg_rd_b[2]) begin
 				rd_hcr_q <= rd_hcr_next;
 				rd_hcr_lo_q <= rd_hcr_next && (ridx_next[9:6] == 4'd0);
@@ -367,22 +541,37 @@ module atg_cp_regs #(
 		end
 	end
 `else
+	wire [9:0] ridx_c = hcr_reg_ridx(reg_raddr);
+	wire rd_hcr_c = (ridx_c != HCR_IDX_INVALID);
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
 			ridx_q <= 10'd0;
+			ridx_q_ext <= 10'd0;
 			raddr_q <= 17'd0;
 			rd_hcr_q <= 1'b0;
+			rd_hcr_lo_q <= 1'b0;
+			rd_hcr_hi_q <= 1'b0;
 			rd_state_q <= 1'b0;
 		end else if (reg_rd) begin
 			raddr_q <= reg_raddr;
-			ridx_q <= hcr_reg_ridx(reg_raddr);
-			rd_hcr_q <= (hcr_reg_ridx(reg_raddr) != HCR_IDX_INVALID);
+			ridx_q <= ridx_c;
+			ridx_q_ext <= ridx_c;
+			rd_hcr_q <= rd_hcr_c;
+			rd_hcr_lo_q <= rd_hcr_c && (ridx_c[9:6] == 4'd0);
+			rd_hcr_hi_q <= rd_hcr_c && (ridx_c[9:6] != 4'd0);
 			rd_state_q <= 1'b0;
 		end
 	end
 `endif
 
-	assign hcr_ridx = ridx_q;
+	assign hcr_ridx = ridx_q_ext;
+`ifdef SYNTH_KINTEX7
+	assign hcr_ridx_ctl = ridx_q_ctl;
+	assign hcr_ridx_ring = ridx_q_ring;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign hcr_ridx_ctl = ridx_q_ctl;
+	assign hcr_ridx_ring = ridx_q_ring;
+`endif
 	assign win_en = win_q;
 
 	/* The extended capability list: entry k's byte offset. */
@@ -543,16 +732,12 @@ module atg_cp_regs #(
 	endgenerate
 	assign own_c_pre = {own_const_hi_w[31:16], own_const_lo_w[15:0]};
 
-	(* dont_touch = "true" *) reg [31:0] own_a_q, own_b_q, own_c_q;
+	(* dont_touch = "true" *) reg [31:0] own_abc_q;
 	always @(posedge clk or posedge regs_rst_high) begin
 		if (regs_rst_high) begin
-			own_a_q <= 32'd0;
-			own_b_q <= 32'd0;
-			own_c_q <= 32'd0;
+			own_abc_q <= 32'd0;
 		end else begin
-			own_a_q <= own_a_pre;
-			own_b_q <= own_b_pre;
-			own_c_q <= own_c_pre;
+			own_abc_q <= own_a_pre | own_b_pre | own_c_pre;
 		end
 	end
 
@@ -567,42 +752,199 @@ module atg_cp_regs #(
 		end
 	endgenerate
 
-	wire [31:0] own_x_hcr, other_hcr;
+	wire [31:0] hcr_hi_x_own, lo_sub_rdata;
 	genvar g_rd;
 	generate
 		for (g_rd = 0; g_rd < 32; g_rd = g_rd + 1) begin : g_rdata_mux
-			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFAAAFAAAFAAAF888)) u_ox (
+			(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'hF888)) u_ox (
 				.I0(rd_hcr_b[g_rd >> 3]),
-				.I1(own_a_q[g_rd]),
+				.I1(own_abc_q[g_rd]),
 				.I2(rd_hcr_hi_b[g_rd >> 3]),
 				.I3(x_rdata[g_rd]),
-				.I4(own_b_q[g_rd]),
-				.I5(own_c_q[g_rd]),
-				.O(own_x_hcr[g_rd])
+				.O(hcr_hi_x_own[g_rd])
 			);
-			(* DONT_TOUCH = "TRUE" *) LUT5 #(.INIT(32'hFFFFFE00)) u_ohcr (
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFFFFFFFFFFFFFFFE)) u_ohcr (
 				.I0(fence_rdata[g_rd]),
 				.I1(dbg_rdata[g_rd]),
 				.I2(irq_rdata[g_rd]),
-				.I3(rd_hcr_lo_b[g_rd >> 3]),
-				.I4(own_x_hcr[g_rd]),
-				.O(other_hcr[g_rd])
-			);
-			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFF00FF00FEFEF0F0)) u_rrd (
-				.I0(ring_rdata[g_rd]),
-				.I1(ctl_rdata[g_rd]),
-				.I2(other_hcr[g_rd]),
-				.I3(state_rdata[g_rd]),
-				.I4(rd_hcr_lo_b[g_rd >> 3]),
-				.I5(rd_st_b[g_rd >> 3]),
+				.I3(ring_rdata[g_rd]),
+				.I4(ctl_rdata[g_rd]),
+				.I5(hcr_hi_x_own[g_rd]),
 				.O(reg_rdata[g_rd])
 			);
 		end
 	endgenerate
+	wire [31:0] unused_lo_sub = lo_sub_rdata;
+	wire [3:0] unused_rd_b = rd_st_b | rd_hcr_lo_b;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [11:0] roff_pre_lo = {raddr_b1_lo[11:2], 2'b00};
+	wire [11:0] roff_pre_hi = {raddr_b1_hi[11:2], 2'b00};
+	wire [11:0] roff_sel_in = {reg_raddr[11:2], 2'b00};
+	wire sel_scr_raw = (roff_sel_in == GHCI_REG_SCRATCH[11:0]);
+	wire sel_cnt_raw = (roff_sel_in == GHCI_REG_TIMESTAMP_LO[11:0]);
+	wire sel_prf_raw = 1'b0;
+	wire sel_pc_raw  = (roff_sel_in == GHCI_REG_DIAG_CP_PC[11:0]);
+	wire sel_st_raw  = (roff_sel_in == GHCI_REG_DIAG_CP_STATUS[11:0]);
+	wire sel_cnthi_raw = (roff_sel_in == GHCI_REG_TIMESTAMP_HI[11:0]);
+
+	wire [1:0] sel_scr_b, sel_cnt_b, sel_prf_b, sel_pc_b, sel_st_b, sel_cnthi_b;
+	genvar g_os;
+	generate
+		for (g_os = 0; g_os < 2; g_os = g_os + 1) begin : g_own_sel_buf
+			assign sel_scr_b[g_os] = sel_scr_raw;
+			assign sel_cnt_b[g_os] = sel_cnt_raw;
+			assign sel_prf_b[g_os] = sel_prf_raw;
+			assign sel_pc_b[g_os] = sel_pc_raw;
+			assign sel_st_b[g_os] = sel_st_raw;
+			assign sel_cnthi_b[g_os] = sel_cnthi_raw;
+		end
+	endgenerate
+	wire [1:0] prf_idx_lo, prf_idx_hi;
+	assign prf_idx_lo[0] = reg_raddr[2];
+	assign prf_idx_lo[1] = reg_raddr[3];
+	assign prf_idx_hi[0] = reg_raddr[2];
+	assign prf_idx_hi[1] = reg_raddr[3];
+
+	function [31:0] calc_own_const;
+		input [11:0] roff_in;
+		input win_in;
+		reg [31:0] v;
+		begin
+			v = (roff_in >= 12'h100) ? xcap_word(roff_in) : 32'd0;
+			case ({5'd0, roff_in})
+			GHCI_REG_MAGIC: v = GHCI_MAGIC_VALUE;
+			GHCI_REG_VERSION: v = 32'h00010000;
+			GHCI_REG_BOOT_CAPS: v = cap_boot_caps;
+			GHCI_REG_EXTCAP_PTR: v = (XCAP_MASK != 11'd0) ? 32'h00000100 : 32'd0;
+			GHCI_REG_SESSION_ACTIVE: v = 32'h00000001;
+			17'h001E0: v = XCAP_MASK[7] ? LOCAL_BASE : 32'd0;
+			17'h001E4: v = XCAP_MASK[7] ? LOCAL_BYTES : 32'd0;
+			17'h001E8: v = XCAP_MASK[7] ? WINDOW_BYTES : 32'd0;
+			17'h001EC: v = XCAP_MASK[7] ? HOST_LIMIT : 32'd0;
+			17'h001F0: v = XCAP_MASK[7] ? {31'd0, win_in} : 32'd0;
+			default: ;
+			endcase
+			calc_own_const = v;
+		end
+	endfunction
+
+	wire [31:0] own_const_lo_w = calc_own_const(roff_pre_lo, win_q);
+	wire [31:0] own_const_hi_w = calc_own_const(roff_pre_hi, win_q);
+
+	wire [31:0] prf_word_all = {
+		perf[{prf_idx_hi, 5'd0} + 16 +: 16],
+		perf[{prf_idx_lo, 5'd0} +: 16]
+	};
+
+	wire [31:0] own_a_pre, own_b_pre, own_c_pre;
+	genvar g_ob;
+	generate
+		for (g_ob = 0; g_ob < 32; g_ob = g_ob + 1) begin : g_own_ab_lut
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFFFFF888F888F888)) u_oa (
+				.I0(scratch[g_ob]),       .I1(sel_scr_b[g_ob >> 4]),
+				.I2(counter[g_ob]),       .I3(sel_cnt_b[g_ob >> 4]),
+				.I4(prf_word_all[g_ob]),  .I5(sel_prf_b[g_ob >> 4]),
+				.O(own_a_pre[g_ob])
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFFFFF888F888F888)) u_ob (
+				.I0(diag_cp_pc[g_ob]),     .I1(sel_pc_b[g_ob >> 4]),
+				.I2(diag_cp_status[g_ob]), .I3(sel_st_b[g_ob >> 4]),
+				.I4(counter_hi[g_ob]),     .I5(sel_cnthi_b[g_ob >> 4]),
+				.O(own_b_pre[g_ob])
+			);
+		end
+	endgenerate
+	assign own_c_pre = {own_const_hi_w[31:16], own_const_lo_w[15:0]};
+
+	(* dont_touch = "true" *) reg [31:0] own_abc_q;
+	always @(posedge clk or posedge regs_rst_high) begin
+		if (regs_rst_high) begin
+			own_abc_q <= 32'd0;
+		end else begin
+			own_abc_q <= own_a_pre | own_b_pre | own_c_pre;
+		end
+	end
+
+	wire [3:0] rd_st_b, rd_hcr_b, rd_hcr_lo_b, rd_hcr_hi_b;
+	genvar g_rb;
+	generate
+		for (g_rb = 0; g_rb < 4; g_rb = g_rb + 1) begin : g_rd_sel_buf
+			assign rd_st_b[g_rb] = rd_state_q;
+			assign rd_hcr_b[g_rb] = rd_hcr_q;
+			assign rd_hcr_lo_b[g_rb] = rd_hcr_lo_q;
+			assign rd_hcr_hi_b[g_rb] = rd_hcr_hi_q;
+		end
+	endgenerate
+
+	wire [31:0] hcr_hi_x_own, lo_sub_rdata;
+	genvar g_rd;
+	generate
+		for (g_rd = 0; g_rd < 32; g_rd = g_rd + 1) begin : g_rdata_mux
+			(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'hF888)) u_ox (
+				.I0(rd_hcr_b[g_rd >> 3]),
+				.I1(own_abc_q[g_rd]),
+				.I2(rd_hcr_hi_b[g_rd >> 3]),
+				.I3(x_rdata[g_rd]),
+				.O(hcr_hi_x_own[g_rd])
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT6 #(.INIT(64'hFFFFFFFFFFFFFFFE)) u_ohcr (
+				.I0(fence_rdata[g_rd]),
+				.I1(dbg_rdata[g_rd]),
+				.I2(irq_rdata[g_rd]),
+				.I3(ring_rdata[g_rd]),
+				.I4(ctl_rdata[g_rd]),
+				.I5(hcr_hi_x_own[g_rd]),
+				.O(reg_rdata[g_rd])
+			);
+		end
+	endgenerate
+	wire [31:0] unused_lo_sub = lo_sub_rdata;
+	wire [3:0] unused_rd_b = rd_st_b | rd_hcr_lo_b;
 `else
-	wire [31:0] hcr_non_x_rdata = (own | ctl_rdata) | ((irq_rdata | ring_rdata) | (fence_rdata | dbg_rdata));
-	wire [31:0] hcr_rdata_w = rd_hcr_q ? (hcr_non_x_rdata | x_rdata) : 32'd0;
-	assign reg_rdata = rd_state_q ? state_rdata : hcr_rdata_w;
+	function [31:0] calc_own_reg;
+		input [11:0] roff_in;
+		input win_in;
+		reg [31:0] v;
+		begin
+			v = (roff_in >= 12'h100) ? xcap_word(roff_in) : 32'd0;
+			case ({5'd0, roff_in})
+			GHCI_REG_MAGIC: v = GHCI_MAGIC_VALUE;
+			GHCI_REG_VERSION: v = 32'h00010000;
+			GHCI_REG_BOOT_CAPS: v = cap_boot_caps;
+			GHCI_REG_EXTCAP_PTR: v = (XCAP_MASK != 11'd0) ? 32'h00000100 : 32'd0;
+			GHCI_REG_SESSION_ACTIVE: v = 32'h00000001;
+			17'h001E0: v = XCAP_MASK[7] ? LOCAL_BASE : 32'd0;
+			17'h001E4: v = XCAP_MASK[7] ? LOCAL_BYTES : 32'd0;
+			17'h001E8: v = XCAP_MASK[7] ? WINDOW_BYTES : 32'd0;
+			17'h001EC: v = XCAP_MASK[7] ? HOST_LIMIT : 32'd0;
+			17'h001F0: v = XCAP_MASK[7] ? {31'd0, win_in} : 32'd0;
+			default: ;
+			endcase
+			calc_own_reg = v;
+		end
+	endfunction
+
+	wire [11:0] roff_pre = {reg_raddr[11:2], 2'b00};
+	wire [31:0] own_c_d = calc_own_reg(roff_pre, win_q);
+	reg [31:0] own_a_q, own_b_q, own_c_q;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			own_a_q <= 32'd0;
+			own_b_q <= 32'd0;
+			own_c_q <= 32'd0;
+		end else if (reg_rd) begin
+			own_a_q <= ({5'd0, roff_pre} == GHCI_REG_SCRATCH) ? scratch :
+			           ({5'd0, roff_pre} == GHCI_REG_TIMESTAMP_LO) ? counter : 32'd0;
+			own_b_q <= ({5'd0, roff_pre} == GHCI_REG_DIAG_CP_PC) ? diag_cp_pc :
+			           ({5'd0, roff_pre} == GHCI_REG_DIAG_CP_STATUS) ? diag_cp_status :
+			           ({5'd0, roff_pre} == GHCI_REG_TIMESTAMP_HI) ? counter_hi : 32'd0;
+			own_c_q <= own_c_d;
+		end
+	end
+
+	wire [31:0] hcr_lo_rdata = rd_hcr_lo_q ? ((ctl_rdata | ring_rdata) | (irq_rdata | fence_rdata | dbg_rdata)) : 32'd0;
+	wire [31:0] own_or_x = rd_hcr_q ? ((own_a_q | own_b_q) | (own_c_q | (rd_hcr_hi_q ? x_rdata : 32'd0))) : 32'd0;
+	assign reg_rdata = rd_state_q ? state_rdata : (hcr_lo_rdata | own_or_x);
 `endif
 
 	wire unused_ok = &{1'b0, reg_waddr[1:0], reg_raddr[1:0], inc_co, raddr_q[1:0],

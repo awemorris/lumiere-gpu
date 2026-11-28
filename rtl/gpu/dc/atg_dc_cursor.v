@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -87,7 +87,9 @@ module atg_dc_cursor #(
 	localparam NL_W = 14 - LINE_SHIFT;	/* log2(lines of the image) */
 	localparam [NL_W:0] NLINES = 1 << NL_W;
 	localparam [NL_W:0] NLINES_M1 = (1 << NL_W) - 1;
+	localparam [NL_W:0] NLINES_M2 = (1 << NL_W) - 2;
 	localparam [WS-1:0] WLAST = {WS{1'b1}};
+	localparam [WS-1:0] WLAST_M1 = WLAST - {{(WS-1){1'b0}}, 1'b1};
 
 	localparam [1:0] S_IDLE = 2'd0;
 	localparam [1:0] S_LOAD = 2'd1;	/* reading the pending image into the BRAM */
@@ -100,7 +102,57 @@ module atg_dc_cursor #(
 	assign req_tag = 8'd0;
 
 	wire pipe_clr = frame_start || !enable;
+`ifdef SYNTH_KINTEX7
+	wire pipe_clr_lo, pipe_clr_hi;
+	wire pipe_clr_c0a, pipe_clr_c0b, pipe_clr_c0c;
+	wire pipe_clr_c1a, pipe_clr_c1b, pipe_clr_c1c;
+	wire pipe_clr_c2, pipe_clr_c3, pipe_clr_c4, pipe_clr_c5;
+	wire pipe_clr_s0, pipe_clr_s1, pipe_clr_s2, pipe_clr_s3;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcl   (.I0(pipe_clr), .O(pipe_clr_lo));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pch   (.I0(pipe_clr), .O(pipe_clr_hi));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcc0a (.I0(pipe_clr_lo), .O(pipe_clr_c0a));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcc0b (.I0(pipe_clr_lo), .O(pipe_clr_c0b));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcc0c (.I0(pipe_clr_lo), .O(pipe_clr_c0c));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcc1a (.I0(pipe_clr_lo), .O(pipe_clr_c1a));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcc1b (.I0(pipe_clr_lo), .O(pipe_clr_c1b));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcc1c (.I0(pipe_clr_lo), .O(pipe_clr_c1c));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcc2  (.I0(pipe_clr_lo), .O(pipe_clr_c2));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcc3  (.I0(pipe_clr_lo), .O(pipe_clr_c3));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcc4  (.I0(pipe_clr_lo), .O(pipe_clr_c4));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcc5  (.I0(pipe_clr_lo), .O(pipe_clr_c5));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcs0  (.I0(pipe_clr_hi), .O(pipe_clr_s0));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcs1  (.I0(pipe_clr_hi), .O(pipe_clr_s1));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcs2  (.I0(pipe_clr_hi), .O(pipe_clr_s2));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pcs3  (.I0(pipe_clr_hi), .O(pipe_clr_s3));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire pipe_clr_lo, pipe_clr_hi;
+	wire pipe_clr_c0a, pipe_clr_c0b, pipe_clr_c0c;
+	wire pipe_clr_c1a, pipe_clr_c1b, pipe_clr_c1c;
+	wire pipe_clr_c2, pipe_clr_c3, pipe_clr_c4, pipe_clr_c5;
+	wire pipe_clr_s0, pipe_clr_s1, pipe_clr_s2, pipe_clr_s3;
+	assign pipe_clr_lo = pipe_clr;
+	assign pipe_clr_hi = pipe_clr;
+	assign pipe_clr_c0a = pipe_clr_lo;
+	assign pipe_clr_c0b = pipe_clr_lo;
+	assign pipe_clr_c0c = pipe_clr_lo;
+	assign pipe_clr_c1a = pipe_clr_lo;
+	assign pipe_clr_c1b = pipe_clr_lo;
+	assign pipe_clr_c1c = pipe_clr_lo;
+	assign pipe_clr_c2 = pipe_clr_lo;
+	assign pipe_clr_c3 = pipe_clr_lo;
+	assign pipe_clr_c4 = pipe_clr_lo;
+	assign pipe_clr_c5 = pipe_clr_lo;
+	assign pipe_clr_s0 = pipe_clr_hi;
+	assign pipe_clr_s1 = pipe_clr_hi;
+	assign pipe_clr_s2 = pipe_clr_hi;
+	assign pipe_clr_s3 = pipe_clr_hi;
+`else
 	wire pipe_clr_lo = pipe_clr, pipe_clr_hi = pipe_clr;
+	wire pipe_clr_c0a = pipe_clr, pipe_clr_c0b = pipe_clr, pipe_clr_c0c = pipe_clr;
+	wire pipe_clr_c1a = pipe_clr, pipe_clr_c1b = pipe_clr, pipe_clr_c1c = pipe_clr;
+	wire pipe_clr_c2 = pipe_clr, pipe_clr_c3 = pipe_clr, pipe_clr_c4 = pipe_clr, pipe_clr_c5 = pipe_clr;
+	wire pipe_clr_s0 = pipe_clr, pipe_clr_s1 = pipe_clr, pipe_clr_s2 = pipe_clr, pipe_clr_s3 = pipe_clr;
+`endif
 	reg [13:0] req_line_lo;
 	reg [AW-1:14] req_line_hi;
 	assign req_line = {req_line_hi, req_line_lo};
@@ -113,6 +165,7 @@ module atg_dc_cursor #(
 	wire [31:0] cur_base = {cur_base_hi, cur_base_lo};
 	reg img_ok, load_err;
 	reg [NL_W:0] rq_n, wr_n;
+	reg wr_n_is_last, up_w_is_last;
 	reg [2:0] inflight;
 	(* max_fanout = 16 *) reg [WS-1:0] up_w;
 	wire [2:0] lcount;
@@ -123,28 +176,84 @@ module atg_dc_cursor #(
 	wire l_valid;
 	wire [LW-1:0] l_data;
 	wire l_in_ready;	/* always 1 when a response comes: the reads wait for room */
-	wire l_pop = st == S_LOAD && l_valid && up_w == WLAST;
+	wire l_pop = st == S_LOAD && l_valid && up_w_is_last;
 
 	assign pending = pend;
 	assign cursor_base = cur_base;
 	assign idle = !req_valid && inflight == 3'd0;
 
 	/* The loader's sums: the reads in flight or waiting, the next counts and the next line's address. */
-	wire [2:0] infl_up, infl_next, used;
+	wire [2:0] infl_inc, infl_dec, used_r_inc, used_r_dec;
+	reg [2:0] used_r;
+	reg used_lt4_r;
 	wire [NL_W:0] rq_inc, wr_inc;
 	wire [WS-1:0] up_inc;
+	wire [63:0] pend_base_ext = {32'd0, pend_base};
 	wire [AW-1:0] rq_line;
-	wire [6:0] ld_co_unused;
+	wire [5:0] ld_co_unused;
+	wire ur_dec_co_unused;
+`ifdef SYNTH_ASIC
+	wire [4:0] line_lo5, line_hi5_0, line_hi5_1;
+	wire line_c5, line_c10_0, line_c10_1;
+	wire [4:0] rq_n_hi5 = {{(10 - NL_W){1'b0}}, rq_n[NL_W-1:5]};
+	wire [AW-11:0] pb_hi_lo_p1, pb_hi_hi_p1;
+	wire [1:0] pb_co_unused;
+	reg [AW-11:0] pend_base_hi_p1;
+	am_add #(.W(5)) a_line_lo0 (.a(pend_base_ext[LINE_SHIFT +: 5]),     .b(rq_n[4:0]), .ci(1'b0), .s(line_lo5),   .co(line_c5));
+	am_add #(.W(5)) a_line_lo10 (.a(pend_base_ext[LINE_SHIFT + 5 +: 5]), .b(rq_n_hi5), .ci(1'b0), .s(line_hi5_0), .co(line_c10_0));
+	am_add #(.W(5)) a_line_lo11 (.a(pend_base_ext[LINE_SHIFT + 5 +: 5]), .b(rq_n_hi5), .ci(1'b1), .s(line_hi5_1), .co(line_c10_1));
+	wire line_c10 = line_c5 ? line_c10_1 : line_c10_0;
+	wire [9:0] line_lo10 = {line_c5 ? line_hi5_1 : line_hi5_0, line_lo5};
 
-	am_add #(.W(3)) a_infl (.a(inflight), .b(3'd0), .ci(take), .s(infl_up), .co(ld_co_unused[0]));
-	am_sub #(.W(3)) s_infl (.a(infl_up), .b(3'd0), .bi(rsp_read), .d(infl_next), .bo(ld_co_unused[1]));
-	am_add #(.W(3)) a_used (.a(inflight), .b(lcount), .ci(1'b0), .s(used), .co(ld_co_unused[2]));
+	am_add #(.W(8)) a_pb_p1_l (.a(pend_base_ext[LINE_SHIFT + 10 +: 8]), .b(8'd0), .ci(1'b1),
+		.s(pb_hi_lo_p1[7:0]), .co(pb_co_unused[0]));
+	am_add #(.W(AW - 18)) a_pb_p1_h (.a(pend_base_ext[LINE_SHIFT + 18 +: AW - 18]), .b({(AW-18){1'b0}}), .ci(1'b1),
+		.s(pb_hi_hi_p1[AW-19:0]), .co(pb_co_unused[1]));
+	assign pb_hi_lo_p1[AW-11:8] = {(AW-18){1'b0}};
+	wire [AW-11:0] pb_hi_p1_w = {
+		(&pend_base_ext[LINE_SHIFT + 10 +: 8]) ? pb_hi_hi_p1[AW-19:0] : pend_base_ext[LINE_SHIFT + 18 +: AW - 18],
+		pb_hi_lo_p1[7:0]
+	};
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			pend_base_hi_p1 <= {(AW-10){1'b0}};
+		else
+			pend_base_hi_p1 <= pb_hi_p1_w;
+	end
+	assign rq_line = {line_c10 ? pend_base_hi_p1 : pend_base_ext[LINE_SHIFT + 10 +: AW - 10], line_lo10};
+
+	am_add #(.W(3)) a_infl (.a(inflight), .b(3'd0), .ci(1'b1), .s(infl_inc), .co(ld_co_unused[0]));
+	am_sub #(.W(3)) s_infl (.a(inflight), .b(3'd0), .bi(1'b1), .d(infl_dec), .bo(ld_co_unused[1]));
+	am_add #(.W(3)) a_ur_i (.a(used_r),   .b(3'd0), .ci(1'b1), .s(used_r_inc), .co(ld_co_unused[2]));
+	am_sub #(.W(3)) s_ur_d (.a(used_r),   .b(3'd0), .bi(1'b1), .d(used_r_dec), .bo(ur_dec_co_unused));
+
+	/* Split NL_W+1 counters (9-10 bits) into <=8-bit chunks (LG=3) for <=10 cmos3. */
+	wire [7:0] rq_lo_inc, wr_lo_inc;
+	wire [NL_W-8:0] rq_hi_inc, wr_hi_inc;
+	wire rq_hi_co_un, wr_hi_co_un;
+	am_add #(.W(8))      a_rq_l (.a(rq_n[7:0]),      .b(8'd0),           .ci(1'b1), .s(rq_lo_inc), .co(ld_co_unused[3]));
+	am_add #(.W(NL_W-7)) a_rq_h (.a(rq_n[NL_W:8]),   .b({(NL_W-7){1'b0}}), .ci(1'b1), .s(rq_hi_inc), .co(rq_hi_co_un));
+	assign rq_inc = {(&rq_n[7:0]) ? rq_hi_inc : rq_n[NL_W:8], rq_lo_inc};
+
+	am_add #(.W(8))      a_wr_l (.a(wr_n[7:0]),      .b(8'd0),           .ci(1'b1), .s(wr_lo_inc), .co(ld_co_unused[4]));
+	am_add #(.W(NL_W-7)) a_wr_h (.a(wr_n[NL_W:8]),   .b({(NL_W-7){1'b0}}), .ci(1'b1), .s(wr_hi_inc), .co(wr_hi_co_un));
+	assign wr_inc = {(&wr_n[7:0]) ? wr_hi_inc : wr_n[NL_W:8], wr_lo_inc};
+
+	am_add #(.W(WS)) a_up (.a(up_w), .b({WS{1'b0}}), .ci(1'b1), .s(up_inc), .co(ld_co_unused[5]));
+	wire unused_pb_hi_p1 = &{1'b0, pb_hi_lo_p1[AW-11:8], pb_co_unused, rq_hi_co_un, wr_hi_co_un, ur_dec_co_unused, lcount};
+`else
+	wire ld_line_co_unused;
+	am_add #(.W(AW)) a_line (.a(pend_base_ext[LINE_SHIFT +: AW]), .b({{(AW - NL_W - 1){1'b0}}, rq_n}), .ci(1'b0),
+		.s(rq_line), .co(ld_line_co_unused));
+	am_add #(.W(3)) a_infl (.a(inflight), .b(3'd0), .ci(1'b1), .s(infl_inc), .co(ld_co_unused[0]));
+	am_sub #(.W(3)) s_infl (.a(inflight), .b(3'd0), .bi(1'b1), .d(infl_dec), .bo(ld_co_unused[1]));
+	am_add #(.W(3)) a_ur_i (.a(used_r),   .b(3'd0), .ci(1'b1), .s(used_r_inc), .co(ld_co_unused[2]));
+	am_sub #(.W(3)) s_ur_d (.a(used_r),   .b(3'd0), .bi(1'b1), .d(used_r_dec), .bo(ur_dec_co_unused));
 	am_add #(.W(NL_W + 1)) a_rq (.a(rq_n), .b({(NL_W + 1){1'b0}}), .ci(1'b1), .s(rq_inc), .co(ld_co_unused[3]));
 	am_add #(.W(NL_W + 1)) a_wr (.a(wr_n), .b({(NL_W + 1){1'b0}}), .ci(1'b1), .s(wr_inc), .co(ld_co_unused[4]));
 	am_add #(.W(WS)) a_up (.a(up_w), .b({WS{1'b0}}), .ci(1'b1), .s(up_inc), .co(ld_co_unused[5]));
-	wire [63:0] pend_base_ext = {32'd0, pend_base};
-	am_add #(.W(AW)) a_line (.a(pend_base_ext[LINE_SHIFT +: AW]), .b({{(AW - NL_W - 1){1'b0}}, rq_n}), .ci(1'b0),
-		.s(rq_line), .co(ld_co_unused[6]));
+	wire unused_pb_hi_p1 = &{1'b0, ld_line_co_unused, ur_dec_co_unused, lcount};
+`endif
 
 	/* Clean 4-entry flip-flop line FIFO (replaces distributed RAM am_fifo) */
 	reg [LW-1:0] ff_mem [0:3];
@@ -162,21 +271,38 @@ module atg_dc_cursor #(
 	am_add #(.W(3)) u_ff_inc (.a(ff_count), .b(3'd0), .ci(1'b1), .s(ff_cnt_inc), .co(ff_co_unused[2]));
 	am_sub #(.W(3)) u_ff_dec (.a(ff_count), .b(3'd0), .bi(1'b1), .d(ff_cnt_dec), .bo(ff_co_unused[3]));
 
-	wire ff_push = keep;
+	wire ff_push = rsp_read && (st == S_LOAD);
 	wire ff_pop = l_pop;
 
 	localparam NUM_FF_SLICES = LW / 16;
 `ifdef SYNTH_KINTEX7
-	localparam NUM_FF_GROUPS = NUM_FF_SLICES;
-	wire [NUM_FF_GROUPS-1:0] ff_push_grp = {NUM_FF_GROUPS{ff_push}};
-	wire [1:0] ff_wp_grp [0:NUM_FF_GROUPS-1];
-	wire [1:0] ff_rp_grp [0:NUM_FF_GROUPS-1];
-	wire [NUM_FF_GROUPS-1:0] ff_err_grp = {NUM_FF_GROUPS{rsp_error}};
-	genvar gfg;
+	wire [7:0] ff_push_t, ff_err_t;
+	wire [1:0] ff_wp_t [0:7];
+	wire [1:0] ff_rp_t [0:7];
+	genvar gft;
 	generate
-		for (gfg = 0; gfg < NUM_FF_GROUPS; gfg = gfg + 1) begin : g_ff_buf
-			assign ff_wp_grp[gfg] = ff_wp;
-			assign ff_rp_grp[gfg] = ff_rp;
+		for (gft = 0; gft < 8; gft = gft + 1) begin : g_ff_tree
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_fpt  (.I0(ff_push),   .O(ff_push_t[gft]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_fet  (.I0(rsp_error), .O(ff_err_t[gft]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_fwt0 (.I0(ff_wp[0]),  .O(ff_wp_t[gft][0]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_fwt1 (.I0(ff_wp[1]),  .O(ff_wp_t[gft][1]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_frt0 (.I0(ff_rp[0]),  .O(ff_rp_t[gft][0]));
+			(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_frt1 (.I0(ff_rp[1]),  .O(ff_rp_t[gft][1]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [7:0] ff_push_t, ff_err_t;
+	wire [1:0] ff_wp_t [0:7];
+	wire [1:0] ff_rp_t [0:7];
+	genvar gft;
+	generate
+		for (gft = 0; gft < 8; gft = gft + 1) begin : g_ff_tree
+			assign ff_push_t[gft] = ff_push;
+			assign ff_err_t[gft] = rsp_error;
+			assign ff_wp_t[gft][0] = ff_wp[0];
+			assign ff_wp_t[gft][1] = ff_wp[1];
+			assign ff_rp_t[gft][0] = ff_rp[0];
+			assign ff_rp_t[gft][1] = ff_rp[1];
 		end
 	endgenerate
 `endif
@@ -185,21 +311,57 @@ module atg_dc_cursor #(
 	generate
 	for (gff = 0; gff < NUM_FF_SLICES; gff = gff + 1) begin : g_ff_slice
 `ifdef SYNTH_KINTEX7
+		localparam integer FT_IDX = gff / 4;
+		wire ff_we0_g, ff_we1_g, ff_we2_g, ff_we3_g, ff_err_g;
+		wire [1:0] ff_rp_g;
+		(* keep = "true" *) LUT3 #(.INIT(8'h02)) u_we0 (.I0(ff_push_t[FT_IDX]), .I1(ff_wp_t[FT_IDX][0]), .I2(ff_wp_t[FT_IDX][1]), .O(ff_we0_g));
+		(* keep = "true" *) LUT3 #(.INIT(8'h20)) u_we1 (.I0(ff_push_t[FT_IDX]), .I1(ff_wp_t[FT_IDX][0]), .I2(ff_wp_t[FT_IDX][1]), .O(ff_we1_g));
+		(* keep = "true" *) LUT3 #(.INIT(8'h08)) u_we2 (.I0(ff_push_t[FT_IDX]), .I1(ff_wp_t[FT_IDX][0]), .I2(ff_wp_t[FT_IDX][1]), .O(ff_we2_g));
+		(* keep = "true" *) LUT3 #(.INIT(8'h80)) u_we3 (.I0(ff_push_t[FT_IDX]), .I1(ff_wp_t[FT_IDX][0]), .I2(ff_wp_t[FT_IDX][1]), .O(ff_we3_g));
+		(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_eg  (.I0(ff_err_t[FT_IDX]), .O(ff_err_g));
+		(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_rg0 (.I0(ff_rp_t[FT_IDX][0]), .O(ff_rp_g[0]));
+		(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_rg1 (.I0(ff_rp_t[FT_IDX][1]), .O(ff_rp_g[1]));
 		reg [15:0] ff_mem0, ff_mem1, ff_mem2, ff_mem3;
 		always @(posedge clk) begin
-			if (ff_push_grp[gff] && ff_wp_grp[gff] == 2'd0)
-				ff_mem0 <= ff_err_grp[gff] ? 16'd0 : rsp_rdata[gff*16 +: 16];
-			if (ff_push_grp[gff] && ff_wp_grp[gff] == 2'd1)
-				ff_mem1 <= ff_err_grp[gff] ? 16'd0 : rsp_rdata[gff*16 +: 16];
-			if (ff_push_grp[gff] && ff_wp_grp[gff] == 2'd2)
-				ff_mem2 <= ff_err_grp[gff] ? 16'd0 : rsp_rdata[gff*16 +: 16];
-			if (ff_push_grp[gff] && ff_wp_grp[gff] == 2'd3)
-				ff_mem3 <= ff_err_grp[gff] ? 16'd0 : rsp_rdata[gff*16 +: 16];
+			if (ff_we0_g)
+				ff_mem0 <= ff_err_g ? 16'd0 : rsp_rdata[gff*16 +: 16];
+			if (ff_we1_g)
+				ff_mem1 <= ff_err_g ? 16'd0 : rsp_rdata[gff*16 +: 16];
+			if (ff_we2_g)
+				ff_mem2 <= ff_err_g ? 16'd0 : rsp_rdata[gff*16 +: 16];
+			if (ff_we3_g)
+				ff_mem3 <= ff_err_g ? 16'd0 : rsp_rdata[gff*16 +: 16];
 		end
 		assign l_data[gff*16 +: 16] =
-			(ff_rp_grp[gff] == 2'd0) ? ff_mem0 :
-			(ff_rp_grp[gff] == 2'd1) ? ff_mem1 :
-			(ff_rp_grp[gff] == 2'd2) ? ff_mem2 : ff_mem3;
+			(ff_rp_g == 2'd0) ? ff_mem0 :
+			(ff_rp_g == 2'd1) ? ff_mem1 :
+			(ff_rp_g == 2'd2) ? ff_mem2 : ff_mem3;
+`elsif SYNTH_KINTEX_ULTRASCALE
+		localparam integer FT_IDX = gff / 4;
+		wire ff_we0_g, ff_we1_g, ff_we2_g, ff_we3_g, ff_err_g;
+		wire [1:0] ff_rp_g;
+		(* keep = "true" *) LUT3 #(.INIT(8'h02)) u_we0 (.I0(ff_push_t[FT_IDX]), .I1(ff_wp_t[FT_IDX][0]), .I2(ff_wp_t[FT_IDX][1]), .O(ff_we0_g));
+		(* keep = "true" *) LUT3 #(.INIT(8'h20)) u_we1 (.I0(ff_push_t[FT_IDX]), .I1(ff_wp_t[FT_IDX][0]), .I2(ff_wp_t[FT_IDX][1]), .O(ff_we1_g));
+		(* keep = "true" *) LUT3 #(.INIT(8'h08)) u_we2 (.I0(ff_push_t[FT_IDX]), .I1(ff_wp_t[FT_IDX][0]), .I2(ff_wp_t[FT_IDX][1]), .O(ff_we2_g));
+		(* keep = "true" *) LUT3 #(.INIT(8'h80)) u_we3 (.I0(ff_push_t[FT_IDX]), .I1(ff_wp_t[FT_IDX][0]), .I2(ff_wp_t[FT_IDX][1]), .O(ff_we3_g));
+		assign ff_err_g = ff_err_t[FT_IDX];
+		assign ff_rp_g[0] = ff_rp_t[FT_IDX][0];
+		assign ff_rp_g[1] = ff_rp_t[FT_IDX][1];
+		reg [15:0] ff_mem0, ff_mem1, ff_mem2, ff_mem3;
+		always @(posedge clk) begin
+			if (ff_we0_g)
+				ff_mem0 <= ff_err_g ? 16'd0 : rsp_rdata[gff*16 +: 16];
+			if (ff_we1_g)
+				ff_mem1 <= ff_err_g ? 16'd0 : rsp_rdata[gff*16 +: 16];
+			if (ff_we2_g)
+				ff_mem2 <= ff_err_g ? 16'd0 : rsp_rdata[gff*16 +: 16];
+			if (ff_we3_g)
+				ff_mem3 <= ff_err_g ? 16'd0 : rsp_rdata[gff*16 +: 16];
+		end
+		assign l_data[gff*16 +: 16] =
+			(ff_rp_g == 2'd0) ? ff_mem0 :
+			(ff_rp_g == 2'd1) ? ff_mem1 :
+			(ff_rp_g == 2'd2) ? ff_mem2 : ff_mem3;
 `else
 		(* max_fanout = 16 *) wire slice_push = ff_push;
 		(* max_fanout = 16 *) wire [1:0] slice_wp = ff_wp;
@@ -220,11 +382,15 @@ module atg_dc_cursor #(
 			ff_rp <= 2'd0;
 			ff_count <= 3'd0;
 			ff_valid <= 1'b0;
+			used_r <= 3'd0;
+			used_lt4_r <= 1'b1;
 		end else if (st != S_LOAD || stop) begin
 			ff_wp <= 2'd0;
 			ff_rp <= 2'd0;
 			ff_count <= 3'd0;
 			ff_valid <= 1'b0;
+			used_r <= 3'd0;
+			used_lt4_r <= 1'b1;
 		end else begin
 			if (ff_push)
 				ff_wp <= ff_wp_next;
@@ -242,28 +408,77 @@ module atg_dc_cursor #(
 			end
 			default: ;
 			endcase
+
+			case ({take, l_pop})
+			2'b10: begin
+				used_r <= used_r_inc;
+				used_lt4_r <= !used_r[2] && (used_r[1:0] != 2'd3);
+			end
+			2'b01: begin
+				used_r <= used_r_dec;
+				used_lt4_r <= 1'b1;
+			end
+			default: ;
+			endcase
 		end
 	end
 
 	assign l_valid = ff_valid;
 	assign l_in_ready = (ff_count < 3'd4);
-`ifndef SYNTH_KINTEX7
+`ifdef SYNTH_KINTEX7
+`elsif SYNTH_KINTEX_ULTRASCALE
+`else
 	assign l_data = ff_mem[ff_rp];
 `endif
 	assign lcount = ff_count;
 
-	/* The image: 64 rows of 64 words (RAMB36E1 inferable) */
+	/* The image: 64 rows of 64 words (RAMB36E1 inferable); 1-cycle registered write (Check 4 clean). */
 	(* ram_style = "block" *) reg [31:0] mem [0:4095];
 	wire mem_we = st == S_LOAD && l_valid && !stop;
+`ifdef SYNTH_KINTEX7
+	wire mem_we_addr, mem_we_dl, mem_we_dh;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_mwa (.I0(mem_we), .O(mem_we_addr));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_mdl (.I0(mem_we), .O(mem_we_dl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_mdh (.I0(mem_we), .O(mem_we_dh));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire mem_we_addr, mem_we_dl, mem_we_dh;
+	assign mem_we_addr = mem_we;
+	assign mem_we_dl = mem_we;
+	assign mem_we_dh = mem_we;
+`else
+	wire mem_we_addr = mem_we;
+	wire mem_we_dl = mem_we;
+	wire mem_we_dh = mem_we;
+`endif
+	reg mem_we_q;
+	reg [11:0] mem_waddr_q;
+	reg [31:0] mem_wdata_q;
 
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			mem_we_q <= 1'b0;
+		else
+			mem_we_q <= mem_we;
+	end
+	always @(posedge clk) begin
+		if (mem_we_addr)
+			mem_waddr_q <= {wr_n[NL_W-1:0], up_w};
+		if (mem_we_dl)
+			mem_wdata_q[15:0] <= l_data[{up_w, 5'd0} +: 16];
+		if (mem_we_dh)
+			mem_wdata_q[31:16] <= l_data[{up_w, 5'd16} +: 16];
+	end
 	always @(posedge clk)
-		if (mem_we)
-			mem[{wr_n[NL_W-1:0], up_w}] <= l_data[32*up_w +: 32];
+		if (mem_we_q)
+			mem[mem_waddr_q] <= mem_wdata_q;
 
 	/* Base address and request line registers */
 	wire pend_base_en = flip_valid && !stop;
 	wire pend_base_en_lo, pend_base_en_hi;
 `ifdef SYNTH_KINTEX7
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pbel (.I0(pend_base_en), .O(pend_base_en_lo));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_pbeh (.I0(pend_base_en), .O(pend_base_en_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
 	assign pend_base_en_lo = pend_base_en;
 	assign pend_base_en_hi = pend_base_en;
 `else
@@ -288,6 +503,9 @@ module atg_dc_cursor #(
 	wire cur_base_en = (st == S_READY) && !stop && frame_start;
 	wire cur_base_en_lo, cur_base_en_hi;
 `ifdef SYNTH_KINTEX7
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_cbel (.I0(cur_base_en), .O(cur_base_en_lo));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_cbeh (.I0(cur_base_en), .O(cur_base_en_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
 	assign cur_base_en_lo = cur_base_en;
 	assign cur_base_en_hi = cur_base_en;
 `else
@@ -309,9 +527,12 @@ module atg_dc_cursor #(
 			cur_base_hi <= pend_base_hi;
 	end
 
-	wire req_line_en = (st == S_LOAD) && !stop && (!req_valid && rq_n != NLINES && used < 3'd4);
+	wire req_line_en = (st == S_LOAD) && !req_valid;
 	wire req_line_en_lo, req_line_en_hi;
 `ifdef SYNTH_KINTEX7
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_rlel (.I0(req_line_en), .O(req_line_en_lo));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_rleh (.I0(req_line_en), .O(req_line_en_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
 	assign req_line_en_lo = req_line_en;
 	assign req_line_en_hi = req_line_en;
 `else
@@ -344,6 +565,8 @@ module atg_dc_cursor #(
 			load_err <= 1'b0;
 			rq_n <= {(NL_W + 1){1'b0}};
 			wr_n <= {(NL_W + 1){1'b0}};
+			wr_n_is_last <= 1'b0;
+			up_w_is_last <= 1'b0;
 			inflight <= 3'd0;
 			up_w <= {WS{1'b0}};
 			req_valid <= 1'b0;
@@ -351,7 +574,11 @@ module atg_dc_cursor #(
 			taken <= 1'b0;
 			taken_cancel <= 1'b0;
 			err <= 1'b0;
-			inflight <= infl_next;
+			case ({take, rsp_read})
+			2'b10: inflight <= infl_inc;
+			2'b01: inflight <= infl_dec;
+			default: ;
+			endcase
 			if (take)
 				req_valid <= 1'b0;
 			if (keep && rsp_error) begin
@@ -378,7 +605,9 @@ module atg_dc_cursor #(
 					st <= S_LOAD;
 					rq_n <= {(NL_W + 1){1'b0}};
 					wr_n <= {(NL_W + 1){1'b0}};
+					wr_n_is_last <= (NLINES_M1 == 0);
 					up_w <= {WS{1'b0}};
+					up_w_is_last <= (WLAST == 0);
 					load_err <= 1'b0;
 				end
 			S_LOAD:
@@ -389,15 +618,17 @@ module atg_dc_cursor #(
 					taken <= 1'b1;
 					taken_cancel <= 1'b1;
 				end else begin
-					if (!req_valid && rq_n != NLINES && used < 3'd4) begin
+					if (!req_valid && !rq_n[NL_W] && used_lt4_r) begin
 						req_valid <= 1'b1;
 						rq_n <= rq_inc;
 					end
 					if (mem_we) begin
 						up_w <= up_inc;
-						if (up_w == WLAST) begin
+						up_w_is_last <= (WLAST == 0) ? 1'b1 : (up_w == WLAST_M1);
+						if (up_w_is_last) begin
 							wr_n <= wr_inc;
-							if (wr_n == NLINES_M1)
+							wr_n_is_last <= (wr_n == NLINES_M2);
+							if (wr_n_is_last)
 								st <= S_READY;
 						end
 					end
@@ -443,6 +674,8 @@ module atg_dc_cursor #(
 
 `ifdef SYNTH_KINTEX7
 	wire skid_rst_n_0 = rst_n, skid_rst_n_1 = rst_n, skid_rst_n_2 = rst_n, skid_rst_n_3 = rst_n;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire skid_rst_n_0 = rst_n, skid_rst_n_1 = rst_n, skid_rst_n_2 = rst_n, skid_rst_n_3 = rst_n;
 `else
 	wire skid_rst_n_0 = rst_n, skid_rst_n_1 = rst_n, skid_rst_n_2 = rst_n, skid_rst_n_3 = rst_n;
 `endif
@@ -454,11 +687,29 @@ module atg_dc_cursor #(
 
 	reg st_out_valid_lo, st_out_valid_hi;
 	reg [15:0] st_out_data_lo, st_out_data_hi;
+`ifdef SYNTH_KINTEX7
+	wire st_out_valid_0, st_out_valid_1, st_out_valid_2, st_out_valid_3;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_sov0 (.I0(st_out_valid_lo), .O(st_out_valid_0));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_sov1 (.I0(st_out_valid_lo), .O(st_out_valid_1));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_sov2 (.I0(st_out_valid_hi), .O(st_out_valid_2));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_sov3 (.I0(st_out_valid_hi), .O(st_out_valid_3));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire st_out_valid_0, st_out_valid_1, st_out_valid_2, st_out_valid_3;
+	assign st_out_valid_0 = st_out_valid_lo;
+	assign st_out_valid_1 = st_out_valid_lo;
+	assign st_out_valid_2 = st_out_valid_hi;
+	assign st_out_valid_3 = st_out_valid_hi;
+`else
+	wire st_out_valid_0 = st_out_valid_lo;
+	wire st_out_valid_1 = st_out_valid_lo;
+	wire st_out_valid_2 = st_out_valid_hi;
+	wire st_out_valid_3 = st_out_valid_hi;
+`endif
 
 	am_skid #(.WIDTH(8)) u_out_skid_0 (
 		.clk(clk),
 		.rst_n(skid_rst_n_0),
-		.in_valid(st_out_valid_lo),
+		.in_valid(st_out_valid_0),
 		.in_ready(skid_lo_ready),
 		.in_data(st_out_data_lo[7:0]),
 		.out_valid(o_valid),
@@ -469,7 +720,7 @@ module atg_dc_cursor #(
 	am_skid #(.WIDTH(8)) u_out_skid_1 (
 		.clk(clk),
 		.rst_n(skid_rst_n_1),
-		.in_valid(st_out_valid_lo),
+		.in_valid(st_out_valid_1),
 		.in_ready(pipe_en_1),
 		.in_data(st_out_data_lo[15:8]),
 		.out_valid(unused_sk1_vld),
@@ -480,7 +731,7 @@ module atg_dc_cursor #(
 	am_skid #(.WIDTH(8)) u_out_skid_2 (
 		.clk(clk),
 		.rst_n(skid_rst_n_2),
-		.in_valid(st_out_valid_hi),
+		.in_valid(st_out_valid_2),
 		.in_ready(pipe_en_2),
 		.in_data(st_out_data_hi[7:0]),
 		.out_valid(unused_sk2_vld),
@@ -491,7 +742,7 @@ module atg_dc_cursor #(
 	am_skid #(.WIDTH(8)) u_out_skid_3 (
 		.clk(clk),
 		.rst_n(skid_rst_n_3),
-		.in_valid(st_out_valid_hi),
+		.in_valid(st_out_valid_3),
 		.in_ready(pipe_en_3),
 		.in_data(st_out_data_hi[15:8]),
 		.out_valid(unused_sk3_vld),
@@ -501,61 +752,147 @@ module atg_dc_cursor #(
 
 	/* Pipeline enable buffer tree */
 `ifdef SYNTH_KINTEX7
-	wire pe_s0a_pxl = pipe_en;
-	wire pe_s0a_pxh = pipe_en;
-	wire pe_s0a_ctl = pipe_en;
-	wire pe_s0b_pxl = pipe_en;
-	wire pe_s0b_pxh = pipe_en;
-	wire pe_s0b_ctl = pipe_en;
-	wire pe_s0c_pxl = pipe_en;
-	wire pe_s0c_pxh = pipe_en;
-	wire pe_s0c_ctl = pipe_en;
-	wire pe_s1_pxl = pipe_en;
-	wire pe_s1_pxh = pipe_en;
-	wire pe_s1_c = pipe_en;
-	wire pe_s1_ctl = pipe_en;
-	wire pe_s1b_pxl = pipe_en;
-	wire pe_s1b_pxh = pipe_en;
-	wire pe_s1b_pa0 = pipe_en;
-	wire pe_s1b_pa1 = pipe_en;
-	wire pe_s1b_pa2 = pipe_en;
-	wire pe_s1b_c = pipe_en;
-	wire pe_s1b_ctl = pipe_en;
-	wire pe_s2a_pxl = pipe_en;
-	wire pe_s2a_pxh = pipe_en;
-	wire pe_s2a_t0 = pipe_en;
-	wire pe_s2a_t1 = pipe_en;
-	wire pe_s2a_t2 = pipe_en;
-	wire pe_s2a_c = pipe_en;
-	wire pe_s2a_ctl = pipe_en;
-	wire pe_s2b_pxl = pipe_en;
-	wire pe_s2b_pxh = pipe_en;
-	wire pe_s2b_u0 = pipe_en;
-	wire pe_s2b_u1 = pipe_en;
-	wire pe_s2b_u2 = pipe_en;
-	wire pe_s2b_c = pipe_en;
-	wire pe_s2b_ctl = pipe_en;
-	wire pe_s2c_pxl = pipe_en;
-	wire pe_s2c_pxh = pipe_en;
-	wire pe_s2c_v = pipe_en;
-	wire pe_s2c_ctl = pipe_en;
-	wire pe_s3a_pxl = pipe_en;
-	wire pe_s3a_pxh = pipe_en;
-	wire pe_s3a_vm0 = pipe_en;
-	wire pe_s3a_vm1 = pipe_en;
-	wire pe_s3a_vm2 = pipe_en;
-	wire pe_s3a_v = pipe_en;
-	wire pe_s3a_ctl = pipe_en;
-	wire pe_s3b_pxl = pipe_en;
-	wire pe_s3b_pxh = pipe_en;
-	wire pe_s3b_nt0 = pipe_en;
-	wire pe_s3b_nt1 = pipe_en;
-	wire pe_s3b_nt2 = pipe_en;
-	wire pe_s3b_v = pipe_en;
-	wire pe_s3b_ctl = pipe_en;
-	wire pe_out_l = pipe_en;
-	wire pe_out_h = pipe_en;
-	wire pe_out_ctl = pipe_en;
+	wire pe_s0a_pxl, pe_s0a_pxh, pe_s0a_ctl;
+	wire pe_s0b_pxl, pe_s0b_pxh, pe_s0b_ctl;
+	wire pe_s0c_pxl, pe_s0c_pxh, pe_s0c_ctl;
+	wire pe_s1_pxl, pe_s1_pxh, pe_s1_c, pe_s1_ctl;
+	wire pe_s1b_pxl, pe_s1b_pxh, pe_s1b_pa0, pe_s1b_pa1, pe_s1b_pa2, pe_s1b_c, pe_s1b_ctl;
+	wire pe_s2a_pxl, pe_s2a_pxh, pe_s2a_t0, pe_s2a_t1, pe_s2a_t2, pe_s2a_c, pe_s2a_ctl;
+	wire pe_s2b_pxl, pe_s2b_pxh, pe_s2b_u0, pe_s2b_u1, pe_s2b_u2, pe_s2b_c, pe_s2b_ctl;
+	wire pe_s2c_pxl, pe_s2c_pxh, pe_s2c_v, pe_s2c_ctl;
+	wire pe_s3a_pxl, pe_s3a_pxh, pe_s3a_vm0, pe_s3a_vm1, pe_s3a_vm2, pe_s3a_v, pe_s3a_ctl;
+	wire pe_s3b_pxl, pe_s3b_pxh, pe_s3b_nt0, pe_s3b_nt1, pe_s3b_nt2, pe_s3b_v, pe_s3b_ctl;
+	wire pe_out_l, pe_out_h, pe_out_ctl;
+
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_0al (.I0(pipe_en), .O(pe_s0a_pxl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_0ah (.I0(pipe_en), .O(pe_s0a_pxh));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_0ac (.I0(pipe_en), .O(pe_s0a_ctl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_0bl (.I0(pipe_en), .O(pe_s0b_pxl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_0bh (.I0(pipe_en), .O(pe_s0b_pxh));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_0bc (.I0(pipe_en), .O(pe_s0b_ctl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_0cl (.I0(pipe_en), .O(pe_s0c_pxl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_0ch (.I0(pipe_en), .O(pe_s0c_pxh));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_0cc (.I0(pipe_en), .O(pe_s0c_ctl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_1l  (.I0(pipe_en), .O(pe_s1_pxl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_1h  (.I0(pipe_en), .O(pe_s1_pxh));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_1ca (.I0(pipe_en), .O(pe_s1_c));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_1ct (.I0(pipe_en), .O(pe_s1_ctl));
+
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_1bl (.I0(pipe_en_1), .O(pe_s1b_pxl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_1bh (.I0(pipe_en_1), .O(pe_s1b_pxh));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_1b0 (.I0(pipe_en_1), .O(pe_s1b_pa0));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_1b1 (.I0(pipe_en_1), .O(pe_s1b_pa1));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_1b2 (.I0(pipe_en_1), .O(pe_s1b_pa2));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_1bc (.I0(pipe_en_1), .O(pe_s1b_c));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_1bt (.I0(pipe_en_1), .O(pe_s1b_ctl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2al (.I0(pipe_en_1), .O(pe_s2a_pxl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2ah (.I0(pipe_en_1), .O(pe_s2a_pxh));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2a0 (.I0(pipe_en_1), .O(pe_s2a_t0));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2a1 (.I0(pipe_en_1), .O(pe_s2a_t1));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2a2 (.I0(pipe_en_1), .O(pe_s2a_t2));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2ac (.I0(pipe_en_1), .O(pe_s2a_c));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2at (.I0(pipe_en_1), .O(pe_s2a_ctl));
+
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2bl (.I0(pipe_en_2), .O(pe_s2b_pxl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2bh (.I0(pipe_en_2), .O(pe_s2b_pxh));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2b0 (.I0(pipe_en_2), .O(pe_s2b_u0));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2b1 (.I0(pipe_en_2), .O(pe_s2b_u1));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2b2 (.I0(pipe_en_2), .O(pe_s2b_u2));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2bc (.I0(pipe_en_2), .O(pe_s2b_c));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2bt (.I0(pipe_en_2), .O(pe_s2b_ctl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2cl (.I0(pipe_en_2), .O(pe_s2c_pxl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2ch (.I0(pipe_en_2), .O(pe_s2c_pxh));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2cv (.I0(pipe_en_2), .O(pe_s2c_v));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_2ct (.I0(pipe_en_2), .O(pe_s2c_ctl));
+
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3al (.I0(pipe_en_3), .O(pe_s3a_pxl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3ah (.I0(pipe_en_3), .O(pe_s3a_pxh));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3a0 (.I0(pipe_en_3), .O(pe_s3a_vm0));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3a1 (.I0(pipe_en_3), .O(pe_s3a_vm1));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3a2 (.I0(pipe_en_3), .O(pe_s3a_vm2));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3av (.I0(pipe_en_3), .O(pe_s3a_v));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3at (.I0(pipe_en_3), .O(pe_s3a_ctl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3bl (.I0(pipe_en_3), .O(pe_s3b_pxl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3bh (.I0(pipe_en_3), .O(pe_s3b_pxh));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3b0 (.I0(pipe_en_3), .O(pe_s3b_nt0));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3b1 (.I0(pipe_en_3), .O(pe_s3b_nt1));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3b2 (.I0(pipe_en_3), .O(pe_s3b_nt2));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3bv (.I0(pipe_en_3), .O(pe_s3b_v));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_3bt (.I0(pipe_en_3), .O(pe_s3b_ctl));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_ol  (.I0(pipe_en_3), .O(pe_out_l));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_oh  (.I0(pipe_en_3), .O(pe_out_h));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_pe_oc  (.I0(pipe_en_3), .O(pe_out_ctl));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire pe_s0a_pxl, pe_s0a_pxh, pe_s0a_ctl;
+	wire pe_s0b_pxl, pe_s0b_pxh, pe_s0b_ctl;
+	wire pe_s0c_pxl, pe_s0c_pxh, pe_s0c_ctl;
+	wire pe_s1_pxl, pe_s1_pxh, pe_s1_c, pe_s1_ctl;
+	wire pe_s1b_pxl, pe_s1b_pxh, pe_s1b_pa0, pe_s1b_pa1, pe_s1b_pa2, pe_s1b_c, pe_s1b_ctl;
+	wire pe_s2a_pxl, pe_s2a_pxh, pe_s2a_t0, pe_s2a_t1, pe_s2a_t2, pe_s2a_c, pe_s2a_ctl;
+	wire pe_s2b_pxl, pe_s2b_pxh, pe_s2b_u0, pe_s2b_u1, pe_s2b_u2, pe_s2b_c, pe_s2b_ctl;
+	wire pe_s2c_pxl, pe_s2c_pxh, pe_s2c_v, pe_s2c_ctl;
+	wire pe_s3a_pxl, pe_s3a_pxh, pe_s3a_vm0, pe_s3a_vm1, pe_s3a_vm2, pe_s3a_v, pe_s3a_ctl;
+	wire pe_s3b_pxl, pe_s3b_pxh, pe_s3b_nt0, pe_s3b_nt1, pe_s3b_nt2, pe_s3b_v, pe_s3b_ctl;
+	wire pe_out_l, pe_out_h, pe_out_ctl;
+
+	assign pe_s0a_pxl = pipe_en;
+	assign pe_s0a_pxh = pipe_en;
+	assign pe_s0a_ctl = pipe_en;
+	assign pe_s0b_pxl = pipe_en;
+	assign pe_s0b_pxh = pipe_en;
+	assign pe_s0b_ctl = pipe_en;
+	assign pe_s0c_pxl = pipe_en;
+	assign pe_s0c_pxh = pipe_en;
+	assign pe_s0c_ctl = pipe_en;
+	assign pe_s1_pxl = pipe_en;
+	assign pe_s1_pxh = pipe_en;
+	assign pe_s1_c = pipe_en;
+	assign pe_s1_ctl = pipe_en;
+
+	assign pe_s1b_pxl = pipe_en_1;
+	assign pe_s1b_pxh = pipe_en_1;
+	assign pe_s1b_pa0 = pipe_en_1;
+	assign pe_s1b_pa1 = pipe_en_1;
+	assign pe_s1b_pa2 = pipe_en_1;
+	assign pe_s1b_c = pipe_en_1;
+	assign pe_s1b_ctl = pipe_en_1;
+	assign pe_s2a_pxl = pipe_en_1;
+	assign pe_s2a_pxh = pipe_en_1;
+	assign pe_s2a_t0 = pipe_en_1;
+	assign pe_s2a_t1 = pipe_en_1;
+	assign pe_s2a_t2 = pipe_en_1;
+	assign pe_s2a_c = pipe_en_1;
+	assign pe_s2a_ctl = pipe_en_1;
+
+	assign pe_s2b_pxl = pipe_en_2;
+	assign pe_s2b_pxh = pipe_en_2;
+	assign pe_s2b_u0 = pipe_en_2;
+	assign pe_s2b_u1 = pipe_en_2;
+	assign pe_s2b_u2 = pipe_en_2;
+	assign pe_s2b_c = pipe_en_2;
+	assign pe_s2b_ctl = pipe_en_2;
+	assign pe_s2c_pxl = pipe_en_2;
+	assign pe_s2c_pxh = pipe_en_2;
+	assign pe_s2c_v = pipe_en_2;
+	assign pe_s2c_ctl = pipe_en_2;
+
+	assign pe_s3a_pxl = pipe_en_3;
+	assign pe_s3a_pxh = pipe_en_3;
+	assign pe_s3a_vm0 = pipe_en_3;
+	assign pe_s3a_vm1 = pipe_en_3;
+	assign pe_s3a_vm2 = pipe_en_3;
+	assign pe_s3a_v = pipe_en_3;
+	assign pe_s3a_ctl = pipe_en_3;
+	assign pe_s3b_pxl = pipe_en_3;
+	assign pe_s3b_pxh = pipe_en_3;
+	assign pe_s3b_nt0 = pipe_en_3;
+	assign pe_s3b_nt1 = pipe_en_3;
+	assign pe_s3b_nt2 = pipe_en_3;
+	assign pe_s3b_v = pipe_en_3;
+	assign pe_s3b_ctl = pipe_en_3;
+	assign pe_out_l = pipe_en_3;
+	assign pe_out_h = pipe_en_3;
+	assign pe_out_ctl = pipe_en_3;
 `else
 	wire pe_s0a_pxl = pipe_en;
 	wire pe_s0a_pxh = pipe_en;
@@ -617,49 +954,101 @@ module atg_dc_cursor #(
 	/* Screen coordinate tracking */
 	(* extract_reset = "no" *) reg [15:0] x, y;
 	reg [15:0] pos_x, pos_y;
+	reg [10:0] pos_x_hi_p1, pos_y_hi_p1;
 	reg vis;
 
-	wire [16:0] dx, dy;
-	wire [15:0] x_inc, y_inc, x_last_w;
-	reg [15:0] x_last;
-	wire [4:0] bl_co_unused;
+	wire [5:0] dx_lo, dy_lo;
+	wire dx_bo, dy_bo;
+	wire [15:0] x_inc, y_inc, x_last_w, x_last_m1_w;
+	wire [10:0] pos_x_hi_p1_w, pos_y_hi_p1_w;
+	reg [15:0] x_last, x_last_m1;
+	reg x_last_is0, x_is_eol_r;
+	wire [5:0] bl_co_unused;
 
-	am_sub #(.W(17)) s_dx (.a({1'b0, x}), .b({pos_x[15], pos_x}), .bi(1'b0), .d(dx), .bo(bl_co_unused[0]));
-	am_sub #(.W(17)) s_dy (.a({1'b0, y}), .b({pos_y[15], pos_y}), .bi(1'b0), .d(dy), .bo(bl_co_unused[1]));
-	am_add #(.W(16)) a_x (.a(x), .b(16'd0), .ci(1'b1), .s(x_inc), .co(bl_co_unused[2]));
-	am_add #(.W(16)) a_y (.a(y), .b(16'd0), .ci(1'b1), .s(y_inc), .co(bl_co_unused[3]));
-	am_sub #(.W(16)) s_w (.a(fb_width), .b(16'd1), .bi(1'b0), .d(x_last_w), .bo(bl_co_unused[4]));
+	wire [7:0] x_lo_inc, x_hi_inc;
+	wire [1:0] x_co_unused;
+	wire [3:0] x_l_n0, x_l_n1, x_l_n2, x_l_n3, x_m_n0, x_m_n1, x_m_n2, x_m_n3;
+	wire [7:0] xw_co_unused;
+	am_sub #(.W(6))  s_dx_lo (.a(x[5:0]), .b(pos_x[5:0]), .bi(1'b0), .d(dx_lo), .bo(dx_bo));
+	am_sub #(.W(6))  s_dy_lo (.a(y[5:0]), .b(pos_y[5:0]), .bi(1'b0), .d(dy_lo), .bo(dy_bo));
+	am_add #(.W(11)) a_pxp1  (.a({pos[15], pos[15:6]}),   .b(11'd0), .ci(1'b1), .s(pos_x_hi_p1_w), .co(bl_co_unused[0]));
+	am_add #(.W(11)) a_pyp1  (.a({pos[31], pos[31:22]}),  .b(11'd0), .ci(1'b1), .s(pos_y_hi_p1_w), .co(bl_co_unused[1]));
+	am_add #(.W(16)) a_y     (.a(y), .b(16'd0), .ci(1'b1), .s(y_inc), .co(bl_co_unused[3]));
+`ifdef SYNTH_ASIC
+	am_add #(.W(8))  a_x_lo  (.a(x[7:0]),  .b(8'd0), .ci(1'b1), .s(x_lo_inc), .co(x_co_unused[0]));
+	am_add #(.W(8))  a_x_hi  (.a(x[15:8]), .b(8'd0), .ci(1'b1), .s(x_hi_inc), .co(x_co_unused[1]));
+	assign x_inc = {(&x[7:0]) ? x_hi_inc : x[15:8], x_lo_inc};
+	am_sub #(.W(4)) s_w_n0 (.a(fb_width[3:0]),   .b(4'd1), .bi(1'b0), .d(x_l_n0), .bo(xw_co_unused[0]));
+	am_sub #(.W(4)) s_w_n1 (.a(fb_width[7:4]),   .b(4'd1), .bi(1'b0), .d(x_l_n1), .bo(xw_co_unused[1]));
+	am_sub #(.W(4)) s_w_n2 (.a(fb_width[11:8]),  .b(4'd1), .bi(1'b0), .d(x_l_n2), .bo(xw_co_unused[2]));
+	am_sub #(.W(4)) s_w_n3 (.a(fb_width[15:12]), .b(4'd1), .bi(1'b0), .d(x_l_n3), .bo(xw_co_unused[3]));
+	wire xw_b0 = ~(|fb_width[3:0]);
+	wire xw_b1 = xw_b0 && ~(|fb_width[7:4]);
+	wire xw_b2 = xw_b1 && ~(|fb_width[11:8]);
+	assign x_last_w = {xw_b2 ? x_l_n3 : fb_width[15:12], xw_b1 ? x_l_n2 : fb_width[11:8], xw_b0 ? x_l_n1 : fb_width[7:4], x_l_n0};
+
+	am_sub #(.W(4)) s_wm_n0 (.a(fb_width[3:0]),   .b(4'd2), .bi(1'b0), .d(x_m_n0), .bo(xw_co_unused[4]));
+	am_sub #(.W(4)) s_wm_n1 (.a(fb_width[7:4]),   .b(4'd1), .bi(1'b0), .d(x_m_n1), .bo(xw_co_unused[5]));
+	am_sub #(.W(4)) s_wm_n2 (.a(fb_width[11:8]),  .b(4'd1), .bi(1'b0), .d(x_m_n2), .bo(xw_co_unused[6]));
+	am_sub #(.W(4)) s_wm_n3 (.a(fb_width[15:12]), .b(4'd1), .bi(1'b0), .d(x_m_n3), .bo(xw_co_unused[7]));
+	wire xm_b0 = ~(|fb_width[3:1]);
+	wire xm_b1 = xm_b0 && ~(|fb_width[7:4]);
+	wire xm_b2 = xm_b1 && ~(|fb_width[11:8]);
+	assign x_last_m1_w = {xm_b2 ? x_m_n3 : fb_width[15:12], xm_b1 ? x_m_n2 : fb_width[11:8], xm_b0 ? x_m_n1 : fb_width[7:4], x_m_n0};
+	assign bl_co_unused[2] = (&x_co_unused[1:0]) ^ (&xw_co_unused);
+`else
+	assign x_lo_inc = 8'd0;
+	assign x_hi_inc = 8'd0;
+	assign x_l_n0 = 4'd0;
+	assign x_l_n1 = 4'd0;
+	assign x_l_n2 = 4'd0;
+	assign x_l_n3 = 4'd0;
+	assign x_m_n0 = 4'd0;
+	assign x_m_n1 = 4'd0;
+	assign x_m_n2 = 4'd0;
+	assign x_m_n3 = 4'd0;
+	assign xw_co_unused = 8'd0;
+	am_add #(.W(16)) a_x  (.a(x),        .b(16'd0), .ci(1'b1), .s(x_inc),       .co(x_co_unused[0]));
+	am_sub #(.W(16)) s_w  (.a(fb_width), .b(16'd1), .bi(1'b0), .d(x_last_w),    .bo(x_co_unused[1]));
+	am_sub #(.W(16)) s_wm (.a(fb_width), .b(16'd2), .bi(1'b0), .d(x_last_m1_w), .bo(bl_co_unused[2]));
+`endif
+	assign bl_co_unused[4] = (&x_co_unused[1:0]) ^ (&x_lo_inc) ^ (&x_hi_inc) ^
+		(&x_l_n0) ^ (&x_l_n1) ^ (&x_l_n2) ^ (&x_l_n3) ^ (&x_m_n0) ^ (&x_m_n1) ^ (&x_m_n2) ^ (&x_m_n3) ^ (&xw_co_unused);
+	assign bl_co_unused[5] = 1'b0;
 	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n)
-			x_last <= 16'd0;
-		else if (pipe_clr_lo)
-			x_last <= 16'd0;
-		else
-			x_last <= x_last_w;
+		if (!rst_n) begin
+			x_last     <= 16'd0;
+			x_last_m1  <= 16'd0;
+			x_last_is0 <= 1'b0;
+		end else begin
+			x_last     <= x_last_w;
+			x_last_m1  <= x_last_m1_w;
+			x_last_is0 <= ~(|(fb_width ^ 16'd1));
+		end
 	end
 	reg cur_gate;
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n)
 			cur_gate <= 1'b0;
-		else if (pipe_clr_lo)
+		else if (pipe_clr_c0a)
 			cur_gate <= 1'b0;
 		else
 			cur_gate <= vis && img_ok && (st == S_IDLE);
 	end
-	wire dx_in = (dx[16:6] == 11'd0);
-	wire dy_in = (dy[16:6] == 11'd0);
+	wire dx_eq0 = ({1'b0, x[15:6]} == {pos_x[15], pos_x[15:6]});
+	wire dx_eq1 = ({1'b0, x[15:6]} == pos_x_hi_p1);
+	wire dy_eq0 = ({1'b0, y[15:6]} == {pos_y[15], pos_y[15:6]});
+	wire dy_eq1 = ({1'b0, y[15:6]} == pos_y_hi_p1);
 
-	wire eq0 = (x[2:0]   == x_last[2:0]);
-	wire eq1 = (x[5:3]   == x_last[5:3]);
-	wire eq2 = (x[8:6]   == x_last[8:6]);
-	wire eq3 = (x[11:9]  == x_last[11:9]);
-	wire eq4 = (x[14:12] == x_last[14:12]);
-	wire eq5 = (x[15]    == x_last[15]);
-	wire x_is_eol = eq0 && eq1 && eq2 && eq3 && eq4 && eq5;
+	wire x_eq_m1 = (x[3:0] == x_last_m1[3:0]) && (x[7:4] == x_last_m1[7:4]) &&
+	               (x[11:8] == x_last_m1[11:8]) && (x[15:12] == x_last_m1[15:12]);
+	wire x_is_eol = x_is_eol_r;
 
 	/* Stage 0a: Register RAM read address (Rule 4: clean address) */
 	reg st0a_valid;
-	reg s0a_dx_in, s0a_dy_in, s0a_cur_gate;
+	reg s0a_dx_bo, s0a_dx_eq0, s0a_dx_eq1;
+	reg s0a_dy_bo, s0a_dy_eq0, s0a_dy_eq1;
+	reg s0a_cur_gate;
 	(* max_fanout = 16 *) reg [1:0] s0a_fmt;
 	reg [15:0] s0a_px_lo, s0a_px_hi;
 	reg [11:0] s0a_addr;
@@ -673,27 +1062,52 @@ module atg_dc_cursor #(
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n)
-			pos_x <= 16'd0;
-		else if (pipe_clr_lo)
-			pos_x <= pos[15:0];
+			pos_x       <= 16'd0;
+		else if (pipe_clr_c0b)
+			pos_x       <= pos[15:0];
 	end
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n)
-			pos_y <= 16'd0;
-		else if (pipe_clr_lo)
-			pos_y <= pos[31:16];
+			pos_x_hi_p1 <= 11'd0;
+		else if (pipe_clr_c0c)
+			pos_x_hi_p1 <= pos_x_hi_p1_w;
 	end
 
-	wire pe_s0a_valid = pe_s0a_ctl && i_valid;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			pos_y       <= 16'd0;
+		else if (pipe_clr_c1b)
+			pos_y       <= pos[31:16];
+	end
+
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			pos_y_hi_p1 <= 11'd0;
+		else if (pipe_clr_c1c)
+			pos_y_hi_p1 <= pos_y_hi_p1_w;
+	end
+
 `ifdef SYNTH_KINTEX7
-	wire pe_s0a_v_addr = pe_s0a_valid;
-	wire pe_s0a_v_x = pe_s0a_valid;
-	wire pe_s0a_v_y = pe_s0a_valid;
-	wire pe_s0a_v_ctl = pe_s0a_valid;
-	wire x_is_eol_x = x_is_eol;
-	wire x_is_eol_y = x_is_eol;
+	wire pe_s0a_v_addr, pe_s0a_v_x, pe_s0a_v_y, pe_s0a_v_ctl;
+	(* keep = "true" *) LUT2 #(.INIT(4'h8)) u_pe0a_va (.I0(pe_s0a_ctl), .I1(i_valid), .O(pe_s0a_v_addr));
+	(* keep = "true" *) LUT2 #(.INIT(4'h8)) u_pe0a_vx (.I0(pe_s0a_ctl), .I1(i_valid), .O(pe_s0a_v_x));
+	(* keep = "true" *) LUT2 #(.INIT(4'h8)) u_pe0a_vy (.I0(pe_s0a_ctl), .I1(i_valid), .O(pe_s0a_v_y));
+	(* keep = "true" *) LUT2 #(.INIT(4'h8)) u_pe0a_vc (.I0(pe_s0a_ctl), .I1(i_valid), .O(pe_s0a_v_ctl));
+	wire x_is_eol_x, x_is_eol_y;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_eol_x (.I0(x_is_eol), .O(x_is_eol_x));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_eol_y (.I0(x_is_eol), .O(x_is_eol_y));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire pe_s0a_v_addr, pe_s0a_v_x, pe_s0a_v_y, pe_s0a_v_ctl;
+	(* keep = "true" *) LUT2 #(.INIT(4'h8)) u_pe0a_va (.I0(pe_s0a_ctl), .I1(i_valid), .O(pe_s0a_v_addr));
+	(* keep = "true" *) LUT2 #(.INIT(4'h8)) u_pe0a_vx (.I0(pe_s0a_ctl), .I1(i_valid), .O(pe_s0a_v_x));
+	(* keep = "true" *) LUT2 #(.INIT(4'h8)) u_pe0a_vy (.I0(pe_s0a_ctl), .I1(i_valid), .O(pe_s0a_v_y));
+	(* keep = "true" *) LUT2 #(.INIT(4'h8)) u_pe0a_vc (.I0(pe_s0a_ctl), .I1(i_valid), .O(pe_s0a_v_ctl));
+	wire x_is_eol_x, x_is_eol_y;
+	assign x_is_eol_x = x_is_eol;
+	assign x_is_eol_y = x_is_eol;
 `else
+	wire pe_s0a_valid = pe_s0a_ctl && i_valid;
 	wire pe_s0a_v_addr = pe_s0a_valid;
 	wire pe_s0a_v_x = pe_s0a_valid;
 	wire pe_s0a_v_y = pe_s0a_valid;
@@ -703,18 +1117,22 @@ module atg_dc_cursor #(
 `endif
 
 	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n)
-			x <= 16'd0;
-		else if (pipe_clr_lo)
-			x <= 16'd0;
-		else if (pe_s0a_v_x)
-			x <= x_is_eol_x ? 16'd0 : x_inc;
+		if (!rst_n) begin
+			x          <= 16'd0;
+			x_is_eol_r <= 1'b0;
+		end else if (pipe_clr_c2) begin
+			x          <= 16'd0;
+			x_is_eol_r <= ~(|(fb_width ^ 16'd1));
+		end else if (pe_s0a_v_x) begin
+			x          <= x_is_eol_x ? 16'd0 : x_inc;
+			x_is_eol_r <= x_is_eol_x ? x_last_is0 : x_eq_m1;
+		end
 	end
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n)
 			y <= 16'd0;
-		else if (pipe_clr_lo)
+		else if (pipe_clr_c3)
 			y <= 16'd0;
 		else if (pe_s0a_v_y && x_is_eol_y)
 			y <= y_inc;
@@ -723,7 +1141,7 @@ module atg_dc_cursor #(
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n)
 			st0a_valid <= 1'b0;
-		else if (pipe_clr_lo)
+		else if (pipe_clr_c0a)
 			st0a_valid <= 1'b0;
 		else if (pe_s0a_ctl)
 			st0a_valid <= i_valid;
@@ -731,20 +1149,32 @@ module atg_dc_cursor #(
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
-			s0a_dx_in <= 1'b0;
-			s0a_dy_in <= 1'b0;
+			s0a_dx_bo    <= 1'b0;
+			s0a_dx_eq0   <= 1'b0;
+			s0a_dx_eq1   <= 1'b0;
+			s0a_dy_bo    <= 1'b0;
+			s0a_dy_eq0   <= 1'b0;
+			s0a_dy_eq1   <= 1'b0;
 			s0a_cur_gate <= 1'b0;
-			s0a_fmt <= 2'd0;
-		end else if (pipe_clr_lo) begin
-			s0a_dx_in <= 1'b0;
-			s0a_dy_in <= 1'b0;
+			s0a_fmt      <= 2'd0;
+		end else if (pipe_clr_c0a) begin
+			s0a_dx_bo    <= 1'b0;
+			s0a_dx_eq0   <= 1'b0;
+			s0a_dx_eq1   <= 1'b0;
+			s0a_dy_bo    <= 1'b0;
+			s0a_dy_eq0   <= 1'b0;
+			s0a_dy_eq1   <= 1'b0;
 			s0a_cur_gate <= 1'b0;
-			s0a_fmt <= 2'd0;
+			s0a_fmt      <= 2'd0;
 		end else if (pe_s0a_v_ctl) begin
-			s0a_dx_in <= dx_in;
-			s0a_dy_in <= dy_in;
+			s0a_dx_bo    <= dx_bo;
+			s0a_dx_eq0   <= dx_eq0;
+			s0a_dx_eq1   <= dx_eq1;
+			s0a_dy_bo    <= dy_bo;
+			s0a_dy_eq0   <= dy_eq0;
+			s0a_dy_eq1   <= dy_eq1;
 			s0a_cur_gate <= cur_gate;
-			s0a_fmt <= format;
+			s0a_fmt      <= format;
 		end
 	end
 
@@ -752,7 +1182,7 @@ module atg_dc_cursor #(
 		if (!rst_n)
 			s0a_addr <= 12'd0;
 		else if (pe_s0a_v_addr)
-			s0a_addr <= {dy[5:0], dx[5:0]};
+			s0a_addr <= {dy_lo, dx_lo};
 	end
 
 	always @(posedge clk or negedge rst_n) begin
@@ -780,12 +1210,14 @@ module atg_dc_cursor #(
 			mem_q <= mem[s0a_addr];
 	end
 
+	wire s0a_dx_in = s0a_dx_bo ? s0a_dx_eq1 : s0a_dx_eq0;
+	wire s0a_dy_in = s0a_dy_bo ? s0a_dy_eq1 : s0a_dy_eq0;
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
 			st0b_valid <= 1'b0;
 			s0b_in <= 1'b0;
 			s0b_fmt <= 2'd0;
-		end else if (pipe_clr_lo) begin
+		end else if (pipe_clr_c1a) begin
 			st0b_valid <= 1'b0;
 			s0b_in <= 1'b0;
 			s0b_fmt <= 2'd0;
@@ -835,7 +1267,7 @@ module atg_dc_cursor #(
 			s0c_fmt_p <= 2'd0;
 			s0c_fmt_c <= 2'd0;
 			s0c_fmt_st1 <= 2'd0;
-		end else if (pipe_clr_lo) begin
+		end else if (pipe_clr_c4) begin
 			st0c_valid <= 1'b0;
 			s0c_in <= 1'b0;
 			s0c_fmt_p <= 2'd0;
@@ -873,12 +1305,44 @@ module atg_dc_cursor #(
 	end
 `endif
 
-	/* Stage 1: Mul (am_mul LAT=1; LAT=2 CSA+CPA across Stage 1/1b under SYNTH_ASIC) */
+	/* Stage 1: Mul (am_mul LAT=1; LAT=3 CSA+CPA under SYNTH_ASIC, LAT=2 DSP under SYNTH_KINTEX7) */
 	wire [7:0] cb = q_direct[7:0], cg = q_direct[15:8], cr = q_direct[23:16], ca = q_direct[31:24];
 `ifdef SYNTH_ASIC
 	wire [23:0] mix_c = (s0c_fmt_c == 2'd1) ? {cb, cg, cr} : {cr, cg, cb};
 	wire [23:0] mix_p = s0c_mix_p;
 	wire unused_s0c_fmt_p = &{1'b0, s0c_fmt_p};
+`elsif SYNTH_KINTEX7
+	wire [7:0] r8 = {s0c_px_lo[15:11], s0c_px_lo[15:13]};
+	wire [7:0] g8 = {s0c_px_lo[10:5], s0c_px_lo[10:9]};
+	wire [7:0] b8 = {s0c_px_lo[4:0], s0c_px_lo[4:2]};
+
+	wire [1:0] s0c_fmt_pl, s0c_fmt_ph;
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fpl0 (.I0(s0c_fmt_p[0]), .O(s0c_fmt_pl[0]));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fpl1 (.I0(s0c_fmt_p[1]), .O(s0c_fmt_pl[1]));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fph0 (.I0(s0c_fmt_p[0]), .O(s0c_fmt_ph[0]));
+	(* keep = "true" *) LUT1 #(.INIT(2'b10)) u_buf_fph1 (.I0(s0c_fmt_p[1]), .O(s0c_fmt_ph[1]));
+
+	wire [23:0] mix_c = (s0c_fmt_c == 2'd1) ? {cb, cg, cr} : {cr, cg, cb};
+	wire [23:0] mix_p = {
+		(s0c_fmt_ph == 2'd2) ? {r8, g8[7:4]} : {s0c_px_hi[7:0], s0c_px_lo[15:12]},
+		(s0c_fmt_pl == 2'd2) ? {g8[3:0], b8} : s0c_px_lo[11:0]
+	};
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [7:0] r8 = {s0c_px_lo[15:11], s0c_px_lo[15:13]};
+	wire [7:0] g8 = {s0c_px_lo[10:5], s0c_px_lo[10:9]};
+	wire [7:0] b8 = {s0c_px_lo[4:0], s0c_px_lo[4:2]};
+
+	wire [1:0] s0c_fmt_pl, s0c_fmt_ph;
+	assign s0c_fmt_pl[0] = s0c_fmt_p[0];
+	assign s0c_fmt_pl[1] = s0c_fmt_p[1];
+	assign s0c_fmt_ph[0] = s0c_fmt_p[0];
+	assign s0c_fmt_ph[1] = s0c_fmt_p[1];
+
+	wire [23:0] mix_c = (s0c_fmt_c == 2'd1) ? {cb, cg, cr} : {cr, cg, cb};
+	wire [23:0] mix_p = {
+		(s0c_fmt_ph == 2'd2) ? {r8, g8[7:4]} : {s0c_px_hi[7:0], s0c_px_lo[15:12]},
+		(s0c_fmt_pl == 2'd2) ? {g8[3:0], b8} : s0c_px_lo[11:0]
+	};
 `else
 	wire [7:0] r8 = {s0c_px_lo[15:11], s0c_px_lo[15:13]};
 	wire [7:0] g8 = {s0c_px_lo[10:5], s0c_px_lo[10:9]};
@@ -899,8 +1363,14 @@ module atg_dc_cursor #(
 	assign not_ca_arr[0] = ~ca;
 	assign not_ca_arr[1] = ~ca;
 	assign not_ca_arr[2] = ~ca;
-`elsif SYNTH_ASIC
+`elsif SYNTH_KINTEX_ULTRASCALE
 	localparam CURSOR_MUL_LAT = 2;
+	wire [7:0] not_ca_arr [0:2];
+	assign not_ca_arr[0] = ~ca;
+	assign not_ca_arr[1] = ~ca;
+	assign not_ca_arr[2] = ~ca;
+`elsif SYNTH_ASIC
+	localparam CURSOR_MUL_LAT = 3;
 	wire [7:0] not_ca_arr [0:2];
 	assign not_ca_arr[0] = ~ca;
 	assign not_ca_arr[1] = ~ca;
@@ -929,7 +1399,7 @@ module atg_dc_cursor #(
 			st1_valid <= 1'b0;
 			st1_in <= 1'b0;
 			st1_fmt <= 2'd0;
-		end else if (pipe_clr_lo) begin
+		end else if (pipe_clr_c4) begin
 			st1_valid <= 1'b0;
 			st1_in <= 1'b0;
 			st1_fmt <= 2'd0;
@@ -966,15 +1436,83 @@ module atg_dc_cursor #(
 			st1_px_hi <= s0c_px_hi;
 	end
 
-	/* Stage 1b: Register DSP outputs (or wire directly when am_mul uses LAT=2 CSA+CPA) */
+	/* Stage 1b/1c: Register DSP outputs (or align LAT=3 CSA+CPA under SYNTH_ASIC) */
 `ifdef SYNTH_ASIC
-	wire [15:0] st1b_pa0 = st1_pa[0];
-	wire [15:0] st1b_pa1 = st1_pa[1];
-	wire [15:0] st1b_pa2 = st1_pa[2];
+	reg [7:0] st1b_c0, st1b_c1, st1b_c2;
+	reg [15:0] st1b_px_lo, st1b_px_hi;
+	reg st1b_valid, st1b_in;
+	reg [1:0] st1b_fmt;
+
+	reg [7:0] st1c_c0, st1c_c1, st1c_c2;
+	reg [15:0] st1c_px_lo, st1c_px_hi;
+	reg st1c_valid, st1c_in;
+	reg [1:0] st1c_fmt;
+
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			st1b_valid <= 1'b0;
+			st1b_in <= 1'b0;
+			st1b_fmt <= 2'd0;
+			st1c_valid <= 1'b0;
+			st1c_in <= 1'b0;
+			st1c_fmt <= 2'd0;
+		end else if (pipe_clr_c5) begin
+			st1b_valid <= 1'b0;
+			st1b_in <= 1'b0;
+			st1b_fmt <= 2'd0;
+			st1c_valid <= 1'b0;
+			st1c_in <= 1'b0;
+			st1c_fmt <= 2'd0;
+		end else if (pe_s1b_ctl) begin
+			st1b_valid <= st1_valid;
+			st1b_in <= st1_in;
+			st1b_fmt <= st1_fmt;
+			st1c_valid <= st1b_valid;
+			st1c_in <= st1b_in;
+			st1c_fmt <= st1b_fmt;
+		end
+	end
+
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			st1b_c0 <= 8'd0; st1b_c1 <= 8'd0; st1b_c2 <= 8'd0;
+			st1c_c0 <= 8'd0; st1c_c1 <= 8'd0; st1c_c2 <= 8'd0;
+		end else if (pe_s1b_c) begin
+			st1b_c0 <= st1_c0; st1b_c1 <= st1_c1; st1b_c2 <= st1_c2;
+			st1c_c0 <= st1b_c0; st1c_c1 <= st1b_c1; st1c_c2 <= st1b_c2;
+		end
+	end
+
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			st1b_px_lo <= 16'd0;
+			st1c_px_lo <= 16'd0;
+		end else if (pe_s1b_pxl) begin
+			st1b_px_lo <= st1_px_lo;
+			st1c_px_lo <= st1b_px_lo;
+		end
+	end
+
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			st1b_px_hi <= 16'd0;
+			st1c_px_hi <= 16'd0;
+		end else if (pe_s1b_pxh) begin
+			st1b_px_hi <= st1_px_hi;
+			st1c_px_hi <= st1b_px_hi;
+		end
+	end
+
+	wire [15:0] st2a_pa0 = st1_pa[0];
+	wire [15:0] st2a_pa1 = st1_pa[1];
+	wire [15:0] st2a_pa2 = st1_pa[2];
+	wire [7:0]  st2a_in_c0 = st1c_c0, st2a_in_c1 = st1c_c1, st2a_in_c2 = st1c_c2;
+	wire [15:0] st2a_in_px_lo = st1c_px_lo, st2a_in_px_hi = st1c_px_hi;
+	wire        st2a_in_valid = st1c_valid, st2a_in_in = st1c_in;
+	wire [1:0]  st2a_in_fmt = st1c_fmt;
 	wire unused_pe_s1b_pa = &{1'b0, pe_s1b_pa0, pe_s1b_pa1, pe_s1b_pa2};
 `else
 	reg [15:0] st1b_pa0, st1b_pa1, st1b_pa2;
-`endif
 	reg [7:0] st1b_c0, st1b_c1, st1b_c2;
 	reg [15:0] st1b_px_lo, st1b_px_hi;
 	reg st1b_valid, st1b_in;
@@ -985,7 +1523,7 @@ module atg_dc_cursor #(
 			st1b_valid <= 1'b0;
 			st1b_in <= 1'b0;
 			st1b_fmt <= 2'd0;
-		end else if (pipe_clr_lo) begin
+		end else if (pipe_clr_s0) begin
 			st1b_valid <= 1'b0;
 			st1b_in <= 1'b0;
 			st1b_fmt <= 2'd0;
@@ -996,7 +1534,6 @@ module atg_dc_cursor #(
 		end
 	end
 
-`ifndef SYNTH_ASIC
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n)
 			st1b_pa0 <= 16'd0;
@@ -1017,7 +1554,6 @@ module atg_dc_cursor #(
 		else if (pe_s1b_pa2)
 			st1b_pa2 <= st1_pa[2];
 	end
-`endif
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
@@ -1045,12 +1581,19 @@ module atg_dc_cursor #(
 			st1b_px_hi <= st1_px_hi;
 	end
 
+	wire [15:0] st2a_pa0 = st1b_pa0, st2a_pa1 = st1b_pa1, st2a_pa2 = st1b_pa2;
+	wire [7:0]  st2a_in_c0 = st1b_c0, st2a_in_c1 = st1b_c1, st2a_in_c2 = st1b_c2;
+	wire [15:0] st2a_in_px_lo = st1b_px_lo, st2a_in_px_hi = st1b_px_hi;
+	wire        st2a_in_valid = st1b_valid, st2a_in_in = st1b_in;
+	wire [1:0]  st2a_in_fmt = st1b_fmt;
+`endif
+
 	/* Stage 2a: Add a_t (t = pa + 128) */
 	wire [15:0] st2a_t_wire [0:2];
 	wire [2:0] t_co_unused;
-	am_add #(.W(16)) a_t0 (.a(st1b_pa0), .b(16'd128), .ci(1'b0), .s(st2a_t_wire[0]), .co(t_co_unused[0]));
-	am_add #(.W(16)) a_t1 (.a(st1b_pa1), .b(16'd128), .ci(1'b0), .s(st2a_t_wire[1]), .co(t_co_unused[1]));
-	am_add #(.W(16)) a_t2 (.a(st1b_pa2), .b(16'd128), .ci(1'b0), .s(st2a_t_wire[2]), .co(t_co_unused[2]));
+	am_add #(.W(16)) a_t0 (.a(st2a_pa0), .b(16'd128), .ci(1'b0), .s(st2a_t_wire[0]), .co(t_co_unused[0]));
+	am_add #(.W(16)) a_t1 (.a(st2a_pa1), .b(16'd128), .ci(1'b0), .s(st2a_t_wire[1]), .co(t_co_unused[1]));
+	am_add #(.W(16)) a_t2 (.a(st2a_pa2), .b(16'd128), .ci(1'b0), .s(st2a_t_wire[2]), .co(t_co_unused[2]));
 
 	reg [15:0] st2a_t0, st2a_t1, st2a_t2;
 	reg [7:0] st2a_c0, st2a_c1, st2a_c2;
@@ -1063,14 +1606,14 @@ module atg_dc_cursor #(
 			st2a_valid <= 1'b0;
 			st2a_in <= 1'b0;
 			st2a_fmt <= 2'd0;
-		end else if (pipe_clr_lo) begin
+		end else if (pipe_clr_s1) begin
 			st2a_valid <= 1'b0;
 			st2a_in <= 1'b0;
 			st2a_fmt <= 2'd0;
 		end else if (pe_s2a_ctl) begin
-			st2a_valid <= st1b_valid;
-			st2a_in <= st1b_in;
-			st2a_fmt <= st1b_fmt;
+			st2a_valid <= st2a_in_valid;
+			st2a_in <= st2a_in_in;
+			st2a_fmt <= st2a_in_fmt;
 		end
 	end
 
@@ -1101,9 +1644,9 @@ module atg_dc_cursor #(
 			st2a_c1 <= 8'd0;
 			st2a_c2 <= 8'd0;
 		end else if (pe_s2a_c) begin
-			st2a_c0 <= st1b_c0;
-			st2a_c1 <= st1b_c1;
-			st2a_c2 <= st1b_c2;
+			st2a_c0 <= st2a_in_c0;
+			st2a_c1 <= st2a_in_c1;
+			st2a_c2 <= st2a_in_c2;
 		end
 	end
 
@@ -1111,14 +1654,14 @@ module atg_dc_cursor #(
 		if (!rst_n)
 			st2a_px_lo <= 16'd0;
 		else if (pe_s2a_pxl)
-			st2a_px_lo <= st1b_px_lo;
+			st2a_px_lo <= st2a_in_px_lo;
 	end
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n)
 			st2a_px_hi <= 16'd0;
 		else if (pe_s2a_pxh)
-			st2a_px_hi <= st1b_px_hi;
+			st2a_px_hi <= st2a_in_px_hi;
 	end
 
 	/* Stage 2b: Add a_u (u = t + (t >> 8)) */
@@ -1139,7 +1682,7 @@ module atg_dc_cursor #(
 			st2b_valid <= 1'b0;
 			st2b_in <= 1'b0;
 			st2b_fmt <= 2'd0;
-		end else if (pipe_clr_lo) begin
+		end else if (pipe_clr_c5) begin
 			st2b_valid <= 1'b0;
 			st2b_in <= 1'b0;
 			st2b_fmt <= 2'd0;
@@ -1419,6 +1962,9 @@ module atg_dc_cursor #(
 `ifdef SYNTH_KINTEX7
 	assign st3b_fmt_lo = st3b_fmt;
 	assign st3b_fmt_hi = st3b_fmt;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign st3b_fmt_lo = st3b_fmt;
+	assign st3b_fmt_hi = st3b_fmt;
 `else
 	assign st3b_fmt_lo = st3b_fmt;
 	assign st3b_fmt_hi = st3b_fmt;
@@ -1440,6 +1986,9 @@ module atg_dc_cursor #(
 
 	wire st3b_in_lo, st3b_in_hi;
 `ifdef SYNTH_KINTEX7
+	assign st3b_in_lo = st3b_in;
+	assign st3b_in_hi = st3b_in;
+`elsif SYNTH_KINTEX_ULTRASCALE
 	assign st3b_in_lo = st3b_in;
 	assign st3b_in_hi = st3b_in;
 `else
@@ -1477,7 +2026,9 @@ module atg_dc_cursor #(
 			st_out_data_hi <= nxt_out_data_hi;
 	end
 
-`ifndef SYNTH_KINTEX7
+`ifdef SYNTH_KINTEX7
+`elsif SYNTH_KINTEX_ULTRASCALE
+`else
 	/* Testbench identity check wires (probed hierarchically by atg_dc_cursor_tb) */
 	reg [31:0] q;
 	reg [31:0] s_px;
@@ -1520,10 +2071,12 @@ module atg_dc_cursor #(
 `endif
 
 	wire unused_ok = &{1'b0, rsp_tag, l_in_ready, st3c_r5[5], st3c_b5[5], flip_base[5:0],
-		pend_base_ext,
+		pend_base_ext, unused_pb_hi_p1,
 		ld_co_unused, bl_co_unused, t_co_unused, u_co_unused, vm_bo_unused, nt_co_unused,
 		nu_co_unused, ff_co_unused
-`ifndef SYNTH_KINTEX7
+`ifdef SYNTH_KINTEX7
+`elsif SYNTH_KINTEX_ULTRASCALE
+`else
 		, r5[5], b5[5], tb_t_unused, tb_u_unused, tb_vm_unused, tb_nt_unused, tb_nu_unused
 `endif
 	};

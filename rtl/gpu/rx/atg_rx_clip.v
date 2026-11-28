@@ -86,15 +86,28 @@
 
 	wire [31:0] st_wdata_rw = st_wdata;
 	wire [15:0] st_wdata_vp [0:7];
-	genvar g_b, g_rw, g_vs, g_ve;
+	genvar g_rw, g_vs, g_ve;
 	generate
 
 	for (g_rw = 0; g_rw < 9; g_rw = g_rw + 1) begin : g_rw_word
 		localparam [8:0] WORD_ADDR = GHCI_S_RAW + g_rw;
 		wire rw_hit = st_we && (st_idx == WORD_ADDR);
+		wire rw_hit_lo, rw_hit_hi;
+`ifdef SYNTH_KINTEX7
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_rwl (.I0(rw_hit), .O(rw_hit_lo));
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_rwh (.I0(rw_hit), .O(rw_hit_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign rw_hit_lo = rw_hit;
+		assign rw_hit_hi = rw_hit;
+`else
+		assign rw_hit_lo = rw_hit;
+		assign rw_hit_hi = rw_hit;
+`endif
 		always @(posedge clk) begin
-			if (rw_hit)
-				rw[g_rw] <= st_wdata_rw;
+			if (rw_hit_lo)
+				rw[g_rw][15:0] <= st_wdata_rw[15:0];
+			if (rw_hit_hi)
+				rw[g_rw][31:16] <= st_wdata_rw[31:16];
 		end
 	end
 
@@ -180,7 +193,7 @@
 		for (g_vs = 0; g_vs < 8; g_vs = g_vs + 1) begin : g_vp_slice
 			localparam [8:0] VP_WORD_ADDR = GHCI_S_VIEWPORT + (g_vs / 2);
 			localparam integer HI = (g_vs % 2) * 16;
-			wire vp_s_we = st_we && (st_idx == VP_WORD_ADDR);
+			(* keep = "true", dont_touch = "true" *) wire vp_s_we = st_we && (st_idx == VP_WORD_ADDR);
 			assign st_wdata_vp[g_vs] = st_wdata[HI +: 16];
 			always @(posedge clk or posedge rst_sync) begin
 				if (rst_sync)
@@ -253,12 +266,24 @@
 		for (g_w = 0; g_w < 4; g_w = g_w + 1) begin : g_vv_word
 			localparam [3:0] WK = {g_v[1:0], g_w[1:0]};
 			wire vvw_hit = (st == S_READ) && rd_v3 && (rd_k3 == WK);
+			wire vvw_hit_lo, vvw_hit_hi;
+`ifdef SYNTH_KINTEX7
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_vvwl (.I0(vvw_hit), .O(vvw_hit_lo));
+			(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_vvwh (.I0(vvw_hit), .O(vvw_hit_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign vvw_hit_lo = vvw_hit;
+			assign vvw_hit_hi = vvw_hit;
+`else
+			assign vvw_hit_lo = vvw_hit;
+			assign vvw_hit_hi = vvw_hit;
+`endif
 			always @(posedge clk or posedge rst_sync) begin
 				if (rst_sync) begin
 					vv_pos[g_v][32 * g_w +: 16]      <= 16'd0;
 					vv_pos[g_v][32 * g_w + 16 +: 16] <= 16'd0;
-				end else if (vvw_hit) begin
-					vv_pos[g_v][32 * g_w +: 32]      <= pt_rdata_b;
+				end else begin
+					if (vvw_hit_lo) vv_pos[g_v][32 * g_w +: 16]      <= pt_rdata_b[15:0];
+					if (vvw_hit_hi) vv_pos[g_v][32 * g_w + 16 +: 16] <= pt_rdata_b[31:16];
 				end
 			end
 		end
@@ -267,16 +292,14 @@
 
 	wire [3:0] rd_lim = kind == 2'd0 ? 4'd4 : kind == 2'd1 ? 4'd8 : 4'd12;
 	wire [3:0] rd_lim_m1 = kind == 2'd0 ? 4'd3 : kind == 2'd1 ? 4'd7 : 4'd11;
-	/* rd_n + 1, ld_idx + 1, es + 1, ti + 1, ti + 2 */
-	wire [3:0] rd_n1, ld1, ti1, ti2;
-	wire [2:0] es1;
 	wire [3:0] ld_idx;
-	wire [4:0] cnt_carry_unused;
-	am_add #(.W(4)) u_rd_n1 (.a(rd_n), .b(4'd0), .ci(1'b1), .s(rd_n1), .co(cnt_carry_unused[0]));
-	am_add #(.W(4)) u_ld1 (.a(ld_idx), .b(4'd0), .ci(1'b1), .s(ld1), .co(cnt_carry_unused[1]));
-	am_add #(.W(3)) u_es1 (.a(es), .b(3'd0), .ci(1'b1), .s(es1), .co(cnt_carry_unused[2]));
-	am_add #(.W(4)) u_ti1 (.a(ti), .b(4'd0), .ci(1'b1), .s(ti1), .co(cnt_carry_unused[3]));
-	am_add #(.W(4)) u_ti2 (.a(ti), .b(4'd2), .ci(1'b0), .s(ti2), .co(cnt_carry_unused[4]));
+	/* rd_n + 1, ld_idx + 1, es + 1, ti + 1, ti + 2 (pure-LUT +1/+2 on small counters) */
+	wire [3:0] rd_n1 = {rd_n[3] ^ (&rd_n[2:0]), rd_n[2] ^ (&rd_n[1:0]), rd_n[1] ^ rd_n[0], ~rd_n[0]};
+	wire [3:0] ld1   = {ld_idx[3] ^ (&ld_idx[2:0]), ld_idx[2] ^ (&ld_idx[1:0]), ld_idx[1] ^ ld_idx[0], ~ld_idx[0]};
+	wire [2:0] es1   = {es[2] ^ (es[1] & es[0]), es[1] ^ es[0], ~es[0]};
+	wire [3:0] ti1   = {ti[3] ^ (&ti[2:0]), ti[2] ^ (&ti[1:0]), ti[1] ^ ti[0], ~ti[0]};
+	wire [3:0] ti2   = {ti[3] ^ (ti[2] & ti[1]), ti[2] ^ ti[1], ~ti[1], ti[0]};
+	wire [4:0] cnt_carry_unused = 5'd0;
 	wire [1:0] nv = kind == 2'd0 ? 2'd1 : kind == 2'd1 ? 2'd2 : 2'd3;
 
 	/*
@@ -308,7 +331,7 @@
 	wire [7:0] we_w [0:2];
 	wire [2:0] we_co_unused;
 	(* extract_reset = "no" *) reg [7:0] r_we [0:2];
-	(* extract_reset = "no" *) reg [2:0] r_w_ge_253_lo, r_w_ge_253_hi;
+	(* keep = "true", dont_touch = "true", extract_reset = "no" *) reg [2:0] r_w_ge_253_lo, r_w_ge_253_hi;
 	(* extract_reset = "no" *) reg [2:0] r_w_exp_ff, r_w_exp_nz, r_w_frac_nz;
 	(* extract_reset = "no" *) reg [2:0] r_z_exp_ff, r_z_exp_nz, r_z_frac_nz;
 	(* extract_reset = "no" *) reg [2:0] r_bo_w_eps, r_bo_w_z, r_bo_z_w;
@@ -400,8 +423,8 @@
 	reg ld_we;
 	reg [3:0] r_ld_idx;
 	assign ld_idx = r_ld_idx;
-	(* extract_reset = "no" *) reg [1:0] r_ld_sel_s [0:13];
-	reg [13:0] r_ld_we_s;
+	(* keep = "true", dont_touch = "true", extract_reset = "no" *) reg [1:0] r_ld_sel_s [0:13];
+	(* keep = "true", dont_touch = "true" *) reg [13:0] r_ld_we_s;
 	(* extract_reset = "no" *) reg [223:0] ld_data;
 	reg cmd_valid;
 	reg [2:0] cmd_plane;
@@ -459,12 +482,12 @@
 	 *   r_osel{0,1,2}_s: 0 = EMPTY, 1 = RAW, 2 = VV, 3 = RD (rd_data)
 	 *   r_ovv{1,2}_s:    0 = (vv0, vv0, vv0), 1 = (vv0, vv1, vv1), 2 = (vv0, vv1, vv2)
 	 */
-	(* extract_reset = "no" *) reg [1:0] r_osel0_s [0:13];
-	(* extract_reset = "no" *) reg [1:0] r_osel1_s [0:13];
-	(* extract_reset = "no" *) reg [1:0] r_osel2_s [0:13];
-	(* extract_reset = "no" *) reg [1:0] r_ovv1_s [0:13];
-	(* extract_reset = "no" *) reg [1:0] r_ovv2_s [0:13];
-	reg [13:0] r_owe0_s, r_owe1_s, r_owe2_s;
+	(* keep = "true", dont_touch = "true", extract_reset = "no" *) reg [1:0] r_osel0_s [0:13];
+	(* keep = "true", dont_touch = "true", extract_reset = "no" *) reg [1:0] r_osel1_s [0:13];
+	(* keep = "true", dont_touch = "true", extract_reset = "no" *) reg [1:0] r_osel2_s [0:13];
+	(* keep = "true", dont_touch = "true", extract_reset = "no" *) reg [1:0] r_ovv1_s [0:13];
+	(* keep = "true", dont_touch = "true", extract_reset = "no" *) reg [1:0] r_ovv2_s [0:13];
+	(* keep = "true", dont_touch = "true" *) reg [13:0] r_owe0_s, r_owe1_s, r_owe2_s;
 
 	wire [223:0] raw_o0 = {64'd0, ONE, ONE, rw[2], rw[1], rw[0]};
 	wire [223:0] raw_o1 = {32'd0, ONE, 32'd0, ONE, rw[5], rw[4], rw[3]};
@@ -523,11 +546,35 @@
 	/* Pre-computed next control signals for ld_data and o0/o1/o2 slices */
 	wire ld_trig_triv = (st == S_TRIV) && (triv_step == 3'd3);
 	wire ld_trig_load = (st == S_LOAD) && !ld_we && !r_ld_we_s[0] && (ld1 < {2'd0, nv});
-	wire ld_we_nxt = !rst_sync && (ld_trig_triv || ld_trig_load);
+	wire ld_we_nxt = ld_trig_triv || ld_trig_load;
 	wire [1:0] ld_sel_nxt = (st == S_TRIV) ? 2'd0 : ((r_ld_idx == 4'd0) ? 2'd1 : 2'd2);
 
-	wire out_raw_trig   = (st == S_IDLE) && raw_kick;
-	wire out_disc_trig  = (st == S_IDLE) && !raw_kick && prim_valid && discard;
+	wire rk_ent_lo, rk_ent_hi, rk_trig, rk_fsm;
+	wire cr_st, cr_pl, cr_val;
+`ifdef SYNTH_KINTEX7
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_rkel (.I0(raw_kick), .O(rk_ent_lo));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_rkeh (.I0(raw_kick), .O(rk_ent_hi));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_rktr (.I0(raw_kick), .O(rk_trig));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_rkfs (.I0(raw_kick), .O(rk_fsm));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_crst (.I0(cmd_ready), .O(cr_st));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_crpl (.I0(cmd_ready), .O(cr_pl));
+	(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_crvl (.I0(cmd_ready), .O(cr_val));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign rk_ent_lo = raw_kick;
+	assign rk_ent_hi = raw_kick;
+	assign rk_trig = raw_kick;
+	assign rk_fsm = raw_kick;
+	assign cr_st = cmd_ready;
+	assign cr_pl = cmd_ready;
+	assign cr_val = cmd_ready;
+`else
+	assign rk_ent_lo = raw_kick; assign rk_ent_hi = raw_kick;
+	assign rk_trig = raw_kick; assign rk_fsm = raw_kick;
+	assign cr_st = cmd_ready; assign cr_pl = cmd_ready; assign cr_val = cmd_ready;
+`endif
+
+	wire out_raw_trig   = (st == S_IDLE) && rk_trig;
+	wire out_disc_trig  = (st == S_IDLE) && !rk_trig && prim_valid && discard;
 	wire out_pt_ok      = (st == S_TRIV) && (triv_step == 3'd4) && (kind == 2'd0) && (r_t0[1:0] == 2'b11);
 	wire out_pt_drop    = (st == S_TRIV) && (triv_step == 3'd4) && (kind == 2'd0) && (r_t0[1:0] != 2'b11);
 	wire out_triv_acc   = (st == S_TRIV) && (triv_step == 3'd4) && (kind != 2'd0) && r_accept;
@@ -535,15 +582,23 @@
 	wire out_cwait_drop = (st == S_CWAIT) && cp_done && (n_out == 4'd0);
 	wire out_all_trig   = out_raw_trig || out_disc_trig || out_pt_ok || out_pt_drop || out_triv_acc || out_poly_drop || out_cwait_drop;
 
-	wire [1:0] osel_nxt_lo = (st == S_EMIT) ? 2'd3 :
+	wire [1:0] osel_nxt_0 = (st == S_EMIT) ? 2'd3 :
 		(out_raw_trig ? 2'd1 : ((out_pt_ok || out_triv_acc) ? 2'd2 : 2'd0));
-	wire [1:0] osel_nxt_hi = (st == S_EMIT) ? 2'd3 :
+	wire [1:0] osel_nxt_1 = (st == S_EMIT) ? 2'd3 :
 		(out_raw_trig ? 2'd1 : ((out_pt_ok || out_triv_acc) ? 2'd2 : 2'd0));
-	wire [1:0] ovv_nxt_lo  = out_pt_ok ? 2'd0 : ((kind == 2'd1) ? 2'd1 : 2'd2);
-	wire [1:0] ovv_nxt_hi  = out_pt_ok ? 2'd0 : ((kind == 2'd1) ? 2'd1 : 2'd2);
-	wire owe0_nxt = !rst_sync && (out_all_trig || (st == S_EMIT && es == 3'd1));
-	wire owe1_nxt = !rst_sync && (out_all_trig || (st == S_EMIT && es == 3'd2));
-	wire owe2_nxt = !rst_sync && (out_all_trig || (st == S_EMIT && es == 3'd3));
+	wire [1:0] osel_nxt_2 = (st == S_EMIT) ? 2'd3 :
+		(out_raw_trig ? 2'd1 : ((out_pt_ok || out_triv_acc) ? 2'd2 : 2'd0));
+	(* keep = "true", dont_touch = "true" *) wire [1:0] osel_nxt_lo_0 = osel_nxt_0;
+	(* keep = "true", dont_touch = "true" *) wire [1:0] osel_nxt_hi_0 = osel_nxt_0;
+	(* keep = "true", dont_touch = "true" *) wire [1:0] osel_nxt_lo_1 = osel_nxt_1;
+	(* keep = "true", dont_touch = "true" *) wire [1:0] osel_nxt_hi_1 = osel_nxt_1;
+	(* keep = "true", dont_touch = "true" *) wire [1:0] osel_nxt_lo_2 = osel_nxt_2;
+	(* keep = "true", dont_touch = "true" *) wire [1:0] osel_nxt_hi_2 = osel_nxt_2;
+	(* keep = "true", dont_touch = "true" *) wire [1:0] ovv_nxt_lo  = out_pt_ok ? 2'd0 : ((kind == 2'd1) ? 2'd1 : 2'd2);
+	(* keep = "true", dont_touch = "true" *) wire [1:0] ovv_nxt_hi  = out_pt_ok ? 2'd0 : ((kind == 2'd1) ? 2'd1 : 2'd2);
+	wire owe0_nxt = out_all_trig || (st == S_EMIT && es == 3'd1);
+	wire owe1_nxt = out_all_trig || (st == S_EMIT && es == 3'd2);
+	wire owe2_nxt = out_all_trig || (st == S_EMIT && es == 3'd3);
 
 	always @(posedge clk or posedge rst_sync) begin
 		if (rst_sync) begin
@@ -566,27 +621,27 @@
 			r_owe2_s  <= {14{owe2_nxt}};
 			for (s_idx = 0; s_idx < 7; s_idx = s_idx + 1) begin
 				r_ld_sel_s[s_idx] <= ld_sel_nxt;
-				r_osel0_s[s_idx]  <= osel_nxt_lo;
-				r_osel1_s[s_idx]  <= osel_nxt_lo;
-				r_osel2_s[s_idx]  <= osel_nxt_lo;
+				r_osel0_s[s_idx]  <= osel_nxt_lo_0;
+				r_osel1_s[s_idx]  <= osel_nxt_lo_1;
+				r_osel2_s[s_idx]  <= osel_nxt_lo_2;
 				r_ovv1_s[s_idx]   <= ovv_nxt_lo;
 				r_ovv2_s[s_idx]   <= ovv_nxt_lo;
 			end
 			for (s_idx = 7; s_idx < 14; s_idx = s_idx + 1) begin
 				r_ld_sel_s[s_idx] <= ld_sel_nxt;
-				r_osel0_s[s_idx]  <= osel_nxt_hi;
-				r_osel1_s[s_idx]  <= osel_nxt_hi;
-				r_osel2_s[s_idx]  <= osel_nxt_hi;
+				r_osel0_s[s_idx]  <= osel_nxt_hi_0;
+				r_osel1_s[s_idx]  <= osel_nxt_hi_1;
+				r_osel2_s[s_idx]  <= osel_nxt_hi_2;
 				r_ovv1_s[s_idx]   <= ovv_nxt_hi;
 				r_ovv2_s[s_idx]   <= ovv_nxt_hi;
 			end
 		end
 	end
 
-	wire ent_we_lo = (st == S_IDLE) && (raw_kick || prim_valid);
-	wire ent_we_hi = (st == S_IDLE) && (raw_kick || prim_valid);
-	wire hdr_we_lo = (st == S_OUT)  && !(cl_valid && cl_ready);
-	wire hdr_we_hi = (st == S_OUT)  && !(cl_valid && cl_ready);
+	(* keep = "true", dont_touch = "true" *) wire ent_we_lo = (st == S_IDLE) && (rk_ent_lo || prim_valid);
+	(* keep = "true", dont_touch = "true" *) wire ent_we_hi = (st == S_IDLE) && (rk_ent_hi || prim_valid);
+	(* keep = "true", dont_touch = "true" *) wire hdr_we_lo = (st == S_OUT)  && !(cl_valid && cl_ready);
+	(* keep = "true", dont_touch = "true" *) wire hdr_we_hi = (st == S_OUT)  && !(cl_valid && cl_ready);
 
 	always @(posedge clk or posedge rst_sync) begin
 		if (rst_sync) begin
@@ -594,9 +649,9 @@
 			r_out_hdr <= 30'd0;
 		end else begin
 			if (ent_we_lo)
-				ent[11:0]  <= raw_kick ? 12'd0 : prim_vtx[11:0];
+				ent[11:0]  <= rk_ent_lo ? 12'd0 : prim_vtx[11:0];
 			if (ent_we_hi)
-				ent[23:12] <= raw_kick ? 12'd0 : prim_vtx[23:12];
+				ent[23:12] <= rk_ent_hi ? 12'd0 : prim_vtx[23:12];
 			if (hdr_we_lo)
 				r_out_hdr[15:0]  <= ent[15:0];
 			if (hdr_we_hi)
@@ -641,7 +696,7 @@
 			ld_we   <= 1'b0;
 			case (st)
 		S_IDLE:
-			if (raw_kick) begin
+			if (rk_fsm) begin
 				fl <= 3'd0;
 				ofl <= 1'b1;
 				last <= 1'b1;
@@ -704,17 +759,19 @@
 			if (r_ld_we_s[0]) begin
 				ld_we <= 1'b1;
 				r_ld_idx <= ld1;
-			end else if (!ld_we && !(ld1 < {2'd0, nv})) begin
+			end else if (!ld_we && !((kind == 2'd1 && r_ld_idx == 4'd0) || (kind == 2'd2 && r_ld_idx[3:1] == 3'd0))) begin
 				st <= S_CMD;
 			end
 		S_CMD:
 			if (cmd_valid) begin
-				if (cmd_ready) begin
+				if (cr_val) begin
 					cmd_valid <= 1'b0;
 					first <= 1'b0;
-					pl[cmd_plane] <= 1'b0;
-					st <= S_CWAIT;
 				end
+				if (cr_pl)
+					pl[cmd_plane] <= 1'b0;
+				if (cr_st)
+					st <= S_CWAIT;
 			end else if (pl == 7'd0) begin
 				np <= n_out;
 				ti <= 4'd1;

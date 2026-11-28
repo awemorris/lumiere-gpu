@@ -94,7 +94,7 @@ module atg_rop_mrt8_tb;
 		.rsp_error(rsp_error)
 	);
 
-	atg_rop_blend dut_blend (
+	atg_rop_blend #(.DST_LATE(1)) dut_blend (
 		.clk(clk),
 		.rst_n(rst_n),
 		.st_we(st_we),

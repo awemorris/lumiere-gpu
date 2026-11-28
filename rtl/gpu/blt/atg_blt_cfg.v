@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -117,6 +117,43 @@ module atg_blt_cfg #(
 			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_wc (.I0(st_wdata[gwi]), .O(st_wdata_c[gwi]));
 		end
 	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* dont_touch = "true" *) wire [7:0] idx_ok_b;
+	genvar giok;
+	generate
+		for (giok = 0; giok < 8; giok = giok + 1) begin : g_idx_ok
+			(* dont_touch = "true" *) LUT5 #(.INIT(32'h00000002)) u_iok (
+				.I0(st_we), .I1(st_idx[5]), .I2(st_idx[6]), .I3(st_idx[7]), .I4(st_idx[8]),
+				.O(idx_ok_b[giok])
+			);
+		end
+	endgenerate
+	wire idx_ok_0 = idx_ok_b[0];
+	wire idx_ok_1 = idx_ok_b[1];
+	wire idx_ok_2 = idx_ok_b[2];
+	wire idx_ok_3 = idx_ok_b[3];
+	wire idx_ok_4 = idx_ok_b[4];
+	wire idx_ok_5 = idx_ok_b[5];
+	wire idx_ok_6 = idx_ok_b[6];
+	wire idx_ok_7 = idx_ok_b[7];
+	(* dont_touch = "true" *) wire [4:0] st_idx_0, st_idx_1, st_idx_2, st_idx_3;
+	(* dont_touch = "true" *) wire [31:0] st_wdata_a;
+	(* dont_touch = "true" *) wire [31:0] st_wdata_b;
+	(* dont_touch = "true" *) wire [31:0] st_wdata_c;
+	genvar gwi;
+	generate
+		for (gwi = 0; gwi < 5; gwi = gwi + 1) begin : g_idx_buf
+			assign st_idx_0[gwi] = st_idx[gwi];
+			assign st_idx_1[gwi] = st_idx[gwi];
+			assign st_idx_2[gwi] = st_idx[gwi];
+			assign st_idx_3[gwi] = st_idx[gwi];
+		end
+		for (gwi = 0; gwi < 32; gwi = gwi + 1) begin : g_wdata_buf
+			assign st_wdata_a[gwi] = st_wdata[gwi];
+			assign st_wdata_b[gwi] = st_wdata[gwi];
+			assign st_wdata_c[gwi] = st_wdata[gwi];
+		end
+	endgenerate
 `else
 	wire idx_ok_0 = st_we && (st_idx[8:5] == 4'd0);
 	wire idx_ok_1 = idx_ok_0;
@@ -211,6 +248,17 @@ module atg_blt_cfg #(
 	LUT1 #(.INIT(2'b10)) u_wc2h (.I0(we_c2_h), .O(we_c2_h_buf));
 	(* dont_touch = "true" *) wire we_c3_h_buf;
 	LUT1 #(.INIT(2'b10)) u_wc3h (.I0(we_c3_h), .O(we_c3_h_buf));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* dont_touch = "true" *) wire we_dst_base_hi_buf;
+	assign we_dst_base_hi_buf = we_dst_base_hi;
+	(* dont_touch = "true" *) wire we_src_xy_hi_buf;
+	assign we_src_xy_hi_buf = we_src_xy_hi;
+	(* dont_touch = "true" *) wire we_c0_b_buf;
+	assign we_c0_b_buf = we_c0_b;
+	(* dont_touch = "true" *) wire we_c2_h_buf;
+	assign we_c2_h_buf = we_c2_h;
+	(* dont_touch = "true" *) wire we_c3_h_buf;
+	assign we_c3_h_buf = we_c3_h;
 `else
 	wire we_dst_base_hi_buf = we_dst_base_hi;
 	wire we_src_xy_hi_buf = we_src_xy_hi;
@@ -325,6 +373,13 @@ module atg_blt_cfg #(
 	LUT1 #(.INIT(2'b10)) u_psl_o0 (.I0(psl_raw[0]), .O(psl[0]));
 	LUT1 #(.INIT(2'b10)) u_psl_o1 (.I0(psl_raw[1]), .O(psl[1]));
 	LUT1 #(.INIT(2'b10)) u_psl_o2 (.I0(psl_raw[2]), .O(psl[2]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign psl_int[0] = psl_raw[0];
+	assign psl_int[1] = psl_raw[1];
+	assign psl_int[2] = psl_raw[2];
+	assign psl[0] = psl_raw[0];
+	assign psl[1] = psl_raw[1];
+	assign psl[2] = psl_raw[2];
 `else
 	assign psl_int = psl_raw;
 	assign psl = psl_int;
@@ -450,6 +505,8 @@ module atg_blt_cfg #(
 	genvar g, gn;
 `ifdef SYNTH_KINTEX7
 	genvar gi;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar gi;
 `endif
 	generate
 `ifdef SYNTH_KINTEX7
@@ -462,6 +519,19 @@ module atg_blt_cfg #(
 			for (gn = 0; gn < 2; gn = gn + 1) begin : g_lnib
 				for (gi = 0; gi < 4; gi = gi + 1) begin : g_lbit
 					LUT1 #(.INIT(2'b10)) u_lg (.I0(low_base_tree[g[3]][gi]), .O(low_grp[g][gn][gi]));
+				end
+			end
+		end
+`elsif SYNTH_KINTEX_ULTRASCALE
+		(* dont_touch = "true" *) wire [3:0] low_base_tree [0:1];
+		for (gi = 0; gi < 4; gi = gi + 1) begin : g_lroot
+			assign low_base_tree[0][gi] = low_base[gi];
+			assign low_base_tree[1][gi] = low_base[gi];
+		end
+		for (g = 1; g < 16; g = g + 1) begin : g_low_grp
+			for (gn = 0; gn < 2; gn = gn + 1) begin : g_lnib
+				for (gi = 0; gi < 4; gi = gi + 1) begin : g_lbit
+					assign low_grp[g][gn][gi] = low_base_tree[g[3]][gi];
 				end
 			end
 		end

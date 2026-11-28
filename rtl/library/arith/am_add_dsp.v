@@ -23,6 +23,9 @@
 `ifdef SYNTH_ZYNQ_ULTRASCALE
 	`define _AM_XILINX_SYNTH
 `endif
+`ifdef SYNTH_KINTEX_ULTRASCALE
+	`define _AM_XILINX_SYNTH
+`endif
 
 module am_add_dsp #(
 	parameter W = 32

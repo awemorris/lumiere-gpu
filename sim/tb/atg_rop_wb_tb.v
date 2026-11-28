@@ -50,7 +50,7 @@ module atg_rop_wb_tb;
 		.req_line(req_line), .req_be(req_be), .req_wdata(req_wdata), .req_tag(req_tag),
 		.rsp_valid(rsp_valid), .rsp_write(rsp_write), .rsp_tag(rsp_tag),
 		.rsp_rdata(rsp_rdata), .rsp_error(rsp_error));
-	atg_rop_blend blend (.clk(clk), .rst_n(rst_n), .st_we(st_we), .st_idx(st_idx),
+	atg_rop_blend #(.DST_LATE(1)) blend (.clk(clk), .rst_n(rst_n), .st_we(st_we), .st_idx(st_idx),
 		.st_wdata(st_wdata), .b_valid(b_valid), .b_src(b_src), .b_src1(512'd0), .b_has_src1(1'b0),
 		.b_dst(b_dst), .b_mask(b_mask),
 		.b_rt(b_rt), .b_rvalid(b_rvalid), .b_pix(b_pix));

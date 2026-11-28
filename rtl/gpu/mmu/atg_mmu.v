@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -25,6 +25,8 @@ module atg_mmu #(
 	parameter PPN_BITS = PA_BITS - 12,
 	parameter FC_W = (NUM_CLIENTS > 8) ? 4 : 3,
 `ifdef SYNTH_KINTEX7
+	parameter REG_CLIENT_OUT = 1
+`elsif SYNTH_KINTEX_ULTRASCALE
 	parameter REG_CLIENT_OUT = 1
 `else
 	parameter REG_CLIENT_OUT = 0
@@ -76,10 +78,17 @@ module atg_mmu #(
 	wire clk_bufg;
 	BUFG u_clk_bufg (.I(clk), .O(clk_bufg));
 	(* keep = "true" *) wire clk_mmu = clk_bufg;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true" *) wire clk_mmu = clk;
 `else
 	(* keep = "true" *) wire clk_mmu = clk;
 `endif
 `ifdef SYNTH_KINTEX7
+	wire rst_inv;
+	LUT1 #(.INIT(2'h1)) u_rst_inv (.I0(rst_n), .O(rst_inv));
+	wire rst_global = rst_inv;
+	wire rst_mmu_int = rst_inv;
+`elsif SYNTH_KINTEX_ULTRASCALE
 	wire rst_inv;
 	LUT1 #(.INIT(2'h1)) u_rst_inv (.I0(rst_n), .O(rst_inv));
 	wire rst_global = rst_inv;
@@ -134,7 +143,12 @@ module atg_mmu #(
 	localparam VPN_HI_W = VPN_BITS - 10;
 
 	/* Active client registers */
-	reg [FC_W-1:0]     active_client;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [FC_W-1:0] active_client;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [FC_W-1:0] active_client_hi;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [FC_W-1:0] active_client_flt;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [FC_W-1:0] active_client_l1;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [FC_W-1:0] active_client_ref_a;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [FC_W-1:0] active_client_ref_b;
 	reg [3:0]          active_session;
 	reg [VPN_BITS-1:0] active_vpn;
 	reg [11:0]         active_offset;
@@ -147,7 +161,7 @@ module atg_mmu #(
 	(* dont_touch = "true" *) reg [3:0]          l2_lk_session;
 
 	(* dont_touch = "true" *) reg [VPN_BITS-1:0] l1_ref_vpn_c  [0:NUM_CLIENTS-1];
-	(* dont_touch = "true" *) reg [VPN_BITS-1:0] l2_ref_vpn;
+	(* max_fanout = 16 *) reg [VPN_BITS-1:0] l2_ref_vpn;
 	(* dont_touch = "true" *) reg [VPN_BITS-1:0] wlk_vpn;
 	(* dont_touch = "true" *) reg [VPN_BITS-1:0] flt_vpn;
 
@@ -212,6 +226,23 @@ module atg_mmu #(
 		LUT1 #(.INIT(2'h2)) u_b_hit_0    (.I0(client_req_va[gc*VA_BITS+12]), .O(c_set_hit[0]));
 		LUT1 #(.INIT(2'h2)) u_b_hit_1    (.I0(client_req_va[gc*VA_BITS+13]), .O(c_set_hit[1]));
 		LUT1 #(.INIT(2'h2)) u_b_hit_2    (.I0(client_req_va[gc*VA_BITS+14]), .O(c_set_hit[2]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		wire [2:0] c_set_pfn_lo;
+		wire [2:0] c_set_pfn_hi;
+		wire [2:0] c_set_flg;
+		wire [2:0] c_set_hit;
+		assign c_set_pfn_lo[0] = client_req_va[gc*VA_BITS+12];
+		assign c_set_pfn_lo[1] = client_req_va[gc*VA_BITS+13];
+		assign c_set_pfn_lo[2] = client_req_va[gc*VA_BITS+14];
+		assign c_set_pfn_hi[0] = client_req_va[gc*VA_BITS+12];
+		assign c_set_pfn_hi[1] = client_req_va[gc*VA_BITS+13];
+		assign c_set_pfn_hi[2] = client_req_va[gc*VA_BITS+14];
+		assign c_set_flg[0] = client_req_va[gc*VA_BITS+12];
+		assign c_set_flg[1] = client_req_va[gc*VA_BITS+13];
+		assign c_set_flg[2] = client_req_va[gc*VA_BITS+14];
+		assign c_set_hit[0] = client_req_va[gc*VA_BITS+12];
+		assign c_set_hit[1] = client_req_va[gc*VA_BITS+13];
+		assign c_set_hit[2] = client_req_va[gc*VA_BITS+14];
 `else
 		wire [2:0] c_set_pfn_lo = client_req_va[gc*VA_BITS+12 +: 3];
 		wire [2:0] c_set_pfn_hi = client_req_va[gc*VA_BITS+12 +: 3];
@@ -419,6 +450,26 @@ module atg_mmu #(
 	LUT1 #(.INIT(2'h2)) u_b_ws3_1 (.I0(wlk_session[1]), .O(wlk_sess_g3[1]));
 	LUT1 #(.INIT(2'h2)) u_b_ws3_2 (.I0(wlk_session[2]), .O(wlk_sess_g3[2]));
 	LUT1 #(.INIT(2'h2)) u_b_ws3_3 (.I0(wlk_session[3]), .O(wlk_sess_g3[3]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign wlk_sess_g0[0] = wlk_session[0];
+	assign wlk_sess_g0[1] = wlk_session[1];
+	assign wlk_sess_g0[2] = wlk_session[2];
+	assign wlk_sess_g0[3] = wlk_session[3];
+
+	assign wlk_sess_g1[0] = wlk_session[0];
+	assign wlk_sess_g1[1] = wlk_session[1];
+	assign wlk_sess_g1[2] = wlk_session[2];
+	assign wlk_sess_g1[3] = wlk_session[3];
+
+	assign wlk_sess_g2[0] = wlk_session[0];
+	assign wlk_sess_g2[1] = wlk_session[1];
+	assign wlk_sess_g2[2] = wlk_session[2];
+	assign wlk_sess_g2[3] = wlk_session[3];
+
+	assign wlk_sess_g3[0] = wlk_session[0];
+	assign wlk_sess_g3[1] = wlk_session[1];
+	assign wlk_sess_g3[2] = wlk_session[2];
+	assign wlk_sess_g3[3] = wlk_session[3];
 `else
 	assign wlk_sess_g0 = wlk_session;
 	assign wlk_sess_g1 = wlk_session;
@@ -475,7 +526,10 @@ module atg_mmu #(
 	localparam [2:0] S_WALK     = 3'd2;
 	localparam [2:0] S_REFILL   = 3'd3;
 
-	(* max_fanout = 16 *) reg [2:0]          state;
+	(* keep = "true", equivalent_register_removal = "no", max_fanout = 16 *) reg [2:0] state;
+	(* keep = "true", equivalent_register_removal = "no", max_fanout = 16 *) reg [2:0] state_ce;
+	(* keep = "true", equivalent_register_removal = "no", max_fanout = 16 *) reg [2:0] state_ce2;
+	(* keep = "true", equivalent_register_removal = "no", max_fanout = 16 *) reg [2:0] state_ce3;
 	(* max_fanout = 16 *) reg                r_refill_fault;
 	(* max_fanout = 16 *) reg [PPN_BITS-1:0] r_refill_pfn;
 	(* max_fanout = 16 *) reg [5:0]          r_refill_flags;
@@ -493,10 +547,11 @@ module atg_mmu #(
 	genvar gout;
 	generate
 	for (gout = 0; gout < NUM_CLIENTS; gout = gout + 1) begin : g_client_out
-		(* dont_touch = "true" *) wire refill_now_hi  = st_is_refill_c[gout] & (active_client == gout[FC_W-1:0]);
-		(* dont_touch = "true" *) wire refill_now_lo  = st_is_refill_c[gout] & (active_client == gout[FC_W-1:0]);
-		(* dont_touch = "true" *) wire refill_now_flg = st_is_refill_c[gout] & (active_client == gout[FC_W-1:0]);
-		(* dont_touch = "true" *) wire refill_now_ctl = st_is_refill_c[gout] & (active_client == gout[FC_W-1:0]);
+		wire [FC_W-1:0] act_ref_g = (gout < (NUM_CLIENTS / 2)) ? active_client_ref_a : active_client_ref_b;
+		(* dont_touch = "true" *) wire refill_now_hi  = st_is_refill_c[gout] & (act_ref_g == gout[FC_W-1:0]);
+		(* dont_touch = "true" *) wire refill_now_lo  = st_is_refill_c[gout] & (act_ref_g == gout[FC_W-1:0]);
+		(* dont_touch = "true" *) wire refill_now_flg = st_is_refill_c[gout] & (act_ref_g == gout[FC_W-1:0]);
+		(* dont_touch = "true" *) wire refill_now_ctl = st_is_refill_c[gout] & (act_ref_g == gout[FC_W-1:0]);
 
 		reg [PA_BITS-1:16] r_l1_pa_w0_hi;
 		reg [15:0]         r_l1_pa_w0_lo;
@@ -556,20 +611,22 @@ module atg_mmu #(
 				r_is_refill_hi       <= 1'b0;
 				r_is_refill_lo       <= 1'b0;
 				r_is_refill_flg      <= 1'b0;
-			end else if (st_is_refill_c[gout]) begin
-				r_client_ack_l1      <= 1'b0;
-				r_client_ack_ref     <= refill_now_ctl & !r_refill_fault;
-				r_client_fault[gout] <= refill_now_ctl & r_refill_fault;
-				r_is_refill_hi       <= refill_now_ctl;
-				r_is_refill_lo       <= refill_now_ctl;
-				r_is_refill_flg      <= refill_now_ctl;
 			end else begin
-				r_client_ack_l1      <= l1_hit[gout];
-				r_client_ack_ref     <= 1'b0;
-				r_client_fault[gout] <= 1'b0;
-				r_is_refill_hi       <= 1'b0;
-				r_is_refill_lo       <= 1'b0;
-				r_is_refill_flg      <= 1'b0;
+				/* l1_hit[gout] already requires st_is_idle_c[gout] == 1 (0 during S_REFILL) */
+				r_client_ack_l1 <= l1_hit[gout];
+				if (st_is_refill_c[gout]) begin
+					r_client_ack_ref     <= refill_now_ctl & !r_refill_fault;
+					r_client_fault[gout] <= refill_now_ctl & r_refill_fault;
+					r_is_refill_hi       <= refill_now_ctl;
+					r_is_refill_lo       <= refill_now_ctl;
+					r_is_refill_flg      <= refill_now_ctl;
+				end else begin
+					r_client_ack_ref     <= 1'b0;
+					r_client_fault[gout] <= 1'b0;
+					r_is_refill_hi       <= 1'b0;
+					r_is_refill_lo       <= 1'b0;
+					r_is_refill_flg      <= 1'b0;
+				end
 			end
 		end
 
@@ -613,10 +670,10 @@ module atg_mmu #(
 
 			/* Served after L2 hit or Walker completion */
 			if (state == S_REFILL) begin
-				client_ack[active_client] = !r_refill_fault;
-				client_fault[active_client] = r_refill_fault;
 				for (c = 0; c < NUM_CLIENTS; c = c + 1) begin
-					if (active_client == c[FC_W-1:0]) begin
+					if (((c < (NUM_CLIENTS / 2)) ? active_client : active_client_hi) == c[FC_W-1:0]) begin
+						client_ack[c]   = !r_refill_fault;
+						client_fault[c] = r_refill_fault;
 						client_pa[c*PA_BITS +: PA_BITS] = {r_refill_pfn, active_offset};
 						client_flags[c*6 +: 6]          = r_refill_flags;
 					end
@@ -650,33 +707,71 @@ module atg_mmu #(
 	end
 
 	/* Active client context registers with replicated client select to avoid high fanout */
-	(* dont_touch = "true" *) reg [FC_W-1:0] act_client_vpn_lo;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [FC_W-1:0] act_client_vpn_lo;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [FC_W-1:0] act_client_vpn_lk;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [FC_W-1:0] act_client_vpn_rfa;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [FC_W-1:0] act_client_vpn_rfb;
 	(* dont_touch = "true" *) reg [FC_W-1:0] act_client_vpn_hi;
 	(* dont_touch = "true" *) reg [FC_W-1:0] act_client_off;
 	(* dont_touch = "true" *) reg [FC_W-1:0] act_client_meta;
 
+`ifdef SYNTH_KINTEX7
+	wire act_ce_a, act_ce_b;
+	(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h0002)) u_acea (.I0(any_miss), .I1(state_ce[0]), .I2(state_ce[1]), .I3(state_ce[2]), .O(act_ce_a));
+	(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h0002)) u_aceb (.I0(any_miss), .I1(state_ce[0]), .I2(state_ce[1]), .I3(state_ce[2]), .O(act_ce_b));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire act_ce_a, act_ce_b;
+	(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h0002)) u_acea (.I0(any_miss), .I1(state_ce[0]), .I2(state_ce[1]), .I3(state_ce[2]), .O(act_ce_a));
+	(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h0002)) u_aceb (.I0(any_miss), .I1(state_ce[0]), .I2(state_ce[1]), .I3(state_ce[2]), .O(act_ce_b));
+`else
+	wire act_ce_a = (state_ce == S_IDLE && any_miss);
+	wire act_ce_b = (state_ce == S_IDLE && any_miss);
+`endif
+
 	always @(posedge clk_mmu or posedge rst_mmu_int) begin
 		if (rst_mmu_int) begin
-			active_client     <= {FC_W{1'b0}};
-			act_client_vpn_lo <= {FC_W{1'b0}};
-			act_client_vpn_hi <= {FC_W{1'b0}};
-			act_client_off    <= {FC_W{1'b0}};
-			act_client_meta   <= {FC_W{1'b0}};
-		end else if (state == S_IDLE && any_miss) begin
-			active_client     <= next_client;
-			act_client_vpn_lo <= next_client;
-			act_client_vpn_hi <= next_client;
-			act_client_off    <= next_client;
-			act_client_meta   <= next_client;
+			active_client       <= {FC_W{1'b0}};
+			active_client_hi    <= {FC_W{1'b0}};
+			active_client_flt   <= {FC_W{1'b0}};
+			active_client_l1    <= {FC_W{1'b0}};
+			active_client_ref_a <= {FC_W{1'b0}};
+			active_client_ref_b <= {FC_W{1'b0}};
+		end else if (act_ce_a) begin
+			active_client       <= next_client;
+			active_client_hi    <= next_client;
+			active_client_flt   <= next_client;
+			active_client_l1    <= next_client;
+			active_client_ref_a <= next_client;
+			active_client_ref_b <= next_client;
 		end
 	end
 
-	(* keep = "true", max_fanout = 16 *) wire ce_l2_vpn_hi  = (state == S_L2_LOOKUP);
-	(* keep = "true", max_fanout = 16 *) wire ce_l2_vpn_lo  = (state == S_L2_LOOKUP);
-	(* keep = "true", max_fanout = 16 *) wire ce_act_vpn_hi = (state == S_L2_LOOKUP);
-	(* keep = "true", max_fanout = 16 *) wire ce_act_vpn_lo = (state == S_L2_LOOKUP);
-	(* keep = "true", max_fanout = 16 *) wire ce_act_offset = (state == S_L2_LOOKUP);
-	(* keep = "true", max_fanout = 16 *) wire ce_act_meta   = (state == S_L2_LOOKUP);
+	always @(posedge clk_mmu or posedge rst_mmu_int) begin
+		if (rst_mmu_int) begin
+			act_client_vpn_lo   <= {FC_W{1'b0}};
+			act_client_vpn_lk   <= {FC_W{1'b0}};
+			act_client_vpn_rfa  <= {FC_W{1'b0}};
+			act_client_vpn_rfb  <= {FC_W{1'b0}};
+			act_client_vpn_hi   <= {FC_W{1'b0}};
+			act_client_off      <= {FC_W{1'b0}};
+			act_client_meta     <= {FC_W{1'b0}};
+		end else if (act_ce_b) begin
+			act_client_vpn_lo   <= next_client;
+			act_client_vpn_lk   <= next_client;
+			act_client_vpn_rfa  <= next_client;
+			act_client_vpn_rfb  <= next_client;
+			act_client_vpn_hi   <= next_client;
+			act_client_off      <= next_client;
+			act_client_meta     <= next_client;
+		end
+	end
+
+	(* keep = "true", max_fanout = 16 *) wire ce_l2_vpn_hi  = (state_ce == S_L2_LOOKUP);
+	(* keep = "true", max_fanout = 16 *) wire ce_l2_vpn_lo  = (state_ce == S_L2_LOOKUP);
+	(* keep = "true", max_fanout = 16 *) wire ce_act_vpn_hi = (state_ce == S_L2_LOOKUP);
+	(* keep = "true", max_fanout = 16 *) wire ce_act_vpn_lo = (state_ce == S_L2_LOOKUP);
+	(* keep = "true", max_fanout = 16 *) wire ce_act_offset = (state_ce == S_L2_LOOKUP);
+	(* keep = "true", max_fanout = 16 *) wire ce_act_meta   = (state_ce == S_L2_LOOKUP);
 
 	(* dont_touch = "true" *) reg ce_w0_vpn, ce_w0_pfn, ce_w0_flg;
 	(* dont_touch = "true" *) reg ce_w1_vpn, ce_w1_pfn, ce_w1_flg;
@@ -690,18 +785,18 @@ module atg_mmu #(
 			ce_w2_vpn <= 1'b0; ce_w2_pfn <= 1'b0; ce_w2_flg <= 1'b0;
 			ce_w3_vpn <= 1'b0; ce_w3_pfn <= 1'b0; ce_w3_flg <= 1'b0;
 		end else begin
-			ce_w0_vpn <= (state == S_IDLE && any_miss);
-			ce_w0_pfn <= (state == S_IDLE && any_miss);
-			ce_w0_flg <= (state == S_IDLE && any_miss);
-			ce_w1_vpn <= (state == S_IDLE && any_miss);
-			ce_w1_pfn <= (state == S_IDLE && any_miss);
-			ce_w1_flg <= (state == S_IDLE && any_miss);
-			ce_w2_vpn <= (state == S_IDLE && any_miss);
-			ce_w2_pfn <= (state == S_IDLE && any_miss);
-			ce_w2_flg <= (state == S_IDLE && any_miss);
-			ce_w3_vpn <= (state == S_IDLE && any_miss);
-			ce_w3_pfn <= (state == S_IDLE && any_miss);
-			ce_w3_flg <= (state == S_IDLE && any_miss);
+			ce_w0_vpn <= (state_ce2 == S_IDLE && any_miss);
+			ce_w0_pfn <= (state_ce2 == S_IDLE && any_miss);
+			ce_w0_flg <= (state_ce2 == S_IDLE && any_miss);
+			ce_w1_vpn <= (state_ce2 == S_IDLE && any_miss);
+			ce_w1_pfn <= (state_ce2 == S_IDLE && any_miss);
+			ce_w1_flg <= (state_ce2 == S_IDLE && any_miss);
+			ce_w2_vpn <= (state_ce2 == S_IDLE && any_miss);
+			ce_w2_pfn <= (state_ce2 == S_IDLE && any_miss);
+			ce_w2_flg <= (state_ce2 == S_IDLE && any_miss);
+			ce_w3_vpn <= (state_ce2 == S_IDLE && any_miss);
+			ce_w3_pfn <= (state_ce2 == S_IDLE && any_miss);
+			ce_w3_flg <= (state_ce2 == S_IDLE && any_miss);
 		end
 	end
 
@@ -725,12 +820,14 @@ module atg_mmu #(
 		sel_session  = 4'd0;
 		sel_type     = 2'd0;
 		for (sci = 0; sci < NUM_CLIENTS; sci = sci + 1) begin
-			if (act_client_vpn_lo == sci[FC_W-1:0]) begin
-				sel_vpn_lo   = client_req_va[sci*VA_BITS + 12 +: 10];
-				raw_lo_lk    = client_req_va[sci*VA_BITS + 12 +: 6];
+			if (act_client_vpn_lo == sci[FC_W-1:0])
+				sel_vpn_lo = client_req_va[sci*VA_BITS + 12 +: 10];
+			if (act_client_vpn_lk == sci[FC_W-1:0])
+				raw_lo_lk = client_req_va[sci*VA_BITS + 12 +: 6];
+			if (act_client_vpn_rfa == sci[FC_W-1:0])
 				raw_lo_ref_a = client_req_va[sci*VA_BITS + 12 +: 6];
+			if (act_client_vpn_rfb == sci[FC_W-1:0])
 				raw_lo_ref_b = client_req_va[sci*VA_BITS + 12 +: 6];
-			end
 			if (act_client_vpn_hi == sci[FC_W-1:0])
 				sel_vpn_hi = client_req_va[sci*VA_BITS + 22 +: VPN_HI_W];
 			if (act_client_off == sci[FC_W-1:0])
@@ -755,28 +852,56 @@ module atg_mmu #(
 	genvar gbit;
 	generate
 	for (gbit = 0; gbit < 6; gbit = gbit + 1) begin : g_lk_buf
-		LUT1 #(.INIT(2'h2)) u_b_lk0_a (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w0_a[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_lk0_b (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w0_b[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_lk1_a (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w1_a[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_lk1_b (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w1_b[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_lk2_a (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w2_a[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_lk2_b (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w2_b[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_lk3_a (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w3_a[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_lk3_b (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w3_b[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_lk0_a (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w0_a[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_lk0_b (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w0_b[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_lk1_a (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w1_a[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_lk1_b (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w1_b[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_lk2_a (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w2_a[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_lk2_b (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w2_b[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_lk3_a (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w3_a[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_lk3_b (.I0(raw_lo_lk[gbit]), .O(sel_vpn_lk_w3_b[gbit]));
 
-		LUT1 #(.INIT(2'h2)) u_b_rf0_v (.I0(raw_lo_ref_a[gbit]), .O(sel_vpn_ref_w0_vpn[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_rf0_p (.I0(raw_lo_ref_a[gbit]), .O(sel_vpn_ref_w0_pfn[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_rf0_f (.I0(raw_lo_ref_a[gbit]), .O(sel_vpn_ref_w0_flg[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_rf1_v (.I0(raw_lo_ref_a[gbit]), .O(sel_vpn_ref_w1_vpn[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_rf1_p (.I0(raw_lo_ref_a[gbit]), .O(sel_vpn_ref_w1_pfn[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_rf1_f (.I0(raw_lo_ref_a[gbit]), .O(sel_vpn_ref_w1_flg[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_rf0_v (.I0(raw_lo_ref_a[gbit]), .O(sel_vpn_ref_w0_vpn[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_rf0_p (.I0(raw_lo_ref_a[gbit]), .O(sel_vpn_ref_w0_pfn[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_rf0_f (.I0(raw_lo_ref_a[gbit]), .O(sel_vpn_ref_w0_flg[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_rf1_v (.I0(raw_lo_ref_a[gbit]), .O(sel_vpn_ref_w1_vpn[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_rf1_p (.I0(raw_lo_ref_a[gbit]), .O(sel_vpn_ref_w1_pfn[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_rf1_f (.I0(raw_lo_ref_a[gbit]), .O(sel_vpn_ref_w1_flg[gbit]));
 
-		LUT1 #(.INIT(2'h2)) u_b_rf2_v (.I0(raw_lo_ref_b[gbit]), .O(sel_vpn_ref_w2_vpn[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_rf2_p (.I0(raw_lo_ref_b[gbit]), .O(sel_vpn_ref_w2_pfn[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_rf2_f (.I0(raw_lo_ref_b[gbit]), .O(sel_vpn_ref_w2_flg[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_rf3_v (.I0(raw_lo_ref_b[gbit]), .O(sel_vpn_ref_w3_vpn[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_rf3_p (.I0(raw_lo_ref_b[gbit]), .O(sel_vpn_ref_w3_pfn[gbit]));
-		LUT1 #(.INIT(2'h2)) u_b_rf3_f (.I0(raw_lo_ref_b[gbit]), .O(sel_vpn_ref_w3_flg[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_rf2_v (.I0(raw_lo_ref_b[gbit]), .O(sel_vpn_ref_w2_vpn[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_rf2_p (.I0(raw_lo_ref_b[gbit]), .O(sel_vpn_ref_w2_pfn[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_rf2_f (.I0(raw_lo_ref_b[gbit]), .O(sel_vpn_ref_w2_flg[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_rf3_v (.I0(raw_lo_ref_b[gbit]), .O(sel_vpn_ref_w3_vpn[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_rf3_p (.I0(raw_lo_ref_b[gbit]), .O(sel_vpn_ref_w3_pfn[gbit]));
+		(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_b_rf3_f (.I0(raw_lo_ref_b[gbit]), .O(sel_vpn_ref_w3_flg[gbit]));
+	end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar gbit;
+	generate
+	for (gbit = 0; gbit < 6; gbit = gbit + 1) begin : g_lk_buf
+		assign sel_vpn_lk_w0_a[gbit] = raw_lo_lk[gbit];
+		assign sel_vpn_lk_w0_b[gbit] = raw_lo_lk[gbit];
+		assign sel_vpn_lk_w1_a[gbit] = raw_lo_lk[gbit];
+		assign sel_vpn_lk_w1_b[gbit] = raw_lo_lk[gbit];
+		assign sel_vpn_lk_w2_a[gbit] = raw_lo_lk[gbit];
+		assign sel_vpn_lk_w2_b[gbit] = raw_lo_lk[gbit];
+		assign sel_vpn_lk_w3_a[gbit] = raw_lo_lk[gbit];
+		assign sel_vpn_lk_w3_b[gbit] = raw_lo_lk[gbit];
+
+		assign sel_vpn_ref_w0_vpn[gbit] = raw_lo_ref_a[gbit];
+		assign sel_vpn_ref_w0_pfn[gbit] = raw_lo_ref_a[gbit];
+		assign sel_vpn_ref_w0_flg[gbit] = raw_lo_ref_a[gbit];
+		assign sel_vpn_ref_w1_vpn[gbit] = raw_lo_ref_a[gbit];
+		assign sel_vpn_ref_w1_pfn[gbit] = raw_lo_ref_a[gbit];
+		assign sel_vpn_ref_w1_flg[gbit] = raw_lo_ref_a[gbit];
+
+		assign sel_vpn_ref_w2_vpn[gbit] = raw_lo_ref_b[gbit];
+		assign sel_vpn_ref_w2_pfn[gbit] = raw_lo_ref_b[gbit];
+		assign sel_vpn_ref_w2_flg[gbit] = raw_lo_ref_b[gbit];
+		assign sel_vpn_ref_w3_vpn[gbit] = raw_lo_ref_b[gbit];
+		assign sel_vpn_ref_w3_pfn[gbit] = raw_lo_ref_b[gbit];
+		assign sel_vpn_ref_w3_flg[gbit] = raw_lo_ref_b[gbit];
 	end
 	endgenerate
 `else
@@ -1019,14 +1144,18 @@ module atg_mmu #(
 	LUT1 #(.INIT(2'h2)) u_b_hit_p (.I0(l2_hit), .O(l2_hit_p));
 	LUT1 #(.INIT(2'h2)) u_b_hit_f (.I0(l2_hit), .O(l2_hit_f));
 	LUT1 #(.INIT(2'h2)) u_b_hit_c (.I0(l2_hit), .O(l2_hit_c));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign l2_hit_p = l2_hit;
+	assign l2_hit_f = l2_hit;
+	assign l2_hit_c = l2_hit;
 `else
 	assign l2_hit_p = l2_hit;
 	assign l2_hit_f = l2_hit;
 	assign l2_hit_c = l2_hit;
 `endif
 
-	(* keep = "true", max_fanout = 16 *) wire ce_l2_hit = (state == S_L2_CHECK) & l2_hit_c;
-	(* keep = "true", max_fanout = 16 *) wire ce_walk_done = (state == S_WALK) & walker_done;
+	(* keep = "true", max_fanout = 16 *) wire ce_l2_hit = (state_ce3 == S_L2_CHECK) & l2_hit_c;
+	(* keep = "true", max_fanout = 16 *) wire ce_walk_done = (state_ce3 == S_WALK) & walker_done;
 	(* keep = "true", max_fanout = 16 *) wire ce_refill_hi  = ce_l2_hit | ce_walk_done;
 	(* keep = "true", max_fanout = 16 *) wire ce_refill_lo  = ce_l2_hit | ce_walk_done;
 	(* keep = "true", max_fanout = 16 *) wire ce_refill_flg = ce_l2_hit | ce_walk_done;
@@ -1068,7 +1197,7 @@ module atg_mmu #(
 	end
 
 	/* Fault reporting data registers */
-	(* keep = "true", max_fanout = 16 *) wire ce_fault_data = (state == S_WALK) & walker_fault;
+	(* keep = "true", max_fanout = 16 *) wire ce_fault_data = (state_ce3 == S_WALK) & walker_fault;
 	always @(posedge clk_mmu or posedge rst_mmu_int) begin
 		if (rst_mmu_int) begin
 			fault_kind    <= 4'd0;
@@ -1078,13 +1207,13 @@ module atg_mmu #(
 		end else if (ce_fault_data) begin
 			fault_kind    <= walker_fault_kind;
 			fault_session <= active_session;
-			fault_client  <= active_client;
+			fault_client  <= active_client_flt;
 			fault_addr    <= {flt_vpn, active_offset};
 		end
 	end
 
-	wire next_is_refill = (state == S_L2_CHECK && l2_hit) || (state == S_WALK && (walker_done || walker_fault));
-	wire next_is_idle   = (state == S_REFILL) || (state == S_IDLE && !any_miss);
+	wire next_is_refill = (state_ce2 == S_L2_CHECK && l2_hit) || (state_ce2 == S_WALK && (walker_done || walker_fault));
+	wire next_is_idle   = (state_ce2 == S_REFILL) || (state_ce2 == S_IDLE && !any_miss);
 
 	always @(posedge clk_mmu or posedge rst_mmu_int) begin
 		if (rst_mmu_int) begin
@@ -1113,6 +1242,9 @@ module atg_mmu #(
 			l2_lookup_valid   <= 1'b0;
 			fault_valid       <= 1'b0;
 			state             <= S_IDLE;
+			state_ce          <= S_IDLE;
+			state_ce2         <= S_IDLE;
+			state_ce3         <= S_IDLE;
 			r_refill_fault    <= 1'b0;
 		end else begin
 			walker_start_fsm  <= 1'b0;
@@ -1132,66 +1264,98 @@ module atg_mmu #(
 			case (state)
 			S_IDLE: begin
 				if (any_miss) begin
-					state <= S_L2_LOOKUP;
+					state     <= S_L2_LOOKUP;
+					state_ce  <= S_L2_LOOKUP;
+					state_ce2 <= S_L2_LOOKUP;
+					state_ce3 <= S_L2_LOOKUP;
 				end
 			end
 
 			S_L2_LOOKUP: begin
 				l2_lookup_valid <= 1'b1;
 				state           <= S_L2_WAIT;
+				state_ce        <= S_L2_WAIT;
+				state_ce2       <= S_L2_WAIT;
+				state_ce3       <= S_L2_WAIT;
 			end
 
 			S_L2_WAIT: begin
 				/* Allow 1 clock cycle for L2 TLB set-read stage register to settle */
-				state <= S_L2_WAIT2;
+				state     <= S_L2_WAIT2;
+				state_ce  <= S_L2_WAIT2;
+				state_ce2 <= S_L2_WAIT2;
+				state_ce3 <= S_L2_WAIT2;
 			end
 
 			S_L2_WAIT2: begin
 				/* Allow 1 clock cycle for L2 TLB hit stage register to settle */
-				state <= S_L2_CHECK;
+				state     <= S_L2_CHECK;
+				state_ce  <= S_L2_CHECK;
+				state_ce2 <= S_L2_CHECK;
+				state_ce3 <= S_L2_CHECK;
 			end
 
 			S_L2_CHECK: begin
 				if (l2_hit) begin
 					/* L2 hit: refill L1 */
-					l1_refill_we[active_client] <= 1'b1;
-					r_refill_fault              <= 1'b0;
-					state                       <= S_REFILL;
+					l1_refill_we[active_client_l1] <= 1'b1;
+					r_refill_fault                 <= 1'b0;
+					state                          <= S_REFILL;
+					state_ce                       <= S_REFILL;
+					state_ce2                      <= S_REFILL;
+					state_ce3                      <= S_REFILL;
 				end else begin
 					/* L2 miss: kick Hardware Walker */
 					walker_start_fsm  <= 1'b1;
 					walker_start_meta <= 1'b1;
 					state             <= S_WALK;
+					state_ce          <= S_WALK;
+					state_ce2         <= S_WALK;
+					state_ce3         <= S_WALK;
 				end
 			end
 
 			S_WALK: begin
 				if (walker_done) begin
 					/* Successful walk: refill L2 and L1 */
-					l2_refill_we_w0             <= 1'b1;
-					l2_refill_we_w1             <= 1'b1;
-					l2_refill_we_w2             <= 1'b1;
-					l2_refill_we_w3             <= 1'b1;
-					l2_refill_we_sl0            <= 1'b1;
-					l2_refill_we_sl1            <= 1'b1;
-					l2_refill_we_sl2            <= 1'b1;
-					l2_refill_we_sl3            <= 1'b1;
-					l1_refill_we[active_client] <= 1'b1;
-					r_refill_fault              <= 1'b0;
-					state                       <= S_REFILL;
+					l2_refill_we_w0                <= 1'b1;
+					l2_refill_we_w1                <= 1'b1;
+					l2_refill_we_w2                <= 1'b1;
+					l2_refill_we_w3                <= 1'b1;
+					l2_refill_we_sl0               <= 1'b1;
+					l2_refill_we_sl1               <= 1'b1;
+					l2_refill_we_sl2               <= 1'b1;
+					l2_refill_we_sl3               <= 1'b1;
+					l1_refill_we[active_client_l1] <= 1'b1;
+					r_refill_fault                 <= 1'b0;
+					state                          <= S_REFILL;
+					state_ce                       <= S_REFILL;
+					state_ce2                      <= S_REFILL;
+					state_ce3                      <= S_REFILL;
 				end else if (walker_fault) begin
 					/* Trap fault internally: prevent bus access */
 					r_refill_fault <= 1'b1;
 					fault_valid    <= 1'b1;
 					state          <= S_REFILL;
+					state_ce       <= S_REFILL;
+					state_ce2      <= S_REFILL;
+					state_ce3      <= S_REFILL;
 				end
 			end
 
 			S_REFILL: begin
-				state <= S_IDLE;
+				state     <= S_IDLE;
+				state_ce  <= S_IDLE;
+				state_ce2 <= S_IDLE;
+				state_ce3 <= S_IDLE;
 			end
 
-			default: state <= S_IDLE;
+			default: begin
+				state     <= S_IDLE;
+				state_ce  <= S_IDLE;
+				state_ce2 <= S_IDLE;
+				state_ce3 <= S_IDLE;
+			end
 			endcase
 		end
 	end

@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -30,9 +30,19 @@ module atg_mc_asm #(
 	output reg full,
 	output reg [LINE_BYTES*8-1:0] head,
 	output reg [LINE_BYTES*8-1:0] data,
-	output reg ap_ok,
+	output wire ap_ok,
 	input wire take
 );
+	reg ap_ok_r;
+`ifdef SYNTH_KINTEX7
+	reg ap_clr_r;
+	assign ap_ok = ap_ok_r & !ap_clr_r;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	reg ap_clr_r;
+	assign ap_ok = ap_ok_r & !ap_clr_r;
+`else
+	assign ap_ok = ap_ok_r;
+`endif
 	/* A write's header is in, its data flit is not. */
 	reg hdr;
 
@@ -100,27 +110,81 @@ module atg_mc_asm #(
 		end
 	endgenerate
 	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n)
-			ap_ok <= 1'b0;
-		else if (flush)
-			ap_ok <= 1'b0;
-		else if (head_en_b[0])
-			ap_ok <= t_ap;
+		if (!rst_n) begin
+			ap_ok_r  <= 1'b0;
+			ap_clr_r <= 1'b1;
+		end else begin
+			if (flush)
+				ap_clr_r <= 1'b1;
+			else if (head_en_b[0])
+				ap_clr_r <= 1'b0;
+			if (head_en_b[0])
+				ap_ok_r <= t_ap;
+		end
+	end
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [2:0] tv_g, hdr_g;
+	wire [1:0] full_g;
+	assign tv_g[0] = t_valid;
+	assign tv_g[1] = t_valid;
+	assign tv_g[2] = t_valid;
+	assign hdr_g[0] = hdr;
+	assign hdr_g[1] = hdr;
+	assign hdr_g[2] = hdr;
+	assign full_g[0] = full;
+	assign full_g[1] = full;
+
+	localparam NSLICE = (LINE_BYTES * 8) / 16;
+	wire [NSLICE-1:0] head_en_b, data_en_b;
+	genvar gs;
+	generate
+		for (gs = 0; gs < NSLICE; gs = gs + 1) begin : g_en_buf
+			localparam HGRP = (gs >= 11) ? 2 : ((gs >= 5) ? 1 : 0);
+			localparam FGRP = (gs >= 8) ? 1 : 0;
+			/* head_en = t_valid && !hdr && !full in 1 LUT4 */
+			(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'h0002)) u_he (
+				.I0(tv_g[HGRP]), .I1(full_g[FGRP]), .I2(1'b0), .I3(hdr_g[HGRP]),
+				.O(head_en_b[gs])
+			);
+			/* data_en = t_valid && hdr in 1 LUT2 (full is always 0 when hdr is 1) */
+			(* DONT_TOUCH = "TRUE" *) LUT2 #(.INIT(4'h8)) u_de (
+				.I0(tv_g[HGRP]), .I1(hdr_g[HGRP]), .O(data_en_b[gs])
+			);
+			always @(posedge clk) begin
+				if (head_en_b[gs])
+					head[gs*16 +: 16] <= t_data[gs*16 +: 16];
+				if (data_en_b[gs])
+					data[gs*16 +: 16] <= t_data[gs*16 +: 16];
+			end
+		end
+	endgenerate
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			ap_ok_r  <= 1'b0;
+			ap_clr_r <= 1'b1;
+		end else begin
+			if (flush)
+				ap_clr_r <= 1'b1;
+			else if (head_en_b[0])
+				ap_clr_r <= 1'b0;
+			if (head_en_b[0])
+				ap_ok_r <= t_ap;
+		end
 	end
 `else
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
 			head <= {LINE_BYTES*8{1'b0}};
 			data <= {LINE_BYTES*8{1'b0}};
-			ap_ok <= 1'b0;
+			ap_ok_r <= 1'b0;
 		end else if (flush) begin
 			head <= {LINE_BYTES*8{1'b0}};
 			data <= {LINE_BYTES*8{1'b0}};
-			ap_ok <= 1'b0;
+			ap_ok_r <= 1'b0;
 		end else begin
 			if (head_en) begin
 				head <= t_data;
-				ap_ok <= t_ap;
+				ap_ok_r <= t_ap;
 			end
 			if (data_en) begin
 				data <= t_data;

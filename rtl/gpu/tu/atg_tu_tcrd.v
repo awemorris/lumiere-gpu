@@ -64,25 +64,30 @@ module atg_tu_tcrd #(
 
 	/* LAT >= 1 pipeline registers */
 	reg signed [29:0] r_nu, r_nv, r_nw;
-	reg signed [29:0] r_un0, r_un1;
-	reg signed [29:0] r_un0_d, r_un1_d;
-	reg signed [29:0] r_un0_d2, r_un1_d2;
+	(* keep = "true", equivalent_register_removal = "no", srl_style = "register", extract_reset = "no" *) reg signed [29:0] r_un0, r_un1;
+	(* keep = "true", equivalent_register_removal = "no", srl_style = "register", extract_reset = "no" *) reg signed [29:0] r_un0_d, r_un1_d;
+	(* keep = "true", equivalent_register_removal = "no", srl_style = "register", extract_reset = "no" *) reg signed [29:0] r_un0_d2, r_un1_d2;
 	reg signed [26:0] r_fcs, r_fct;
 	reg r_cube, r_unn;
 	reg r_cube_d, r_unn_d;
 	reg r_cube_d2, r_unn_d2;
+
+	always @(posedge clk) begin
+		if (en) begin
+			r_un0    <= un0;
+			r_un1    <= un1;
+			r_un0_d  <= r_un0;
+			r_un1_d  <= r_un1;
+			r_un0_d2 <= r_un0_d;
+			r_un1_d2 <= r_un1_d;
+		end
+	end
 
 	always @(posedge clk or posedge rst_inv) begin
 		if (rst_inv) begin
 			r_nu      <= 30'sd0;
 			r_nv      <= 30'sd0;
 			r_nw      <= 30'sd0;
-			r_un0     <= 30'sd0;
-			r_un1     <= 30'sd0;
-			r_un0_d   <= 30'sd0;
-			r_un1_d   <= 30'sd0;
-			r_un0_d2  <= 30'sd0;
-			r_un1_d2  <= 30'sd0;
 			r_fcs     <= 27'sd0;
 			r_fct     <= 27'sd0;
 			r_cube    <= 1'b0;
@@ -95,12 +100,6 @@ module atg_tu_tcrd #(
 			r_nu      <= nu;
 			r_nv      <= nv;
 			r_nw      <= nw;
-			r_un0     <= un0;
-			r_un1     <= un1;
-			r_un0_d   <= r_un0;
-			r_un1_d   <= r_un1;
-			r_un0_d2  <= r_un0_d;
-			r_un1_d2  <= r_un1_d;
 			r_fcs     <= fcs;
 			r_fct     <= fct;
 			r_cube    <= cube;
@@ -123,94 +122,123 @@ module atg_tu_tcrd #(
 	wire final_unn             = (LAT >= 1) ? r_unn_d2  : unn;
 
 	wire mclk = (LAT >= 1) ? clk : 1'b0;
-	localparam MLAT = (LAT >= 1) ? 2 : 0;
+	localparam MLAT = (LAT >= 2) ? 3 : (LAT >= 1) ? 2 : 0;
 
+	wire signed [30:0] pu_w, pv_w, pw_w;
+`ifdef SYNTH_ASIC
+	wire signed [38:0] pu_lo, pu_hi, pv_lo, pv_hi;
+	wire [38:0] pu_sum, pv_sum;
+	wire pu_sum_co_unused, pv_sum_co_unused;
+	am_mul #(.AW(30), .BW(9), .SIGNED(1), .LAT(MLAT)) u_pu_lo (.clk(mclk), .en(en), .a(in_nu), .b({1'b0, wl[7:0]}),  .p(pu_lo));
+	am_mul #(.AW(30), .BW(9), .SIGNED(1), .LAT(MLAT)) u_pu_hi (.clk(mclk), .en(en), .a(in_nu), .b({1'b0, wl[15:8]}), .p(pu_hi));
+	am_add #(.W(39)) u_pu_sum (.a({{8{pu_lo[38]}}, pu_lo[38:8]}), .b(pu_hi), .ci(1'b0), .s(pu_sum), .co(pu_sum_co_unused));
+	am_mul #(.AW(30), .BW(9), .SIGNED(1), .LAT(MLAT)) u_pv_lo (.clk(mclk), .en(en), .a(in_nv), .b({1'b0, hl[7:0]}),  .p(pv_lo));
+	am_mul #(.AW(30), .BW(9), .SIGNED(1), .LAT(MLAT)) u_pv_hi (.clk(mclk), .en(en), .a(in_nv), .b({1'b0, hl[15:8]}), .p(pv_hi));
+	am_add #(.W(39)) u_pv_sum (.a({{8{pv_lo[38]}}, pv_lo[38:8]}), .b(pv_hi), .ci(1'b0), .s(pv_sum), .co(pv_sum_co_unused));
+	assign pu_w = pu_sum[38:8];
+	assign pv_w = pv_sum[38:8];
+	assign pu   = {pu_w, pu_sum[7:0], pu_lo[7:0]};
+	assign pv   = {pv_w, pv_sum[7:0], pv_lo[7:0]};
+`else
 	am_mul #(.AW(30), .BW(17), .SIGNED(1), .LAT(MLAT)) u_pu (.clk(mclk), .en(en), .a(in_nu), .b({1'b0, wl}),
 		.p(pu));
 	am_mul #(.AW(30), .BW(17), .SIGNED(1), .LAT(MLAT)) u_pv (.clk(mclk), .en(en), .a(in_nv), .b({1'b0, hl}),
 		.p(pv));
+	assign pu_w = pu[46:16];
+	assign pv_w = pv[46:16];
+`endif
 	generate
 	if (ENABLE_3D_CUBE) begin : g_mul_3d_cube
+`ifdef SYNTH_ASIC
+		wire signed [38:0] pw_lo, pw_hi;
+		wire [38:0] pw_sum;
+		wire pw_sum_co_unused;
+		am_mul #(.AW(30), .BW(9), .SIGNED(1), .LAT(MLAT)) u_pw_lo (.clk(mclk), .en(en), .a(in_nw), .b({1'b0, dl[7:0]}),  .p(pw_lo));
+		am_mul #(.AW(30), .BW(9), .SIGNED(1), .LAT(MLAT)) u_pw_hi (.clk(mclk), .en(en), .a(in_nw), .b({1'b0, dl[15:8]}), .p(pw_hi));
+		am_add #(.W(39)) u_pw_sum (.a({{8{pw_lo[38]}}, pw_lo[38:8]}), .b(pw_hi), .ci(1'b0), .s(pw_sum), .co(pw_sum_co_unused));
+		assign pw_w = pw_sum[38:8];
+		assign pw   = {pw_w, pw_sum[7:0], pw_lo[7:0]};
+`else
 		am_mul #(.AW(30), .BW(17), .SIGNED(1), .LAT(MLAT)) u_pw (.clk(mclk), .en(en), .a(in_nw), .b({1'b0, dl}),
 			.p(pw));
+		assign pw_w = pw[46:16];
+`endif
 		am_mul #(.AW(27), .BW(17), .SIGNED(1), .LAT(MLAT)) u_qu (.clk(mclk), .en(en), .a(in_fcs), .b({1'b0, wl}),
 			.p(qu));
 		am_mul #(.AW(27), .BW(17), .SIGNED(1), .LAT(MLAT)) u_qv (.clk(mclk), .en(en), .a(in_fct), .b({1'b0, wl}),
 			.p(qv));
 	end else begin : g_no_mul_3d_cube
 		assign pw = 47'sd0;
+		assign pw_w = 31'sd0;
 		assign qu = 44'sd0;
 		assign qv = 44'sd0;
 	end
 	endgenerate
 
-	/* Post-DSP output registers (when LAT >= 2) */
-	reg signed [30:0] r2_pu, r2_pv, r2_pw;
-	reg signed [27:0] r2_qu, r2_qv;
-	reg signed [29:0] r_un0_d3, r_un1_d3;
-	reg r_cube_u_lo, r_cube_u_hi, r_cube_v_lo, r_cube_v_hi;
-	reg r_unn_u_lo, r_unn_u_hi, r_unn_v_lo, r_unn_v_hi;
+	/* Post-DSP output registers for control and split-mul alignment (when LAT >= 2) */
+	(* keep = "true", equivalent_register_removal = "no", srl_style = "register", extract_reset = "no" *) reg signed [29:0] r_un0_d3, r_un1_d3, r_un0_d4, r_un1_d4;
+	(* extract_reset = "no" *) reg signed [30:0] r_s2_pu, r_s2_pv, r_s2_pw;
+	(* extract_reset = "no" *) reg signed [27:0] r_s2_qu, r_s2_qv;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [2:0] r_cube_u_b, r_cube_v_b, r_cube_u_b2, r_cube_v_b2;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [2:0] r_unn_u_b, r_unn_v_b, r_unn_u_b2, r_unn_v_b2;
+	always @(posedge clk) begin
+		if (en) begin
+			r_un0_d3 <= r_un0_d2;
+			r_un1_d3 <= r_un1_d2;
+			r_un0_d4 <= r_un0_d3;
+			r_un1_d4 <= r_un1_d3;
+			r_s2_pu  <= pu_w;
+			r_s2_pv  <= pv_w;
+			r_s2_pw  <= pw_w;
+			r_s2_qu  <= qu[43:16];
+			r_s2_qv  <= qv[43:16];
+		end
+	end
 	always @(posedge clk or posedge rst_inv) begin
 		if (rst_inv) begin
-			r2_pu       <= 31'sd0;
-			r2_pv       <= 31'sd0;
-			r2_pw       <= 31'sd0;
-			r2_qu       <= 28'sd0;
-			r2_qv       <= 28'sd0;
-			r_un0_d3    <= 30'sd0;
-			r_un1_d3    <= 30'sd0;
-			r_cube_u_lo <= 1'b0;
-			r_cube_u_hi <= 1'b0;
-			r_cube_v_lo <= 1'b0;
-			r_cube_v_hi <= 1'b0;
-			r_unn_u_lo  <= 1'b0;
-			r_unn_u_hi  <= 1'b0;
-			r_unn_v_lo  <= 1'b0;
-			r_unn_v_hi  <= 1'b0;
+			r_cube_u_b  <= 3'd0;
+			r_cube_v_b  <= 3'd0;
+			r_unn_u_b   <= 3'd0;
+			r_unn_v_b   <= 3'd0;
+			r_cube_u_b2 <= 3'd0;
+			r_cube_v_b2 <= 3'd0;
+			r_unn_u_b2  <= 3'd0;
+			r_unn_v_b2  <= 3'd0;
 		end else if (en) begin
-			r2_pu       <= pu[46:16];
-			r2_pv       <= pv[46:16];
-			r2_pw       <= pw[46:16];
-			r2_qu       <= qu[43:16];
-			r2_qv       <= qv[43:16];
-			r_un0_d3    <= r_un0_d2;
-			r_un1_d3    <= r_un1_d2;
-			r_cube_u_lo <= r_cube_d2;
-			r_cube_u_hi <= r_cube_d2;
-			r_cube_v_lo <= r_cube_d2;
-			r_cube_v_hi <= r_cube_d2;
-			r_unn_u_lo  <= r_unn_d2;
-			r_unn_u_hi  <= r_unn_d2;
-			r_unn_v_lo  <= r_unn_d2;
-			r_unn_v_hi  <= r_unn_d2;
+			r_cube_u_b  <= {3{r_cube_d2}};
+			r_cube_v_b  <= {3{r_cube_d2}};
+			r_unn_u_b   <= {3{r_unn_d2}};
+			r_unn_v_b   <= {3{r_unn_d2}};
+			r_cube_u_b2 <= r_cube_u_b;
+			r_cube_v_b2 <= r_cube_v_b;
+			r_unn_u_b2  <= r_unn_u_b;
+			r_unn_v_b2  <= r_unn_v_b;
 		end
 	end
 
-	wire signed [30:0] s2_pu    = (LAT >= 2) ? r2_pu     : pu[46:16];
-	wire signed [30:0] s2_pv    = (LAT >= 2) ? r2_pv     : pv[46:16];
-	wire signed [30:0] s2_pw    = (LAT >= 2) ? r2_pw     : pw[46:16];
-	wire signed [27:0] s2_qu    = (LAT >= 2) ? r2_qu     : qu[43:16];
-	wire signed [27:0] s2_qv    = (LAT >= 2) ? r2_qv     : qv[43:16];
-	wire signed [29:0] s2_un0   = (LAT >= 2) ? r_un0_d3  : un0_val;
-	wire signed [29:0] s2_un1   = (LAT >= 2) ? r_un1_d3  : un1_val;
-	wire s2_cube_u_lo = (LAT >= 2) ? r_cube_u_lo : final_cube;
-	wire s2_cube_u_hi = (LAT >= 2) ? r_cube_u_hi : final_cube;
-	wire s2_cube_v_lo = (LAT >= 2) ? r_cube_v_lo : final_cube;
-	wire s2_cube_v_hi = (LAT >= 2) ? r_cube_v_hi : final_cube;
-	wire s2_unn_u_lo  = (LAT >= 2) ? r_unn_u_lo  : final_unn;
-	wire s2_unn_u_hi  = (LAT >= 2) ? r_unn_u_hi  : final_unn;
-	wire s2_unn_v_lo  = (LAT >= 2) ? r_unn_v_lo  : final_unn;
-	wire s2_unn_v_hi  = (LAT >= 2) ? r_unn_v_hi  : final_unn;
+	wire signed [30:0] s2_pu    = (LAT >= 2) ? r_s2_pu : pu_w;
+	wire signed [30:0] s2_pv    = (LAT >= 2) ? r_s2_pv : pv_w;
+	wire signed [30:0] s2_pw    = (LAT >= 2) ? r_s2_pw : pw_w;
+	wire signed [27:0] s2_qu    = (LAT >= 2) ? r_s2_qu : qu[43:16];
+	wire signed [27:0] s2_qv    = (LAT >= 2) ? r_s2_qv : qv[43:16];
+	wire signed [29:0] s2_un0   = (LAT >= 2) ? r_un0_d4 : un0_val;
+	wire signed [29:0] s2_un1   = (LAT >= 2) ? r_un1_d4 : un1_val;
+	wire [2:0] s2_cube_u_b = (LAT >= 2) ? r_cube_u_b2 : {3{final_cube}};
+	wire [2:0] s2_cube_v_b = (LAT >= 2) ? r_cube_v_b2 : {3{final_cube}};
+	wire [2:0] s2_unn_u_b  = (LAT >= 2) ? r_unn_u_b2  : {3{final_unn}};
+	wire [2:0] s2_unn_v_b  = (LAT >= 2) ? r_unn_v_b2  : {3{final_unn}};
 
 	wire [30:0] qu_ext  = {{3{s2_qu[27]}}, s2_qu};
 	wire [30:0] qv_ext  = {{3{s2_qv[27]}}, s2_qv};
 	wire [30:0] un0_ext = {s2_un0[29], s2_un0};
 	wire [30:0] un1_ext = {s2_un1[29], s2_un1};
 
-	assign cu[15:0]  = s2_cube_u_lo ? qu_ext[15:0]  : s2_unn_u_lo ? un0_ext[15:0]  : s2_pu[15:0];
-	assign cu[30:16] = s2_cube_u_hi ? qu_ext[30:16] : s2_unn_u_hi ? un0_ext[30:16] : s2_pu[30:16];
-	assign cv[15:0]  = s2_cube_v_lo ? qv_ext[15:0]  : s2_unn_v_lo ? un1_ext[15:0]  : s2_pv[15:0];
-	assign cv[30:16] = s2_cube_v_hi ? qv_ext[30:16] : s2_unn_v_hi ? un1_ext[30:16] : s2_pv[30:16];
+	assign cu[9:0]   = s2_cube_u_b[0] ? qu_ext[9:0]   : s2_unn_u_b[0] ? un0_ext[9:0]   : s2_pu[9:0];
+	assign cu[19:10] = s2_cube_u_b[1] ? qu_ext[19:10] : s2_unn_u_b[1] ? un0_ext[19:10] : s2_pu[19:10];
+	assign cu[30:20] = s2_cube_u_b[2] ? qu_ext[30:20] : s2_unn_u_b[2] ? un0_ext[30:20] : s2_pu[30:20];
+	assign cv[9:0]   = s2_cube_v_b[0] ? qv_ext[9:0]   : s2_unn_v_b[0] ? un1_ext[9:0]   : s2_pv[9:0];
+	assign cv[19:10] = s2_cube_v_b[1] ? qv_ext[19:10] : s2_unn_v_b[1] ? un1_ext[19:10] : s2_pv[19:10];
+	assign cv[30:20] = s2_cube_v_b[2] ? qv_ext[30:20] : s2_unn_v_b[2] ? un1_ext[30:20] : s2_pv[30:20];
 	assign cw = s2_pw;
 
 	wire unused_lat0 = (LAT == 0) ? &{1'b0, clk, rst_n, en} : 1'b0;

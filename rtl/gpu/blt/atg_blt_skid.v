@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -14,6 +14,7 @@ module atg_blt_skid #(
 ) (
 	input wire clk,
 	input wire rst_n,
+	input wire clr,
 
 	input wire in_valid,
 	output reg in_ready,
@@ -30,6 +31,10 @@ module atg_blt_skid #(
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
+			in_ready   <= 1'b1;
+			out_valid  <= 1'b0;
+			skid_valid <= 1'b0;
+		end else if (clr) begin
 			in_ready   <= 1'b1;
 			out_valid  <= 1'b0;
 			skid_valid <= 1'b0;
@@ -82,6 +87,25 @@ module atg_blt_skid #(
 				.O(ld_skid_b)
 			);
 			LUT1 #(.INIT(2'b10)) u_skv (.I0(skid_valid), .O(sk_valid_b));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			(* keep = "true", dont_touch = "true" *) wire ld_out_b;
+			(* keep = "true", dont_touch = "true" *) wire ld_skid_b;
+			(* keep = "true", dont_touch = "true" *) wire sk_valid_b;
+			LUT4 #(.INIT(16'hF0C4)) u_ldo (
+				.I0(out_valid),
+				.I1(in_valid),
+				.I2(out_ready),
+				.I3(skid_valid),
+				.O(ld_out_b)
+			);
+			LUT4 #(.INIT(16'h0080)) u_lds (
+				.I0(out_valid),
+				.I1(in_valid),
+				.I2(in_ready),
+				.I3(out_ready),
+				.O(ld_skid_b)
+			);
+			assign sk_valid_b = skid_valid;
 `else
 			wire ld_out_b = load_out_raw;
 			wire ld_skid_b = load_skid_raw;

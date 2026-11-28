@@ -93,7 +93,7 @@ module atg_tx_rt #(
 				stamped_tag,
 				c_tx_last[gk]
 			};
-			am_skid #(.WIDTH(TX_W), .RST_DATA(0)) u_tx_sk (
+			atg_ex_rt_skid #(.WIDTH(TX_W), .SL_S(10)) u_tx_sk (
 				.clk(clk), .rst_n(rst_n),
 				.in_valid(c_tx_valid[gk]), .in_ready(c_tx_ready[gk]),
 				.in_data(in_vec),
@@ -103,51 +103,80 @@ module atg_tx_rt #(
 		end
 	endgenerate
 
-	reg [KW-1:0] last_won;
-	reg [KW-1:0] rr_pick;
-	integer      st, ii;
-
-	always @(*) begin
-		rr_pick = {KW{1'b0}};
-		for (st = K - 1; st >= 0; st = st - 1) begin
-			for (ii = 0; ii < K; ii = ii + 1) begin
-				if (last_won == ii[KW-1:0] && sk_v[(ii + 1 + st) % K])
-					rr_pick = ((ii + 1 + st) % K);
-			end
+	/* Parallel unrotated 2-way RR arbiter over sk_v */
+	reg [K-1:0] rr_ge_r;
+	wire [K-1:0] sk_v_hi = sk_v & rr_ge_r;
+	wire [K-1:0] win_lo_1h, win_hi_1h;
+	assign win_lo_1h[0] = sk_v[0];
+	assign win_hi_1h[0] = sk_v_hi[0];
+	generate
+		for (gk = 1; gk < K; gk = gk + 1) begin : g_tx_pe
+			assign win_lo_1h[gk] = sk_v[gk] && !(|sk_v[gk-1:0]);
+			assign win_hi_1h[gk] = sk_v_hi[gk] && !(|sk_v_hi[gk-1:0]);
 		end
-	end
+	endgenerate
+	wire         pick_valid = |sk_v;
+	wire         any_hi     = |sk_v_hi;
+	wire [K-1:0] pick_oh    = any_hi ? win_hi_1h : win_lo_1h;
 
-	/* Every tx_valid beat is an independent 1-flit quad request (tx_last is
-	 * per-instruction on the last active group and can be absent if masked).
-	 * Arbitrate per quad cleanly without locking across beats. */
-	wire [KW-1:0] pick = rr_pick;
-	wire pick_valid = |sk_v;
+	wire [K-1:0] next_rr_ge;
+	assign next_rr_ge[0] = pick_oh[K - 1];
+	generate
+		for (gk = 1; gk < K; gk = gk + 1) begin : g_tx_nrr
+			assign next_rr_ge[gk] = pick_oh[K - 1] || (|pick_oh[gk-1:0]);
+		end
+	endgenerate
 
 	wire out_in_ready;
 	wire fire = pick_valid && out_in_ready;
 
 	generate
 		for (gk = 0; gk < K; gk = gk + 1) begin : g_tx_rdy
-			assign sk_r[gk] = out_in_ready && (pick == gk[KW-1:0]);
+			assign sk_r[gk] = out_in_ready && pick_oh[gk];
 		end
 	endgenerate
 
-	localparam integer SL_W = 48;
+	localparam integer SL_W = 8;
 	localparam integer N_SL = (TX_W + SL_W - 1) / SL_W;
+	localparam integer N_M1 = (N_SL + 11) / 12;
+	wire [N_M1*K-1:0] sel_m1;
+	genvar gm1, gmk;
+	generate
+		for (gm1 = 0; gm1 < N_M1; gm1 = gm1 + 1) begin : g_tx_m1
+			for (gmk = 0; gmk < K; gmk = gmk + 1) begin : g_m1_k
+`ifdef SYNTH_KINTEX7
+				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_m1 (.I0(pick_oh[gmk]), .O(sel_m1[gm1*K + gmk]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				assign sel_m1[gm1*K + gmk] = pick_oh[gmk];
+`else
+				assign sel_m1[gm1*K + gmk] = pick_oh[gmk];
+`endif
+			end
+		end
+	endgenerate
 	wire [TX_W-1:0] mux_tx;
 	genvar gs;
 	generate
 		for (gs = 0; gs < N_SL; gs = gs + 1) begin : g_tx_mux
 			localparam integer B0 = gs * SL_W;
 			localparam integer BW = (B0 + SL_W <= TX_W) ? SL_W : (TX_W - B0);
-			(* max_fanout = 16 *) wire [KW-1:0] sel_sl = pick;
+			(* keep = "true" *) wire [K-1:0] sel_oh_sl;
+			for (gk = 0; gk < K; gk = gk + 1) begin : g_sel_buf
+`ifdef SYNTH_KINTEX7
+				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_sel (.I0(sel_m1[(gs / 12)*K + gk]), .O(sel_oh_sl[gk]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				assign sel_oh_sl[gk] = sel_m1[(gs / 12)*K + gk];
+`else
+				assign sel_oh_sl[gk] = sel_m1[(gs / 12)*K + gk];
+`endif
+			end
 			reg [BW-1:0] sl_v;
 			integer mi;
 			always @(*) begin
-				sl_v = sk_d_flat[B0 +: BW];
-				for (mi = 1; mi < K; mi = mi + 1)
-					if (sel_sl == mi[KW-1:0])
-						sl_v = sk_d_flat[mi*TX_W + B0 +: BW];
+				sl_v = {BW{1'b0}};
+				for (mi = 0; mi < K; mi = mi + 1)
+					if (sel_oh_sl[mi])
+						sl_v = sl_v | sk_d_flat[mi*TX_W + B0 +: BW];
 			end
 			assign mux_tx[B0 +: BW] = sl_v;
 		end
@@ -155,13 +184,13 @@ module atg_tx_rt #(
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
-			last_won <= {KW{1'b0}};
+			rr_ge_r <= {K{1'b1}};
 		end else if (fire) begin
-			last_won <= pick;
+			rr_ge_r <= next_rr_ge;
 		end
 	end
 
-	am_skid #(.WIDTH(TX_W), .RST_DATA(0)) u_tx_out_sk (
+	atg_ex_rt_skid #(.WIDTH(TX_W), .SL_S(7)) u_tx_out_sk (
 		.clk(clk), .rst_n(rst_n),
 		.in_valid(pick_valid), .in_ready(out_in_ready),
 		.in_data(mux_tx),
@@ -174,7 +203,7 @@ module atg_tx_rt #(
 	wire pr_v, pr_r;
 	wire [TR_W-1:0] pr_d;
 
-	am_skid #(.WIDTH(TR_W), .RST_DATA(0)) u_tr_in_sk (
+	atg_ex_rt_skid #(.WIDTH(TR_W), .SL_S(10)) u_tr_in_sk (
 		.clk(clk), .rst_n(rst_n),
 		.in_valid(p_tr_valid), .in_ready(p_tr_ready),
 		.in_data({p_tr_tag, p_tr_data, p_tr_last}),
@@ -190,7 +219,7 @@ module atg_tx_rt #(
 	generate
 		for (gk = 0; gk < K; gk = gk + 1) begin : g_tr_sk
 			wire [TR_W-1:0] c_out;
-			am_skid #(.WIDTH(TR_W), .RST_DATA(0)) u_tr_out_sk (
+			atg_ex_rt_skid #(.WIDTH(TR_W), .SL_S(10)) u_tr_out_sk (
 				.clk(clk), .rst_n(rst_n),
 				.in_valid(pr_v && (dst == gk[KW-1:0])), .in_ready(cr_in_r[gk]),
 				.in_data(pr_d),

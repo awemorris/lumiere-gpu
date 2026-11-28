@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -44,6 +44,17 @@ module atg_blt_acc #(
 	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_gr1 (.I0(go), .O(go_r1));
 	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_gce0 (.I0(go), .O(go_ce0));
 	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_gce1 (.I0(go), .O(go_ce1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign go_my = go;
+	assign go_idle = go;
+	assign go_ms0 = go;
+	assign go_ms1 = go;
+	assign go_ms_ce = go;
+	assign go_hi = go;
+	assign go_r0 = go;
+	assign go_r1 = go;
+	assign go_ce0 = go;
+	assign go_ce1 = go;
 `else
 	assign go_my = go;
 	assign go_idle = go;
@@ -82,6 +93,9 @@ module atg_blt_acc #(
 `ifdef SYNTH_KINTEX7
 	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ilo (.I0(idle_q), .O(idle_lo));
 	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ihi (.I0(idle_q), .O(idle_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign idle_lo = idle_q;
+	assign idle_hi = idle_q;
 `else
 	assign idle_lo = idle_q;
 	assign idle_hi = idle_q;

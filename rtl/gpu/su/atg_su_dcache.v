@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -119,6 +119,18 @@ module atg_su_dcache #(
 			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_v1 (.I0(u_req_line[grl]), .O(u_idx_v1[grl]));
 		end
 	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar grl;
+	generate
+		for (grl = 0; grl < LA_W; grl = grl + 1) begin : g_buf_rl
+			assign u_req_line_tag[grl] = u_req_line[grl];
+			assign u_req_line_reg[grl] = u_req_line[grl];
+		end
+		for (grl = 0; grl < IW; grl = grl + 1) begin : g_buf_v
+			assign u_idx_v0[grl] = u_req_line[grl];
+			assign u_idx_v1[grl] = u_req_line[grl];
+		end
+	endgenerate
 `else
 	assign u_req_line_tag = u_req_line;
 	assign u_req_line_reg = u_req_line;
@@ -132,9 +144,47 @@ module atg_su_dcache #(
 	(* keep = "true" *) wire [IW-1:0] u_idx_3 = u_req_line_tag[IW-1:0];
 	wire [TW-1:0] u_tag_rd = {tags_3[u_idx_3], tags_2[u_idx_2], tags_1[u_idx_1], tags_0[u_idx_0]};
 	wire [TW-1:0] u_tag_in = u_req_line_tag[LA_W-1:IW];
-	(* keep = "true", max_fanout = 12 *) wire [IW-1:0] q_idx_v = q_line[IW-1:0];
+	wire [LA_W-1:0] q_line_tag, q_line_mreq;
+	wire [IW-1:0] q_idx_v_rd, q_idx_v_wr;
+`ifdef SYNTH_KINTEX7
+	genvar gqb;
+	generate
+		for (gqb = 0; gqb < LA_W; gqb = gqb + 1) begin : g_ql_buf
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ql_m (.I0(q_line[gqb]), .O(q_line_mreq[gqb]));
+		end
+		for (gqb = 0; gqb < TW; gqb = gqb + 1) begin : g_qt_buf
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ql_t (.I0(q_line[IW+gqb]), .O(q_line_tag[IW+gqb]));
+		end
+		for (gqb = 0; gqb < IW; gqb = gqb + 1) begin : g_qi_buf
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_qi_r (.I0(q_line[gqb]), .O(q_idx_v_rd[gqb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_qi_w (.I0(q_line[gqb]), .O(q_idx_v_wr[gqb]));
+		end
+	endgenerate
+	assign q_line_tag[IW-1:0] = q_idx_v_rd;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar gqb;
+	generate
+		for (gqb = 0; gqb < LA_W; gqb = gqb + 1) begin : g_ql_buf
+			assign q_line_mreq[gqb] = q_line[gqb];
+		end
+		for (gqb = 0; gqb < TW; gqb = gqb + 1) begin : g_qt_buf
+			assign q_line_tag[IW+gqb] = q_line[IW+gqb];
+		end
+		for (gqb = 0; gqb < IW; gqb = gqb + 1) begin : g_qi_buf
+			assign q_idx_v_rd[gqb] = q_line[gqb];
+			assign q_idx_v_wr[gqb] = q_line[gqb];
+		end
+	endgenerate
+	assign q_line_tag[IW-1:0] = q_idx_v_rd;
+`else
+	assign q_line_tag  = q_line;
+	assign q_line_mreq = q_line;
+	assign q_idx_v_rd  = q_line[IW-1:0];
+	assign q_idx_v_wr  = q_line[IW-1:0];
+`endif
+	(* keep = "true", max_fanout = 12 *) wire [IW-1:0] q_idx_v = q_idx_v_rd;
 	wire [TW-1:0] q_tag_rd = {tags_3[q_idx_r3_r], tags_2[q_idx_r2_r], tags_1[q_idx_r1_r], tags_0[q_idx_r0_r]};
-	wire [TW-1:0] q_tag_in = q_line[LA_W-1:IW];
+	wire [TW-1:0] q_tag_in = q_line_tag[LA_W-1:IW];
 
 	/* Pure-LUT 3-bit chunk tag comparators (0 CARRY4s, 2 LUT levels) */
 	(* keep = "true" *) wire [N_TEQ-1:0] u_teq_g;
@@ -166,6 +216,10 @@ module atg_su_dcache #(
 	LUT1 #(.INIT(2'h2)) u_buf_rq_ctl (.O(u_req_valid_ctl), .I0(u_req_valid));
 	LUT1 #(.INIT(2'h2)) u_buf_rq_sl0 (.O(u_req_valid_sl0), .I0(u_req_valid));
 	LUT1 #(.INIT(2'h2)) u_buf_rq_sl1 (.O(u_req_valid_sl1), .I0(u_req_valid));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign u_req_valid_ctl = u_req_valid;
+	assign u_req_valid_sl0 = u_req_valid;
+	assign u_req_valid_sl1 = u_req_valid;
 `else
 	assign u_req_valid_ctl = u_req_valid;
 	assign u_req_valid_sl0 = u_req_valid;
@@ -194,13 +248,44 @@ module atg_su_dcache #(
 	wire [LB-1:0] q_old = d_q_pipe;
 	wire [LB-1:0] merged;
 	wire [LB-1:0] dc_wdata_in;
+	wire [LB-1:0] dc_wdata_r;
+	wire mrspv_ctl, mrspv_sl0, mrspv_sl1, mrspv_v0, mrspv_v1;
+	wire inv_ctl, inv_v0, inv_v1;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_mrv_c  (.I0(m_rsp_valid), .O(mrspv_ctl));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_mrv_s0 (.I0(m_rsp_valid), .O(mrspv_sl0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_mrv_s1 (.I0(m_rsp_valid), .O(mrspv_sl1));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_mrv_v0 (.I0(m_rsp_valid), .O(mrspv_v0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_mrv_v1 (.I0(m_rsp_valid), .O(mrspv_v1));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_inv_c  (.I0(inv),         .O(inv_ctl));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_inv_v0 (.I0(inv),         .O(inv_v0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_inv_v1 (.I0(inv),         .O(inv_v1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign mrspv_ctl = m_rsp_valid;
+	assign mrspv_sl0 = m_rsp_valid;
+	assign mrspv_sl1 = m_rsp_valid;
+	assign mrspv_v0 = m_rsp_valid;
+	assign mrspv_v1 = m_rsp_valid;
+	assign inv_ctl = inv;
+	assign inv_v0 = inv;
+	assign inv_v1 = inv;
+`else
+	assign mrspv_ctl = m_rsp_valid;
+	assign mrspv_sl0 = m_rsp_valid;
+	assign mrspv_sl1 = m_rsp_valid;
+	assign mrspv_v0  = m_rsp_valid;
+	assign mrspv_v1  = m_rsp_valid;
+	assign inv_ctl   = inv;
+	assign inv_v0    = inv;
+	assign inv_v1    = inv;
+`endif
 	genvar gsl, gvs, gvi;
 	generate
 		for (gsl = 0; gsl < N_SL; gsl = gsl + 1) begin : g_dc_sl
-			(* shreg_extract = "no" *) reg [15:0] q_wdata_sl, r_rdata_sl;
+			(* shreg_extract = "no" *) reg [15:0] q_wdata_sl, r_rdata_sl, dc_wdata_r_sl;
 			(* shreg_extract = "no" *) reg [1:0] q_be_sl;
 			(* keep = "true", max_fanout = 12 *) wire take_sl = (st == IDLE) && ((gsl < 8) ? u_req_valid_sl0 : u_req_valid_sl1);
-			(* keep = "true", max_fanout = 12 *) wire rsp_sl = (st == MWAIT) && m_rsp_valid;
+			(* keep = "true", max_fanout = 12 *) wire rsp_sl = (st == MWAIT) && ((gsl < (N_SL / 2)) ? mrspv_sl0 : mrspv_sl1);
 			(* keep = "true", max_fanout = 12 *) wire r_hit_sl = r_hit_s[gsl];
 			(* keep = "true", max_fanout = 12 *) wire q_wr_sl = q_write;
 			always @(posedge clk) begin
@@ -208,28 +293,52 @@ module atg_su_dcache #(
 					q_wdata_sl <= u_req_wdata[gsl*16 +: 16];
 					q_be_sl    <= u_req_be[gsl*2 +: 2];
 				end
-				if (rsp_sl)
-					r_rdata_sl <= m_rsp_rdata[gsl*16 +: 16];
+				if (rsp_sl) begin
+					r_rdata_sl    <= m_rsp_rdata[gsl*16 +: 16];
+					dc_wdata_r_sl <= q_wr_sl ? merged[gsl*16 +: 16] : m_rsp_rdata[gsl*16 +: 16];
+				end
 			end
 			assign q_wdata[gsl*16 +: 16] = q_wdata_sl;
 			assign q_be[gsl*2 +: 2]      = q_be_sl;
 			assign r_rdata[gsl*16 +: 16] = r_rdata_sl;
+			assign dc_wdata_r[gsl*16 +: 16] = dc_wdata_r_sl;
 			assign merged[gsl*16 +: 8] = q_be_sl[0] ? q_wdata_sl[7:0] : q_old[gsl*16 +: 8];
 			assign merged[gsl*16 + 8 +: 8] = q_be_sl[1] ? q_wdata_sl[15:8] : q_old[gsl*16 + 8 +: 8];
-			assign dc_wdata_in[gsl*16 +: 16] = q_wr_sl ? merged[gsl*16 +: 16] : m_rsp_rdata[gsl*16 +: 16];
+			assign dc_wdata_in[gsl*16 +: 16] = dc_wdata_r_sl;
 			assign u_rsp_rdata[gsl*16 +: 16] = r_hit_sl ? d_q_pipe[gsl*16 +: 16] : r_rdata_sl;
 		end
 		for (gvs = 0; gvs < V_SL; gvs = gvs + 1) begin : g_val_sl
-			(* keep = "true", max_fanout = 12 *) wire [IW-1:0] q_idx_v_sl = q_line[IW-1:0];
+			wire [IW-1:0] q_idx_v_sl;
+`ifdef SYNTH_KINTEX7
+			genvar gqvb;
+			for (gqvb = 0; gqvb < IW; gqvb = gqvb + 1) begin : g_qv_sl
+				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_qvs (.I0(q_idx_v_wr[gqvb]), .O(q_idx_v_sl[gqvb]));
+			end
+`elsif SYNTH_KINTEX_ULTRASCALE
+			genvar gqvb;
+			for (gqvb = 0; gqvb < IW; gqvb = gqvb + 1) begin : g_qv_sl
+				assign q_idx_v_sl[gqvb] = q_idx_v_wr[gqvb];
+			end
+`else
+			assign q_idx_v_sl = q_idx_v_wr;
+`endif
 			wire [35:0] q_idx_pad = {{(36-IW){1'b0}}, q_idx_v_sl};
-			(* keep = "true", max_fanout = 12 *) wire v_set_sl = (st == MWAIT) && m_rsp_valid && !m_rsp_error && !q_drop && !q_write &&
+			(* keep = "true", max_fanout = 12 *) wire v_set_sl = (st == MWAIT) && ((gvs < (V_SL / 2)) ? mrspv_v0 : mrspv_v1) && !m_rsp_error && !q_drop && !q_write &&
 				(q_idx_pad[35:3] == gvs);
+			wire inv_v_sl;
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ivsl (.I0((gvs < (V_SL / 2)) ? inv_v0 : inv_v1), .O(inv_v_sl));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign inv_v_sl = (gvs < (V_SL / 2)) ? inv_v0 : inv_v1;
+`else
+			assign inv_v_sl = inv;
+`endif
 			for (gvi = 0; gvi < V_SW; gvi = gvi + 1) begin : g_val_bit
 				reg valid_bit;
 				always @(posedge clk or posedge rst_p) begin
 					if (rst_p)
 						valid_bit <= 1'b0;
-					else if (inv)
+					else if (inv_v_sl)
 						valid_bit <= 1'b0;
 					else if (v_set_sl && (q_idx_pad[2:0] == gvi[2:0]))
 						valid_bit <= 1'b1;
@@ -239,32 +348,65 @@ module atg_su_dcache #(
 		end
 	endgenerate
 
-	(* keep = "true", max_fanout = 12 *) wire tag_we_0   = (st == MWAIT) && m_rsp_valid && !m_rsp_error && !q_drop && !inv && !q_write;
-	(* keep = "true", max_fanout = 12 *) wire tag_we_1   = (st == MWAIT) && m_rsp_valid && !m_rsp_error && !q_drop && !inv && !q_write;
-	(* keep = "true", max_fanout = 12 *) wire tag_we_2   = (st == MWAIT) && m_rsp_valid && !m_rsp_error && !q_drop && !inv && !q_write;
-	(* keep = "true", max_fanout = 12 *) wire tag_we_3   = (st == MWAIT) && m_rsp_valid && !m_rsp_error && !q_drop && !inv && !q_write;
-	(* keep = "true", max_fanout = 12 *) wire data_we_lo = (st == MWAIT) && m_rsp_valid && !m_rsp_error && !q_drop && !inv && (!q_write || q_hit);
-	(* keep = "true", max_fanout = 12 *) wire data_we_hi = (st == MWAIT) && m_rsp_valid && !m_rsp_error && !q_drop && !inv && (!q_write || q_hit);
+	(* keep = "true", dont_touch = "true" *) reg wr_tag_pend_0, wr_tag_pend_1, wr_tag_pend_2, wr_tag_pend_3;
+	(* keep = "true", dont_touch = "true" *) reg wr_data_pend_lo, wr_data_pend_hi;
+	wire wr_tag_next  = (st == MWAIT) && mrspv_ctl && !m_rsp_error && !q_drop && !inv_ctl && !q_write;
+	wire wr_data_next = (st == MWAIT) && mrspv_ctl && !m_rsp_error && !q_drop && !inv_ctl && (!q_write || q_hit);
+	always @(posedge clk or posedge rst_p) begin
+		if (rst_p) begin
+			wr_tag_pend_0   <= 1'b0;
+			wr_tag_pend_1   <= 1'b0;
+			wr_tag_pend_2   <= 1'b0;
+			wr_tag_pend_3   <= 1'b0;
+			wr_data_pend_lo <= 1'b0;
+			wr_data_pend_hi <= 1'b0;
+		end else begin
+			wr_tag_pend_0   <= wr_tag_next;
+			wr_tag_pend_1   <= wr_tag_next;
+			wr_tag_pend_2   <= wr_tag_next;
+			wr_tag_pend_3   <= wr_tag_next;
+			wr_data_pend_lo <= wr_data_next;
+			wr_data_pend_hi <= wr_data_next;
+		end
+	end
 	always @(posedge clk) begin
-		if (tag_we_0)
+		if (wr_tag_pend_0)
 			tags_0[q_idx_w0_r] <= q_line[IW +: TW0];
-		if (tag_we_1)
+		if (wr_tag_pend_1)
 			tags_1[q_idx_w1_r] <= q_line[IW + TW0 +: TW1];
-		if (tag_we_2)
+		if (wr_tag_pend_2)
 			tags_2[q_idx_w2_r] <= q_line[IW + TW0 + TW1 +: TW2];
-		if (tag_we_3)
+		if (wr_tag_pend_3)
 			tags_3[q_idx_w3_r] <= q_line[IW + TW0 + TW1 + TW2 +: TW3];
-		if (data_we_lo)
+		if (wr_data_pend_lo)
 			data_lo[q_idx_d_lo] <= dc_wdata_in[LB_HALF-1:0];
-		if (data_we_hi)
+		if (wr_data_pend_hi)
 			data_hi[q_idx_d_hi] <= dc_wdata_in[LB-1:LB_HALF];
 	end
 
-	(* keep = "true", max_fanout = 12 *) wire dc_idle_ce_0 = (st == IDLE) && u_req_valid_ctl;
-	(* keep = "true", max_fanout = 12 *) wire dc_idle_ce_1 = (st == IDLE) && u_req_valid_ctl;
-	(* keep = "true", max_fanout = 12 *) wire dc_idle_ce_2 = (st == IDLE) && u_req_valid_ctl;
-	(* keep = "true", max_fanout = 12 *) wire dc_idle_ce_3 = (st == IDLE) && u_req_valid_ctl;
-	(* keep = "true", max_fanout = 12 *) wire dc_idle_ce_4 = (st == IDLE) && u_req_valid_ctl;
+	wire dc_idle_ce_0, dc_idle_ce_1, dc_idle_ce_2, dc_idle_ce_3, dc_idle_ce_4, dc_idle_ce_5;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_dce0 (.I0((st == IDLE) && u_req_valid_ctl), .O(dc_idle_ce_0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_dce1 (.I0((st == IDLE) && u_req_valid_ctl), .O(dc_idle_ce_1));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_dce2 (.I0((st == IDLE) && u_req_valid_ctl), .O(dc_idle_ce_2));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_dce3 (.I0((st == IDLE) && u_req_valid_ctl), .O(dc_idle_ce_3));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_dce4 (.I0((st == IDLE) && u_req_valid_ctl), .O(dc_idle_ce_4));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_dce5 (.I0((st == IDLE) && u_req_valid_ctl), .O(dc_idle_ce_5));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign dc_idle_ce_0 = (st == IDLE) && u_req_valid_ctl;
+	assign dc_idle_ce_1 = (st == IDLE) && u_req_valid_ctl;
+	assign dc_idle_ce_2 = (st == IDLE) && u_req_valid_ctl;
+	assign dc_idle_ce_3 = (st == IDLE) && u_req_valid_ctl;
+	assign dc_idle_ce_4 = (st == IDLE) && u_req_valid_ctl;
+	assign dc_idle_ce_5 = (st == IDLE) && u_req_valid_ctl;
+`else
+	assign dc_idle_ce_0 = (st == IDLE) && u_req_valid_ctl;
+	assign dc_idle_ce_1 = (st == IDLE) && u_req_valid_ctl;
+	assign dc_idle_ce_2 = (st == IDLE) && u_req_valid_ctl;
+	assign dc_idle_ce_3 = (st == IDLE) && u_req_valid_ctl;
+	assign dc_idle_ce_4 = (st == IDLE) && u_req_valid_ctl;
+	assign dc_idle_ce_5 = (st == IDLE) && u_req_valid_ctl;
+`endif
 
 	always @(posedge clk or posedge rst_p) begin
 		if (rst_p) begin
@@ -311,10 +453,12 @@ module atg_su_dcache #(
 				q_idx_w0_r <= u_req_line_reg[IW-1:0];
 				q_idx_w1_r <= u_req_line_reg[IW-1:0];
 			end
-			case (st)
-			IDLE: if (take) begin
+			if (dc_idle_ce_5) begin
 				q_idx_w2_r <= u_req_line_reg[IW-1:0];
 				q_idx_w3_r <= u_req_line_reg[IW-1:0];
+			end
+			case (st)
+			IDLE: if (take) begin
 				q_drop <= 1'b0;
 				r_write <= u_req_write;
 				r_error <= 1'b0;
@@ -329,13 +473,13 @@ module atg_su_dcache #(
 				st <= RESP;
 			MREQ: if (m_req_ready)
 				st <= MWAIT;
-			MWAIT: if (m_rsp_valid) begin
+			MWAIT: if (mrspv_ctl) begin
 				r_error <= m_rsp_error;
 				st <= RESP;
 			end
 			default: st <= IDLE;
 			endcase
-			if (inv) begin
+			if (inv_ctl) begin
 				q_drop <= 1'b1;
 			end
 		end
@@ -348,7 +492,7 @@ module atg_su_dcache #(
 	assign u_rsp_error = r_error;
 	assign m_req_valid = st == MREQ;
 	assign m_req_write = q_write;
-	assign m_req_line = q_line;
+	assign m_req_line = q_line_mreq;
 	assign m_req_be = q_be;
 	assign m_req_wdata = q_wdata;
 	assign m_req_tag = q_tag;

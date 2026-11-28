@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -171,7 +171,7 @@ module atg_mc_tree #(
 			localparam PRIO_C = HIGH_MASK[c] ? 1 : 0;
 
 			(* dont_touch = "true" *) reg data_phase;
-			(* dont_touch = "true" *) reg data_phase_d;
+			(* dont_touch = "true" *) reg [1:0] data_phase_d;
 /* verilator lint_off SELRANGE */
 			wire outside_c = (VRAM_AW < ADDR_W) ?
 				(c_req_line[c*LA_W + LAW_C +: (LA_W - LAW_C > 0 ? LA_W - LAW_C : 1)] !=
@@ -192,24 +192,28 @@ module atg_mc_tree #(
 			always @(posedge clk or negedge rst_n) begin
 				if (!rst_n) begin
 					data_phase   <= 1'b0;
-					data_phase_d <= 1'b0;
+					data_phase_d <= 2'b00;
 				end else if (flush) begin
 					data_phase   <= 1'b0;
-					data_phase_d <= 1'b0;
+					data_phase_d <= 2'b00;
 				end else if (leaf_req_valid[J] && leaf_req_ready[J]) begin
 					data_phase   <= !leaf_req_last[J];
-					data_phase_d <= !leaf_req_last[J];
+					data_phase_d <= {2{!leaf_req_last[J]}};
 				end
 			end
 
-			wire [15:0] dp_b;
+			localparam NS_DP = (FW + 7) / 8;
+			wire [NS_DP-1:0] dp_b;
 			genvar gs_c;
-			for (gs_c = 0; gs_c < 16; gs_c = gs_c + 1) begin : g_dp_slice
+			for (gs_c = 0; gs_c < NS_DP; gs_c = gs_c + 1) begin : g_dp_slice
+				localparam B0_DP = gs_c * 8;
+				localparam BW_DP = (B0_DP + 8 <= FW) ? 8 : (FW - B0_DP);
+				localparam DP_G = (gs_c * 2) / NS_DP;
 				(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_dp (
-					.I0(data_phase_d), .O(dp_b[gs_c])
+					.I0(data_phase_d[DP_G]), .O(dp_b[gs_c])
 				);
-				assign leaf_req_data[J*FW + gs_c*16 +: 16] = dp_b[gs_c] ?
-					c_req_wdata[c*LB + gs_c*16 +: 16] : header_pad[gs_c*16 +: 16];
+				assign leaf_req_data[J*FW + B0_DP +: BW_DP] = dp_b[gs_c] ?
+					c_req_wdata[c*LB + B0_DP +: BW_DP] : header_pad[B0_DP +: BW_DP];
 			end
 
 			assign leaf_rsp_ready[J] = 1'b1;
@@ -218,6 +222,37 @@ module atg_mc_tree #(
 			assign c_rsp_error[c] = leaf_rsp_data[J*RFW + 1];
 			assign c_rsp_tag[c*8 +: 8] = leaf_rsp_data[J*RFW + 2 +: 8];
 			assign c_rsp_rdata[c*LB +: LB] = leaf_rsp_data[J*RFW + 10 + RW +: LB];
+`elsif SYNTH_KINTEX_ULTRASCALE
+			wire pre_req_valid, pre_req_ready, pre_req_last;
+			wire [FW-1:0] pre_req_data;
+			am_amb_to_rt #(
+				.ADDR_W(ADDR_W), .LINE_BYTES(LINE_BYTES), .LINE_SHIFT(LINE_SHIFT),
+				.VRAM_AW(VRAM_AW), .VRAM_BASE(VRAM_BASE), .RW(RW), .ROUTE(client_route(c)),
+				.CLIENT(C8), .CLIENT_HI(4'd0), .PRIO(HIGH_MASK[c] ? 1 : 0)
+			) leaf_cross (
+				.clk(clk), .rst_n(rst_n), .flush(flush), .hold(hold[c]),
+				.req_valid(c_req_valid[c]), .req_ready(c_req_ready[c]),
+				.req_write(c_req_write[c]), .req_line(c_req_line[c*LA_W +: LA_W]),
+				.req_be(c_req_be[c*LINE_BYTES +: LINE_BYTES]),
+				.req_wdata(c_req_wdata[c*LB +: LB]), .req_tag(c_req_tag[c*8 +: 8]),
+				.req_chk(c_req_chk[c]), .req_tbl(c_req_tbl[c]),
+				.req_slot(c_req_slot[c*6 +: 6]),
+				.req_session(4'd0), .req_exec_type(2'd0),
+				.rsp_valid(c_rsp_valid[c]), .rsp_write(c_rsp_write[c]),
+				.rsp_tag(c_rsp_tag[c*8 +: 8]), .rsp_rdata(c_rsp_rdata[c*LB +: LB]),
+				.rsp_error(c_rsp_error[c]),
+				.t_req_valid(pre_req_valid), .t_req_ready(pre_req_ready),
+				.t_req_data(pre_req_data), .t_req_last(pre_req_last),
+				.t_rsp_valid(leaf_rsp_valid[J]), .t_rsp_ready(leaf_rsp_ready[J]),
+				.t_rsp_data(leaf_rsp_data[J*RFW +: RFW])
+			);
+			am_skid #(.WIDTH(FW + 1)) u_leaf_skid (
+				.clk(clk), .rst_n(rst_n && !flush),
+				.in_valid(pre_req_valid), .in_ready(pre_req_ready),
+				.in_data({pre_req_last, pre_req_data}),
+				.out_valid(leaf_req_valid[J]), .out_ready(leaf_req_ready[J]),
+				.out_data({leaf_req_last[J], leaf_req_data[J*FW +: FW]})
+			);
 `else
 			wire pre_req_valid, pre_req_ready, pre_req_last;
 			wire [FW-1:0] pre_req_data;
@@ -339,10 +374,14 @@ module atg_mc_tree #(
 	end
 	wire grant_last = grant_last_mux;
 
-	genvar gs_m, gb_m;
+	localparam NG_MX = 12;
+	localparam NB_MX = 96;
+	localparam NS_MX = (FW + 3) / 4;
+	wire [CW-1:0] gidx_pre [0:NG_MX-1];
+	wire [CW-1:0] gidx_grp [0:NB_MX-1];
+	genvar gg_m, gb_m, gs_m, gl_m;
 	generate
-		for (gs_m = 0; gs_m < 16; gs_m = gs_m + 1) begin : g_mux_slice
-			wire [CW-1:0] gidx_b;
+		for (gg_m = 0; gg_m < NG_MX; gg_m = gg_m + 1) begin : g_mux_grp
 			if (NX == 2 && HIGH_MASK == 2'b00) begin : g_idx_nx2
 				(* DONT_TOUCH = "TRUE" *) LUT5 #(.INIT(32'hFF00C4C4)) u_gi (
 					.I0(leaf_req_valid[0]),
@@ -350,21 +389,166 @@ module atg_mc_tree #(
 					.I2(rr_ptr[0]),
 					.I3(locked_client[0]),
 					.I4(locked),
-					.O(gidx_b[0])
+					.O(gidx_pre[gg_m][0])
 				);
 			end else begin : g_idx_gen
-				assign gidx_b = grant_idx;
-			end
-			reg [15:0] slice_mux;
-			integer mx_s;
-			always @(*) begin
-				slice_mux = 16'd0;
-				for (mx_s = 0; mx_s < NX; mx_s = mx_s + 1) begin
-					if (gidx_b == mx_s[CW-1:0])
-						slice_mux = leaf_req_data[mx_s*FW + gs_m*16 +: 16];
+				for (gb_m = 0; gb_m < CW; gb_m = gb_m + 1) begin : g_gi_buf
+					(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_gib (.I0(grant_idx[gb_m]), .O(gidx_pre[gg_m][gb_m]));
 				end
 			end
-			assign grant_data[gs_m*16 +: 16] = slice_mux;
+		end
+		for (gl_m = 0; gl_m < NB_MX; gl_m = gl_m + 1) begin : g_mux_leaf
+			localparam PRE_G = (gl_m * NG_MX) / NB_MX;
+			for (gb_m = 0; gb_m < CW; gb_m = gb_m + 1) begin : g_gl_b
+				(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_glb (.I0(gidx_pre[PRE_G][gb_m]), .O(gidx_grp[gl_m][gb_m]));
+			end
+		end
+		for (gs_m = 0; gs_m < NS_MX; gs_m = gs_m + 1) begin : g_mux_slice
+			localparam B0_M = gs_m * 4;
+			localparam BW_M = (B0_M + 4 <= FW) ? 4 : (FW - B0_M);
+			localparam MX_G = (gs_m * NB_MX) / NS_MX;
+			wire [CW-1:0] gidx_b = gidx_grp[MX_G];
+			reg [BW_M-1:0] slice_mux;
+			integer mx_s;
+			always @(*) begin
+				slice_mux = {BW_M{1'b0}};
+				for (mx_s = 0; mx_s < NX; mx_s = mx_s + 1) begin
+					if (gidx_b == mx_s[CW-1:0])
+						slice_mux = leaf_req_data[mx_s*FW + B0_M +: BW_M];
+				end
+			end
+			assign grant_data[B0_M +: BW_M] = slice_mux;
+		end
+	endgenerate
+
+	generate
+	for (j = 0; j < NX; j = j + 1) begin : g_rdy
+		assign leaf_req_ready[j] = grant_v && (grant_idx == j[CW-1:0]) && skid_in_ready;
+	end
+	endgenerate
+
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			locked <= 1'b0;
+			locked_client <= {CW{1'b0}};
+			rr_ptr <= {CW{1'b0}};
+		end else if (flush) begin
+			locked <= 1'b0;
+			locked_client <= {CW{1'b0}};
+			rr_ptr <= {CW{1'b0}};
+		end else if (skid_fire) begin
+			if (!grant_last) begin
+				locked <= 1'b1;
+				locked_client <= grant_idx;
+			end else begin
+				locked <= 1'b0;
+				rr_ptr <= next_rr;
+			end
+		end
+	end
+`elsif SYNTH_KINTEX_ULTRASCALE
+	reg locked;
+	reg [CW-1:0] locked_client;
+	reg [CW-1:0] rr_ptr;
+
+	reg grant_v;
+	reg [CW-1:0] grant_idx;
+	integer k;
+
+	always @(*) begin
+		grant_v = 1'b0;
+		grant_idx = {CW{1'b0}};
+		if (locked) begin
+			grant_v = leaf_req_valid[locked_client];
+			grant_idx = locked_client;
+		end else if (|prio_req) begin
+			/* Priority Level 1: Strict priority */
+			grant_v = 1'b1;
+			for (k = NX - 1; k >= 0; k = k - 1) begin
+				if (prio_req[k])
+					grant_idx = k[CW-1:0];
+			end
+		end else if (|norm_req) begin
+			/* Priority Level 0: Round Robin */
+			grant_v = 1'b1;
+			for (k = NX - 1; k >= 0; k = k - 1) begin
+				if (k < rr_ptr && norm_req[k])
+					grant_idx = k[CW-1:0];
+			end
+			for (k = NX - 1; k >= 0; k = k - 1) begin
+				if (k >= rr_ptr && norm_req[k])
+					grant_idx = k[CW-1:0];
+			end
+		end
+	end
+
+	wire [CW:0] grant_plus1;
+	wire rr_co;
+	am_add #(.W(CW+1)) u_rr_add (
+		.a({1'b0, grant_idx}), .b({(CW+1){1'b0}}), .ci(1'b1),
+		.s(grant_plus1), .co(rr_co)
+	);
+	wire [CW-1:0] next_rr = (grant_plus1 >= NX[CW:0]) ? {CW{1'b0}} : grant_plus1[CW-1:0];
+
+	wire skid_in_ready;
+	wire skid_fire = grant_v && skid_in_ready;
+
+	wire [FW-1:0] grant_data;
+	reg grant_last_mux;
+	integer mxi;
+	always @(*) begin
+		grant_last_mux = 1'b0;
+		for (mxi = 0; mxi < NX; mxi = mxi + 1) begin
+			if (grant_idx == mxi[CW-1:0])
+				grant_last_mux = leaf_req_last[mxi];
+		end
+	end
+	wire grant_last = grant_last_mux;
+
+	localparam NG_MX = 12;
+	localparam NB_MX = 96;
+	localparam NS_MX = (FW + 3) / 4;
+	wire [CW-1:0] gidx_pre [0:NG_MX-1];
+	wire [CW-1:0] gidx_grp [0:NB_MX-1];
+	genvar gg_m, gb_m, gs_m, gl_m;
+	generate
+		for (gg_m = 0; gg_m < NG_MX; gg_m = gg_m + 1) begin : g_mux_grp
+			if (NX == 2 && HIGH_MASK == 2'b00) begin : g_idx_nx2
+				(* DONT_TOUCH = "TRUE" *) LUT5 #(.INIT(32'hFF00C4C4)) u_gi (
+					.I0(leaf_req_valid[0]),
+					.I1(leaf_req_valid[1]),
+					.I2(rr_ptr[0]),
+					.I3(locked_client[0]),
+					.I4(locked),
+					.O(gidx_pre[gg_m][0])
+				);
+			end else begin : g_idx_gen
+				for (gb_m = 0; gb_m < CW; gb_m = gb_m + 1) begin : g_gi_buf
+					assign gidx_pre[gg_m][gb_m] = grant_idx[gb_m];
+				end
+			end
+		end
+		for (gl_m = 0; gl_m < NB_MX; gl_m = gl_m + 1) begin : g_mux_leaf
+			localparam PRE_G = (gl_m * NG_MX) / NB_MX;
+			for (gb_m = 0; gb_m < CW; gb_m = gb_m + 1) begin : g_gl_b
+				assign gidx_grp[gl_m][gb_m] = gidx_pre[PRE_G][gb_m];
+			end
+		end
+		for (gs_m = 0; gs_m < NS_MX; gs_m = gs_m + 1) begin : g_mux_slice
+			localparam B0_M = gs_m * 4;
+			localparam BW_M = (B0_M + 4 <= FW) ? 4 : (FW - B0_M);
+			localparam MX_G = (gs_m * NB_MX) / NS_MX;
+			wire [CW-1:0] gidx_b = gidx_grp[MX_G];
+			reg [BW_M-1:0] slice_mux;
+			integer mx_s;
+			always @(*) begin
+				slice_mux = {BW_M{1'b0}};
+				for (mx_s = 0; mx_s < NX; mx_s = mx_s + 1) begin
+					if (gidx_b == mx_s[CW-1:0])
+						slice_mux = leaf_req_data[mx_s*FW + B0_M +: BW_M];
+				end
+			end
+			assign grant_data[B0_M +: BW_M] = slice_mux;
 		end
 	endgenerate
 
@@ -511,21 +695,23 @@ module atg_mc_tree #(
 		end
 	end
 
-	wire [1:0] sk_ov_g, sk_iv_g, sk_sv_g, sk_ir_g;
-	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sk_ov0 (.I0(sk_out_valid), .O(sk_ov_g[0]));
-	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sk_ov1 (.I0(sk_out_valid), .O(sk_ov_g[1]));
-	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sk_iv0 (.I0(grant_v),      .O(sk_iv_g[0]));
-	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sk_iv1 (.I0(grant_v),      .O(sk_iv_g[1]));
-	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sk_sv0 (.I0(sk_valid),     .O(sk_sv_g[0]));
-	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sk_sv1 (.I0(sk_valid),     .O(sk_sv_g[1]));
-	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sk_ir0 (.I0(sk_in_ready),  .O(sk_ir_g[0]));
-	(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sk_ir1 (.I0(sk_in_ready),  .O(sk_ir_g[1]));
+	wire [3:0] sk_ov_g, sk_iv_g, sk_sv_g, sk_ir_g;
+	genvar gg_k;
+	generate
+		for (gg_k = 0; gg_k < 4; gg_k = gg_k + 1) begin : g_sk_grp
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sk_ov (.I0(sk_out_valid), .O(sk_ov_g[gg_k]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sk_iv (.I0(grant_v),      .O(sk_iv_g[gg_k]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sk_sv (.I0(sk_valid),     .O(sk_sv_g[gg_k]));
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_sk_ir (.I0(sk_in_ready),  .O(sk_ir_g[gg_k]));
+		end
+	endgenerate
 
-	wire [16:0] sk_lo_b, sk_ls_b, sk_ss_b;
+	localparam NS_SK = (FW + 1 + 15) / 16;
+	wire [NS_SK-1:0] sk_lo_b, sk_ls_b, sk_ss_b;
 	genvar gs_k, gb_k;
 	generate
-		for (gs_k = 0; gs_k < 17; gs_k = gs_k + 1) begin : g_sk_slice
-			localparam GRP = (gs_k >= 9) ? 1 : 0;
+		for (gs_k = 0; gs_k < NS_SK; gs_k = gs_k + 1) begin : g_sk_slice
+			localparam GRP = (gs_k * 4) / NS_SK;
 			localparam B0 = gs_k * 16;
 			localparam BW = (B0 + 16 <= FW + 1) ? 16 : (FW + 1 - B0);
 			(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'hF8CC)) u_lo (
@@ -535,10 +721,104 @@ module atg_mc_tree #(
 			(* DONT_TOUCH = "TRUE" *) LUT2 #(.INIT(4'h8)) u_ls (
 				.I0(sk_iv_g[GRP]), .I1(sk_ir_g[GRP]), .O(sk_ls_b[gs_k])
 			);
-			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_ss (
-				.I0(sk_sv_g[GRP]), .O(sk_ss_b[gs_k])
+			wire sk_ss_b0, sk_ss_b1;
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_ss0 (
+				.I0(sk_sv_g[GRP]), .O(sk_ss_b0)
 			);
-			wire [BW-1:0] slice_next = sk_sv_g[GRP] ? sk_data[B0 +: BW] : sk_in_vec[B0 +: BW];
+			(* DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'h2)) u_ss1 (
+				.I0(sk_sv_g[GRP]), .O(sk_ss_b1)
+			);
+			wire [BW-1:0] slice_next;
+			if (BW > 8) begin : g_sn_hi
+				assign slice_next[7:0] = sk_ss_b0 ? sk_data[B0 +: 8] : sk_in_vec[B0 +: 8];
+				assign slice_next[BW-1:8] = sk_ss_b1 ? sk_data[B0+8 +: BW-8] : sk_in_vec[B0+8 +: BW-8];
+			end else begin : g_sn_lo
+				assign slice_next = sk_ss_b0 ? sk_data[B0 +: BW] : sk_in_vec[B0 +: BW];
+				wire unused_ss1 = sk_ss_b1;
+			end
+			assign sk_ss_b[gs_k] = sk_ss_b0;
+			always @(posedge clk) begin
+				if (sk_lo_b[gs_k])
+					sk_out_data[B0 +: BW] <= slice_next;
+				if (sk_ls_b[gs_k])
+					sk_data[B0 +: BW] <= sk_in_vec[B0 +: BW];
+			end
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	reg sk_in_ready, sk_out_valid, sk_valid;
+	reg [FW:0] sk_out_data, sk_data;
+	wire [FW:0] sk_in_vec = {grant_last, grant_data};
+
+	assign skid_in_ready = sk_in_ready;
+	assign r_req_valid = sk_out_valid;
+	assign {r_req_last, r_req_data} = sk_out_data;
+
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			sk_in_ready <= 1'b1;
+			sk_out_valid <= 1'b0;
+			sk_valid <= 1'b0;
+		end else if (flush) begin
+			sk_in_ready <= 1'b1;
+			sk_out_valid <= 1'b0;
+			sk_valid <= 1'b0;
+		end else begin
+			if (sk_valid) begin
+				if (r_req_ready) begin
+					sk_out_valid <= 1'b1;
+					sk_valid <= 1'b0;
+					sk_in_ready <= 1'b1;
+				end
+			end else begin
+				if (r_req_ready || !sk_out_valid) begin
+					sk_out_valid <= grant_v;
+				end else if (grant_v && sk_in_ready) begin
+					sk_valid <= 1'b1;
+					sk_in_ready <= 1'b0;
+				end
+			end
+		end
+	end
+
+	wire [3:0] sk_ov_g, sk_iv_g, sk_sv_g, sk_ir_g;
+	genvar gg_k;
+	generate
+		for (gg_k = 0; gg_k < 4; gg_k = gg_k + 1) begin : g_sk_grp
+			assign sk_ov_g[gg_k] = sk_out_valid;
+			assign sk_iv_g[gg_k] = grant_v;
+			assign sk_sv_g[gg_k] = sk_valid;
+			assign sk_ir_g[gg_k] = sk_in_ready;
+		end
+	endgenerate
+
+	localparam NS_SK = (FW + 1 + 15) / 16;
+	wire [NS_SK-1:0] sk_lo_b, sk_ls_b, sk_ss_b;
+	genvar gs_k, gb_k;
+	generate
+		for (gs_k = 0; gs_k < NS_SK; gs_k = gs_k + 1) begin : g_sk_slice
+			localparam GRP = (gs_k * 4) / NS_SK;
+			localparam B0 = gs_k * 16;
+			localparam BW = (B0 + 16 <= FW + 1) ? 16 : (FW + 1 - B0);
+			(* DONT_TOUCH = "TRUE" *) LUT4 #(.INIT(16'hF8CC)) u_lo (
+				.I0(sk_ov_g[GRP]), .I1(r_req_ready), .I2(sk_iv_g[GRP]), .I3(sk_sv_g[GRP]),
+				.O(sk_lo_b[gs_k])
+			);
+			(* DONT_TOUCH = "TRUE" *) LUT2 #(.INIT(4'h8)) u_ls (
+				.I0(sk_iv_g[GRP]), .I1(sk_ir_g[GRP]), .O(sk_ls_b[gs_k])
+			);
+			wire sk_ss_b0, sk_ss_b1;
+			assign sk_ss_b0 = sk_sv_g[GRP];
+			assign sk_ss_b1 = sk_sv_g[GRP];
+			wire [BW-1:0] slice_next;
+			if (BW > 8) begin : g_sn_hi
+				assign slice_next[7:0] = sk_ss_b0 ? sk_data[B0 +: 8] : sk_in_vec[B0 +: 8];
+				assign slice_next[BW-1:8] = sk_ss_b1 ? sk_data[B0+8 +: BW-8] : sk_in_vec[B0+8 +: BW-8];
+			end else begin : g_sn_lo
+				assign slice_next = sk_ss_b0 ? sk_data[B0 +: BW] : sk_in_vec[B0 +: BW];
+				wire unused_ss1 = sk_ss_b1;
+			end
+			assign sk_ss_b[gs_k] = sk_ss_b0;
 			always @(posedge clk) begin
 				if (sk_lo_b[gs_k])
 					sk_out_data[B0 +: BW] <= slice_next;
@@ -562,6 +842,18 @@ module atg_mc_tree #(
 	reg [RFW-1:0] rsp_reg_data;
 
 `ifdef SYNTH_KINTEX7
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			rsp_reg_v <= 1'b0;
+		else if (flush)
+			rsp_reg_v <= 1'b0;
+		else
+			rsp_reg_v <= r_rsp_valid;
+	end
+	always @(posedge clk) begin
+		rsp_reg_data <= r_rsp_data;
+	end
+`elsif SYNTH_KINTEX_ULTRASCALE
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n)
 			rsp_reg_v <= 1'b0;
@@ -601,6 +893,8 @@ module atg_mc_tree #(
 	endgenerate
 
 `ifdef SYNTH_KINTEX7
+	wire unused_co = &{1'b0, rr_co, leaf_rsp_ready};
+`elsif SYNTH_KINTEX_ULTRASCALE
 	wire unused_co = &{1'b0, rr_co, leaf_rsp_ready};
 `else
 	wire unused_co = &{1'b0, leaf_rsp_ready};

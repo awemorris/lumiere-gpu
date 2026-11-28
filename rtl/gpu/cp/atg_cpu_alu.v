@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -40,51 +40,71 @@ module atg_cpu_alu (
 	localparam [3:0] OP_PASS_B = 4'd10;
 
 	wire [4:0] sh = b[4:0];
-	/* Fast 4-chunk carry-select a - b and a + b (with borrow bit diff[32] for a < b unsigned). */
-	wire [7:0] d0, d1_0, d1_1, d2_0, d2_1;
-	wire [8:0] d3_0, d3_1;
-	wire bo0, bo1_0, bo1_1, bo2_0, bo2_1, bo3_0, bo3_1;
-	am_sub #(.W(8)) u_d0   (.a(a[7:0]),       .b(b[7:0]),       .bi(1'b0), .d(d0),   .bo(bo0));
-	am_sub #(.W(8)) u_d1_0 (.a(a[15:8]),      .b(b[15:8]),      .bi(1'b0), .d(d1_0), .bo(bo1_0));
-	am_sub #(.W(8)) u_d1_1 (.a(a[15:8]),      .b(b[15:8]),      .bi(1'b1), .d(d1_1), .bo(bo1_1));
-	am_sub #(.W(8)) u_d2_0 (.a(a[23:16]),     .b(b[23:16]),     .bi(1'b0), .d(d2_0), .bo(bo2_0));
-	am_sub #(.W(8)) u_d2_1 (.a(a[23:16]),     .b(b[23:16]),     .bi(1'b1), .d(d2_1), .bo(bo2_1));
-	am_sub #(.W(9)) u_d3_0 (.a({1'b0, a[31:24]}), .b({1'b0, b[31:24]}), .bi(1'b0), .d(d3_0), .bo(bo3_0));
-	am_sub #(.W(9)) u_d3_1 (.a({1'b0, a[31:24]}), .b({1'b0, b[31:24]}), .bi(1'b1), .d(d3_1), .bo(bo3_1));
-	wire bo1 = bo0 ? bo1_1 : bo1_0;
-	wire bo2 = bo2_0 | (bo2_1 & bo1_0) | (bo2_1 & bo1_1 & bo0);
-	wire [32:0] diff = {
-		bo2 ? d3_1 : d3_0,
-		bo1 ? d2_1 : d2_0,
-		bo0 ? d1_1 : d1_0,
-		d0
-	};
-	wire diff_bo = bo2 ? bo3_1 : bo3_0;
 
-	wire [7:0] s0, s1_0, s1_1, s2_0, s2_1, s3_0, s3_1;
-	wire co0, co1_0, co1_1, co2_0, co2_1, co3_0, co3_1;
-	am_add #(.W(8)) u_s0   (.a(a[7:0]),   .b(b[7:0]),   .ci(1'b0), .s(s0),   .co(co0));
-	am_add #(.W(8)) u_s1_0 (.a(a[15:8]),  .b(b[15:8]),  .ci(1'b0), .s(s1_0), .co(co1_0));
-	am_add #(.W(8)) u_s1_1 (.a(a[15:8]),  .b(b[15:8]),  .ci(1'b1), .s(s1_1), .co(co1_1));
-	am_add #(.W(8)) u_s2_0 (.a(a[23:16]), .b(b[23:16]), .ci(1'b0), .s(s2_0), .co(co2_0));
-	am_add #(.W(8)) u_s2_1 (.a(a[23:16]), .b(b[23:16]), .ci(1'b1), .s(s2_1), .co(co2_1));
-	am_add #(.W(8)) u_s3_0 (.a(a[31:24]), .b(b[31:24]), .ci(1'b0), .s(s3_0), .co(co3_0));
-	am_add #(.W(8)) u_s3_1 (.a(a[31:24]), .b(b[31:24]), .ci(1'b1), .s(s3_1), .co(co3_1));
-	wire co1 = co0 ? co1_1 : co1_0;
-	wire co2 = co2_0 | (co2_1 & co1_0) | (co2_1 & co1_1 & co0);
-	wire [31:0] sum = {
-		co2 ? s3_1 : s3_0,
-		co1 ? s2_1 : s2_0,
-		co0 ? s1_1 : s1_0,
-		s0
-	};
-	wire sum_co = co2 ? co3_1 : co3_0;
+	/* Pure-Boolean 32-bit alternating AOI/OAI Kogge-Stone adder (<= 8 cmos3, zero + operators). */
+	function [32:0] fn_ks_add32;
+		input [31:0] a_in;
+		input [31:0] b_in;
+		input ci_in;
+		reg [31:0] x0, g0_n, p0_n, g1, p1, g2_n, p2_n, g3, p3, g4_n, p4_n, g5, sum_w;
+		begin
+			x0      = a_in ^ b_in;
+			g0_n    = ~(a_in & b_in);
+			p0_n    = ~(a_in | b_in);
+			g0_n[0] = ~((a_in[0] & b_in[0]) | ((a_in[0] | b_in[0]) & ci_in));
+			g1      = ~(g0_n & (p0_n | {g0_n[30:0], 1'b1}));
+			p1      = ~(p0_n | {p0_n[30:0], 1'b1});
+			g2_n    = ~(g1 | (p1 & {g1[29:0], 2'b00}));
+			p2_n    = ~(p1 & {p1[29:0], 2'b00});
+			g3      = ~(g2_n & (p2_n | {g2_n[27:0], 4'hF}));
+			p3      = ~(p2_n | {p2_n[27:0], 4'hF});
+			g4_n    = ~(g3 | (p3 & {g3[23:0], 8'h00}));
+			p4_n    = ~(p3 & {p3[23:0], 8'h00});
+			g5      = ~(g4_n & (p4_n | {g4_n[15:0], 16'hFFFF}));
+			sum_w   = x0 ^ {g5[30:0], ci_in};
+			fn_ks_add32 = {g5[31], sum_w};
+		end
+	endfunction
 
-	wire [31:0] shifted;
-	/* SLL, SRL and SRA share one shifter. */
-	am_shift #(.W(32), .SW(5)) shifter (
-		.a(a), .amt(sh), .left(op == OP_SLL), .arith(op == OP_SRA), .y(shifted)
-	);
+	wire [32:0] sum_res  = fn_ks_add32(a,  b, 1'b0);
+	wire [32:0] diff_res = fn_ks_add32(a, ~b, 1'b1);
+	wire [31:0] sum_w    = sum_res[31:0];
+	wire [31:0] diff_w   = diff_res[31:0];
+	wire        sum_co   = sum_res[32];
+	wire        diff_co  = diff_res[32];
+
+	/* Direct 2-mux cascade shifter (sh[2:0] 3-stage 2:1 -> sh[4:3] 2-stage 2:1, shallowest cmos3). */
+	reg [31:0] sl1, sl2, sl4, sl8, sh_left;
+	reg [31:0] srl1, srl2, srl4, srl8, sh_srl;
+	reg [31:0] sra1, sra2, sra4, sra8, sh_sra;
+	integer si;
+	always @(*) begin
+		for (si = 0; si < 32; si = si + 1) begin
+			sl1[si]  = sh[0] ? ((si >= 1) ? a[si-1] : 1'b0) : a[si];
+			srl1[si] = sh[0] ? ((si + 1 < 32) ? a[si+1] : 1'b0) : a[si];
+			sra1[si] = sh[0] ? ((si + 1 < 32) ? a[si+1] : a[31]) : a[si];
+		end
+		for (si = 0; si < 32; si = si + 1) begin
+			sl2[si]  = sh[1] ? ((si >= 2) ? sl1[si-2] : 1'b0) : sl1[si];
+			srl2[si] = sh[1] ? ((si + 2 < 32) ? srl1[si+2] : 1'b0) : srl1[si];
+			sra2[si] = sh[1] ? ((si + 2 < 32) ? sra1[si+2] : a[31]) : sra1[si];
+		end
+		for (si = 0; si < 32; si = si + 1) begin
+			sl4[si]  = sh[2] ? ((si >= 4) ? sl2[si-4] : 1'b0) : sl2[si];
+			srl4[si] = sh[2] ? ((si + 4 < 32) ? srl2[si+4] : 1'b0) : srl2[si];
+			sra4[si] = sh[2] ? ((si + 4 < 32) ? sra2[si+4] : a[31]) : sra2[si];
+		end
+		for (si = 0; si < 32; si = si + 1) begin
+			sl8[si]  = sh[3] ? ((si >= 8) ? sl4[si-8] : 1'b0) : sl4[si];
+			srl8[si] = sh[3] ? ((si + 8 < 32) ? srl4[si+8] : 1'b0) : srl4[si];
+			sra8[si] = sh[3] ? ((si + 8 < 32) ? sra4[si+8] : a[31]) : sra4[si];
+		end
+		for (si = 0; si < 32; si = si + 1) begin
+			sh_left[si] = sh[4] ? ((si >= 16) ? sl8[si-16] : 1'b0) : sl8[si];
+			sh_srl[si]  = sh[4] ? ((si + 16 < 32) ? srl8[si+16] : 1'b0) : srl8[si];
+			sh_sra[si]  = sh[4] ? ((si + 16 < 32) ? sra8[si+16] : a[31]) : sra8[si];
+		end
+	end
 
 	wire [3:0] eq_b = {
 		a[31:24] == b[31:24],
@@ -92,36 +112,35 @@ module atg_cpu_alu (
 		a[15:8]  == b[15:8],
 		a[7:0]   == b[7:0]
 	};
-	wire [3:0] lt_b = {
-		a[31:24] < b[31:24],
-		a[23:16] < b[23:16],
-		a[15:8]  < b[15:8],
-		a[7:0]   < b[7:0]
-	};
 	assign eq = &eq_b;
-	assign ltu = lt_b[3] || (eq_b[3] && lt_b[2]) || (eq_b[3] && eq_b[2] && lt_b[1]) ||
-		(eq_b[3] && eq_b[2] && eq_b[1] && lt_b[0]);
+	assign ltu = ~diff_co;
 	/* Signed: different signs -> a's sign; equal signs -> the unsigned result. */
 	assign lt = (a[31] != b[31]) ? a[31] : ltu;
 
+	wire op_add   = (op == OP_ADD);
+	wire op_sub   = (op == OP_SUB);
+	wire op_sll   = (op == OP_SLL);
+	wire op_slt   = (op == OP_SLT);
+	wire op_sltu  = (op == OP_SLTU);
+	wire op_xor   = (op == OP_XOR);
+	wire op_srl   = (op == OP_SRL);
+	wire op_sra   = (op == OP_SRA);
+	wire op_or    = (op == OP_OR);
+	wire op_and   = (op == OP_AND);
+	wire op_passb = (op == OP_PASS_B);
+
+	wire [31:0] y_shift = ({32{op_sll}} & sh_left) | ({32{op_srl}} & sh_srl) | ({32{op_sra}} & sh_sra);
+	wire [31:0] y_logic = ({32{op_xor}} & (a ^ b)) | ({32{op_or}} & (a | b)) |
+	                      ({32{op_and}} & (a & b)) | ({32{op_passb}} & b);
+	wire [31:0] y_cmp   = {31'd0, (op_slt & lt) | (op_sltu & ltu)};
+	wire [31:0] y_fast  = y_shift | y_logic | y_cmp;
+	wire [31:0] y_arith_n = ~(({32{op_add}} & sum_w) | ({32{op_sub}} & diff_w));
+
 	always @(*) begin
-		case (op)
-		OP_ADD: y = sum;
-		OP_SUB: y = diff[31:0];
-		OP_SLL: y = shifted;
-		OP_SLT: y = {31'd0, lt};
-		OP_SLTU: y = {31'd0, ltu};
-		OP_XOR: y = a ^ b;
-		OP_SRL: y = shifted;
-		OP_SRA: y = shifted;
-		OP_OR: y = a | b;
-		OP_AND: y = a & b;
-		OP_PASS_B: y = b;
-		default: y = 32'd0;
-		endcase
+		y = ~(y_arith_n & ~y_fast);
 	end
 
-	wire unused_ok = &{1'b0, diff[32], diff_bo, sum_co};
+	wire unused_ok = &{1'b0, sum_co};
 endmodule
 
 `default_nettype wire

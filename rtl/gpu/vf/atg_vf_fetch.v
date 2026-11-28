@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -90,25 +90,51 @@ module atg_vf_fetch #(
 	genvar gb, gc;
 	generate
 		for (gb = 0; gb < 32; gb = gb + 1) begin : g_wd_buf32
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_wb  (.O(st_wd_base[gb]), .I0(st_wdata[gb]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_wd  (.O(st_wd_desc[gb]), .I0(st_wdata[gb]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_wl  (.O(st_wd_lim[gb]),  .I0(st_wdata[gb]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign st_wd_base[gb] = st_wdata[gb];
+			assign st_wd_desc[gb] = st_wdata[gb];
+			assign st_wd_lim[gb] = st_wdata[gb];
+`else
 			assign st_wd_base[gb] = st_wdata[gb];
 			assign st_wd_desc[gb] = st_wdata[gb];
 			assign st_wd_lim[gb]  = st_wdata[gb];
-
+`endif
 		end
 		for (gb = 0; gb < 8; gb = gb + 1) begin : g_wd_buf8
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_wvk (.O(st_wd_vk[gb]),   .I0(st_wdata[24 + gb]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign st_wd_vk[gb] = st_wdata[24 + gb];
+`else
 			assign st_wd_vk[gb]   = st_wdata[24 + gb];
-
+`endif
 		end
 		for (gb = 0; gb < 4; gb = gb + 1) begin : g_st_ctrl_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_swe (.O(st_we_b[gb]), .I0(st_we));
+`elsif SYNTH_KINTEX_ULTRASCALE
 			assign st_we_b[gb] = st_we;
-
+`else
+			assign st_we_b[gb] = st_we;
+`endif
 			for (gc = 0; gc < 9; gc = gc + 1) begin : g_idx
-
+`ifdef SYNTH_KINTEX7
+				(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+				LUT1 #(.INIT(2'b10)) u_si (.O(st_idx_b[gb][gc]), .I0(st_idx[gc]));
+`elsif SYNTH_KINTEX_ULTRASCALE
 				assign st_idx_b[gb][gc] = st_idx[gc];
-
+`else
+				assign st_idx_b[gb][gc] = st_idx[gc];
+`endif
 			end
 		end
 	endgenerate
@@ -130,10 +156,18 @@ module atg_vf_fetch #(
 	wire [15:0] we_dst;
 	wire [15:0] we_lim_lo, we_lim_hi;
 
-
+`ifdef SYNTH_KINTEX7
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+	LUT1 #(.INIT(2'b10)) u_wf0 (.O(we_finst_b[0]), .I0(we_finst));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+	LUT1 #(.INIT(2'b10)) u_wf1 (.O(we_finst_b[1]), .I0(we_finst));
+`elsif SYNTH_KINTEX_ULTRASCALE
 	assign we_finst_b[0] = we_finst;
 	assign we_finst_b[1] = we_finst;
-
+`else
+	assign we_finst_b[0] = we_finst;
+	assign we_finst_b[1] = we_finst;
+`endif
 
 	generate
 		for (gb = 0; gb < 16; gb = gb + 1) begin : g_attr_we
@@ -145,14 +179,34 @@ module atg_vf_fetch #(
 			wire ws = st_we_b[B] && (st_idx_b[B][8:4] == GHCI_S_ATTR_DST[8:4])   && (st_idx_b[B][3:0] == gb[3:0]);
 			wire wl = st_we_b[B] && (st_idx_b[B][8:4] == GHCI_S_ATTR_LIMIT[8:4]) && (st_idx_b[B][3:0] == gb[3:0]);
 			assign we_dst[gb] = ws;
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_wbl (.O(we_base_lo[gb]), .I0(wb));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_wbh (.O(we_base_hi[gb]), .I0(wb));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_wdl (.O(we_desc_lo[gb]), .I0(wd));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_wdh (.O(we_desc_hi[gb]), .I0(wd));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_wll (.O(we_lim_lo[gb]),  .I0(wl));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_wlh (.O(we_lim_hi[gb]),  .I0(wl));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign we_base_lo[gb] = wb;
+			assign we_base_hi[gb] = wb;
+			assign we_desc_lo[gb] = wd;
+			assign we_desc_hi[gb] = wd;
+			assign we_lim_lo[gb] = wl;
+			assign we_lim_hi[gb] = wl;
+`else
 			assign we_base_lo[gb] = wb;
 			assign we_base_hi[gb] = wb;
 			assign we_desc_lo[gb] = wd;
 			assign we_desc_hi[gb] = wd;
 			assign we_lim_lo[gb]  = wl;
 			assign we_lim_hi[gb]  = wl;
-
+`endif
 		end
 	endgenerate
 
@@ -265,6 +319,7 @@ module atg_vf_fetch #(
 	reg st_is_data;
 	reg st_is_rd;
 	reg st_is_sh1;
+	(* KEEP = "TRUE", equivalent_register_removal = "no" *) reg st_is_sh1_b;
 	reg st_is_sh2;
 	reg st_is_sh3;
 	reg st_is_emit;
@@ -278,11 +333,13 @@ module atg_vf_fetch #(
 	reg [15:0] rem_next_r;
 	reg        rem_next_z_r;
 	reg [3:0]  k_r;
+	(* KEEP = "TRUE", equivalent_register_removal = "no" *) reg [1:0]  k_r_b;
+	(* KEEP = "TRUE", equivalent_register_removal = "no" *) reg [31:0] k_r_stag_vec;
 	reg [3:0]  next_k_r;
 
 	/*
 	 * 2-level LUT1 buffer tree for k_r[3:0]:
-	 * Level 1: 8 LUT1s per bit of k_r[1:0], 1 LUT1 per bit of k_r[3:2]
+	 * Level 1: 8 LUT1s per bit of k_r[1:0] (driven by k_r/k_r_b FFs), 1 LUT1 per bit of k_r[3:2]
 	 * Level 2: 36 LUT1s per bit of k_r[1:0] (k_lo_b[0..35], each fanout <= 16),
 	 *          7 LUT1s per bit of k_r[3:2]  (k_hi_b[0..6],  each fanout <= 16).
 	 */
@@ -293,23 +350,57 @@ module atg_vf_fetch #(
 
 	generate
 		for (gb = 0; gb < 8; gb = gb + 1) begin : g_klo_l1
-
-			assign k_lo_l1[gb] = k_r[1:0];
-
+			wire kl0_s0 = (gb < 4) ? k_r[0] : k_r_b[0];
+			wire kl0_s1 = (gb < 4) ? k_r[1] : k_r_b[1];
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_kl1_0 (.O(k_lo_l1[gb][0]), .I0(kl0_s0));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_kl1_1 (.O(k_lo_l1[gb][1]), .I0(kl0_s1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign k_lo_l1[gb][0] = kl0_s0;
+			assign k_lo_l1[gb][1] = kl0_s1;
+`else
+			assign k_lo_l1[gb] = {kl0_s1, kl0_s0};
+`endif
 		end
-
+`ifdef SYNTH_KINTEX7
+		(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+		LUT1 #(.INIT(2'b10)) u_kh1_0 (.O(k_hi_l1[0]), .I0(k_r[2]));
+		(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+		LUT1 #(.INIT(2'b10)) u_kh1_1 (.O(k_hi_l1[1]), .I0(k_r[3]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign k_hi_l1[0] = k_r[2];
+		assign k_hi_l1[1] = k_r[3];
+`else
 		assign k_hi_l1 = k_r[3:2];
-
+`endif
 		for (gb = 0; gb < 36; gb = gb + 1) begin : g_klo_l2
 			localparam integer L1G = gb / 8;
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_kl2_0 (.O(k_lo_b[gb][0]), .I0(k_lo_l1[L1G][0]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_kl2_1 (.O(k_lo_b[gb][1]), .I0(k_lo_l1[L1G][1]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign k_lo_b[gb][0] = k_lo_l1[L1G][0];
+			assign k_lo_b[gb][1] = k_lo_l1[L1G][1];
+`else
 			assign k_lo_b[gb] = k_lo_l1[L1G];
-
+`endif
 		end
 		for (gb = 0; gb < 7; gb = gb + 1) begin : g_khi_l2
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_kh2_0 (.O(k_hi_b[gb][0]), .I0(k_hi_l1[0]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_kh2_1 (.O(k_hi_b[gb][1]), .I0(k_hi_l1[1]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign k_hi_b[gb][0] = k_hi_l1[0];
+			assign k_hi_b[gb][1] = k_hi_l1[1];
+`else
 			assign k_hi_b[gb] = k_hi_l1;
-
+`endif
 		end
 	endgenerate
 
@@ -374,7 +465,7 @@ module atg_vf_fetch #(
 	wire memo_num_eq_w = &m_eq_c;
 
 	/* Multiplier (LAT=3) and Address / Bound */
-	reg [31:0] elem;
+	(* max_fanout = 16 *) reg [31:0] elem;
 	wire [47:0] el_x;
 	reg [47:0] boff;
 	reg [31:0] addr;
@@ -388,7 +479,6 @@ module atg_vf_fetch #(
 
 	wire [31:0] ad_s;
 	wire [31:0] bend32_s;
-	wire [30:0] lim_diff_unused;
 	wire        lim_lt_bend;
 	wire ad_co_unused, bnd_co_unused;
 	am_add #(.W(32)) ad    (.a(cur_base),          .b(boff[31:0]),          .ci(1'b0), .s(ad_s),     .co(ad_co_unused));
@@ -398,7 +488,38 @@ module atg_vf_fetch #(
 `else
 	localparam LIM_BI = 1'b0;
 `endif
-	am_sub #(.W(31)) u_lim_cmp (.a(cur_lim[30:0]), .b(bend32_r[30:0]), .bi(LIM_BI), .d(lim_diff_unused), .bo(lim_lt_bend));
+	/* 8-chunk parallel comparator for cur_lim[30:0] < bend32_r[30:0] (+1 if LIM_BI) */
+	wire [7:0] lim_neq, lim_nlt;
+	wire [31:0] lim_a32 = {1'b0, cur_lim[30:0]};
+	wire [31:0] lim_b32 = {1'b0, bend32_r[30:0]};
+	genvar glc;
+	generate
+	for (glc = 0; glc < 8; glc = glc + 1) begin : g_lim_cmp
+		wire [3:0] la = lim_a32[glc*4 +: 4];
+		wire [3:0] lb = lim_b32[glc*4 +: 4];
+		wire [3:0] lx = ~(la ^ lb);
+		assign lim_neq[glc] = &lx;
+		assign lim_nlt[glc] = (!la[3] && lb[3]) ||
+		                      (lx[3] && !la[2] && lb[2]) ||
+		                      (lx[3] && lx[2] && !la[1] && lb[1]) ||
+		                      (lx[3] && lx[2] && lx[1] && !la[0] && lb[0]);
+	end
+	endgenerate
+	wire [3:0] lim_peq, lim_plt;
+	assign lim_peq[0] = lim_neq[1] && lim_neq[0];
+	assign lim_peq[1] = lim_neq[3] && lim_neq[2];
+	assign lim_peq[2] = lim_neq[5] && lim_neq[4];
+	assign lim_peq[3] = lim_neq[7] && lim_neq[6];
+	assign lim_plt[0] = lim_nlt[1] || (lim_neq[1] && (lim_nlt[0] || (LIM_BI && lim_neq[0])));
+	assign lim_plt[1] = lim_nlt[3] || (lim_neq[3] && lim_nlt[2]);
+	assign lim_plt[2] = lim_nlt[5] || (lim_neq[5] && lim_nlt[4]);
+	assign lim_plt[3] = lim_nlt[7] || (lim_neq[7] && lim_nlt[6]);
+	wire lim_qeq_lo = lim_peq[1] && lim_peq[0];
+	wire lim_qeq_hi = lim_peq[3] && lim_peq[2];
+	wire lim_qlt_lo = lim_plt[1] || (lim_peq[1] && lim_plt[0]);
+	wire lim_qlt_hi = lim_plt[3] || (lim_peq[3] && lim_plt[2]);
+	assign lim_lt_bend = lim_qlt_hi || (lim_qeq_hi && lim_qlt_lo);
+	wire unused_lim_qeq_lo = lim_qeq_lo;
 
 	(* keep = "true" *) wire [2:0] boff_hi_c;
 	assign boff_hi_c[0] = |boff[36:31];
@@ -425,24 +546,48 @@ module atg_vf_fetch #(
 	endgenerate
 
 	/* LUT1 buffers for off_r into sh1_r, sh2_r, af_raw_r (fanout <= 16) */
-	wire [2:0] off_hi_b [0:11];
+	wire [2:0] off_hi_b [0:23];
 	wire [1:0] off_21_b [0:8];
 	wire       off_0_b  [0:7];
 	generate
-		for (gb = 0; gb < 12; gb = gb + 1) begin : g_offhi_buf
-
+		for (gb = 0; gb < 24; gb = gb + 1) begin : g_offhi_buf
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_oh0 (.O(off_hi_b[gb][0]), .I0(off_hi[0]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_oh1 (.O(off_hi_b[gb][1]), .I0(off_hi[1]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_oh2 (.O(off_hi_b[gb][2]), .I0(off_hi[2]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign off_hi_b[gb][0] = off_hi[0];
+			assign off_hi_b[gb][1] = off_hi[1];
+			assign off_hi_b[gb][2] = off_hi[2];
+`else
 			assign off_hi_b[gb] = off_hi;
-
+`endif
 		end
 		for (gb = 0; gb < 9; gb = gb + 1) begin : g_off21_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_o21_0 (.O(off_21_b[gb][0]), .I0(off_r[1]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_o21_1 (.O(off_21_b[gb][1]), .I0(off_r[2]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign off_21_b[gb][0] = off_r[1];
+			assign off_21_b[gb][1] = off_r[2];
+`else
 			assign off_21_b[gb] = off_r[2:1];
-
+`endif
 		end
 		for (gb = 0; gb < 8; gb = gb + 1) begin : g_off0_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_o0 (.O(off_0_b[gb]), .I0(off_r[0]));
+`elsif SYNTH_KINTEX_ULTRASCALE
 			assign off_0_b[gb] = off_r[0];
-
+`else
+			assign off_0_b[gb] = off_r[0];
+`endif
 		end
 	endgenerate
 
@@ -477,10 +622,7 @@ module atg_vf_fetch #(
 	wire [1:0] s_str_stag_b [0:15];
 	generate
 		for (gb = 0; gb < 16; gb = gb + 1) begin : g_str_stag_buf
-			localparam integer L1G = gb / 4;
-
-			assign s_str_stag_b[gb] = k_lo_l1[L1G];
-
+			assign s_str_stag_b[gb] = k_r_stag_vec[gb*2 +: 2];
 		end
 	endgenerate
 
@@ -589,8 +731,20 @@ module atg_vf_fetch #(
 	reg [2:0]  f1_idx_r, f2_idx_r;
 
 	wire [2:0] rr0_b;
-
+`ifdef SYNTH_KINTEX7
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+	LUT1 #(.INIT(2'b10)) u_rr0_0 (.O(rr0_b[0]), .I0(rr0_r[0]));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+	LUT1 #(.INIT(2'b10)) u_rr0_1 (.O(rr0_b[1]), .I0(rr0_r[1]));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+	LUT1 #(.INIT(2'b10)) u_rr0_2 (.O(rr0_b[2]), .I0(rr0_r[2]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign rr0_b[0] = rr0_r[0];
+	assign rr0_b[1] = rr0_r[1];
+	assign rr0_b[2] = rr0_r[2];
+`else
 	assign rr0_b = rr0_r;
+`endif
 
 	wire       f2_v_r = (f1_idx_r != f2_idx_r);
 	wire [2:0] rr1_w;
@@ -621,7 +775,8 @@ module atg_vf_fetch #(
 	reg            rq_pend;
 	reg [7:0]      rq_tag;
 	reg [LA_W-1:0] rq_line;
-	assign req_valid = rq_pend;
+	(* keep = "true" *) reg rq_pend_ext;
+	assign req_valid = rq_pend_ext;
 	assign req_write = 1'b0;
 	assign req_line  = rq_line;
 	assign req_be    = {LINE_BYTES{1'b0}};
@@ -634,13 +789,33 @@ module atg_vf_fetch #(
 	reg [4:0]  rsp_done_idx_r;
 	wire [NPG-1:0] rsp_err_b;
 	(* keep = "true" *) wire [NP2L1-1:0] rsp_err_l1;
+`ifdef SYNTH_KINTEX7
+	generate
+		for (gb = 0; gb < NP2L1; gb = gb + 1) begin : g_rsperr_l1
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_rel1 (.O(rsp_err_l1[gb]), .I0(rsp_error));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	generate
+		for (gb = 0; gb < NP2L1; gb = gb + 1) begin : g_rsperr_l1
+			assign rsp_err_l1[gb] = rsp_error;
+		end
+	endgenerate
+`else
 	assign rsp_err_l1 = {NP2L1{rsp_error}};
+`endif
 
 	generate
 		for (gb = 0; gb < NPG; gb = gb + 1) begin : g_rsperr_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_reb (.O(rsp_err_b[gb]), .I0(rsp_err_l1[gb / 8]));
+`elsif SYNTH_KINTEX_ULTRASCALE
 			assign rsp_err_b[gb] = rsp_err_l1[gb / 8];
-
+`else
+			assign rsp_err_b[gb] = rsp_err_l1[gb / 8];
+`endif
 		end
 	endgenerate
 
@@ -661,26 +836,74 @@ module atg_vf_fetch #(
 	wire [1:0]   sstr_bank_b [0:NBANKS-1];
 
 	generate
-
+`ifdef SYNTH_KINTEX7
+		for (gb = 0; gb < NP2L1; gb = gb + 1) begin : g_p2l1_buf
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_p2l1 (.O(p2_l1[gb]), .I0(st_is_plan2));
+		end
+`elsif SYNTH_KINTEX_ULTRASCALE
+		for (gb = 0; gb < NP2L1; gb = gb + 1) begin : g_p2l1_buf
+			assign p2_l1[gb] = st_is_plan2;
+		end
+`else
 		assign p2_l1 = {NP2L1{st_is_plan2}};
-
+`endif
 		for (gb = 0; gb < NBANKS; gb = gb + 1) begin : g_ram_bank_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_rdr (.O(rd_rsp_bank_b[gb]), .I0(rd_rsp));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_s1_0 (.O(sel1_bank_b[gb][0]), .I0(sel1_calc[0]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_s1_1 (.O(sel1_bank_b[gb][1]), .I0(sel1_calc[1]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_s1_2 (.O(sel1_bank_b[gb][2]), .I0(sel1_calc[2]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_s2_0 (.O(sel2_bank_b[gb][0]), .I0(sel2_calc[0]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_s2_1 (.O(sel2_bank_b[gb][1]), .I0(sel2_calc[1]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_s2_2 (.O(sel2_bank_b[gb][2]), .I0(sel2_calc[2]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_ss_0 (.O(sstr_bank_b[gb][0]), .I0(k_lo_l1[gb][0]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_ss_1 (.O(sstr_bank_b[gb][1]), .I0(k_lo_l1[gb][1]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign rd_rsp_bank_b[gb] = rd_rsp;
+			assign sel1_bank_b[gb][0] = sel1_calc[0];
+			assign sel1_bank_b[gb][1] = sel1_calc[1];
+			assign sel1_bank_b[gb][2] = sel1_calc[2];
+			assign sel2_bank_b[gb][0] = sel2_calc[0];
+			assign sel2_bank_b[gb][1] = sel2_calc[1];
+			assign sel2_bank_b[gb][2] = sel2_calc[2];
+			assign sstr_bank_b[gb][0] = k_lo_l1[gb][0];
+			assign sstr_bank_b[gb][1] = k_lo_l1[gb][1];
+`else
 			assign rd_rsp_bank_b[gb] = rd_rsp;
 			assign sel1_bank_b[gb]   = sel1_calc;
 			assign sel2_bank_b[gb]   = sel2_calc;
 			assign sstr_bank_b[gb]   = k_lo_l1[gb];
-
+`endif
 			for (gc = 0; gc < 5; gc = gc + 1) begin : g_ri
-
+`ifdef SYNTH_KINTEX7
+				(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+				LUT1 #(.INIT(2'b10)) u_ri (.O(rsp_idx_bank_b[gb][gc]), .I0(rsp_idx[gc]));
+`elsif SYNTH_KINTEX_ULTRASCALE
 				assign rsp_idx_bank_b[gb][gc] = rsp_idx[gc];
-
+`else
+				assign rsp_idx_bank_b[gb][gc] = rsp_idx[gc];
+`endif
 			end
 		end
 		for (gb = 0; gb < NPG; gb = gb + 1) begin : g_p2_ce_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
+			LUT1 #(.INIT(2'b10)) u_p2c (.O(p2_ce_b[gb]), .I0(p2_l1[gb / 8]));
+`elsif SYNTH_KINTEX_ULTRASCALE
 			assign p2_ce_b[gb] = p2_l1[gb / 8];
-
+`else
+			assign p2_ce_b[gb] = p2_l1[gb / 8];
+`endif
 		end
 		for (gb = 0; gb < LINE_BYTES; gb = gb + 1) begin : g_sdat_slice
 			localparam integer BK = gb / 8;
@@ -766,7 +989,7 @@ module atg_vf_fetch #(
 
 	/* Buffered CEs for wide registers */
 	wire ce_v_in = st_is_idle && vb_valid;
-	wire [4:0] ce_vin_b;
+	wire [6:0] ce_vin_b;
 	wire [1:0] ce_num_b, ce_elm_b, ce_remn_b;
 	wire [2:0] ce_attr2_b;
 	wire [1:0] ce_cbase_b, ce_clim_b;
@@ -778,10 +1001,10 @@ module atg_vf_fetch #(
 	wire [2:0] ce_tmask_b;
 	wire [1:0] ce_mnum_b, ce_mq_b;
 	wire [1:0] ce_plan1_b;
-	wire [11:0] ce_sh1_b;
+	wire [23:0] ce_sh1_b;
 	wire [8:0]  ce_sh2_b;
 	wire [7:0]  ce_afraw_b, sel_af_zero_b;
-	wire [2:0]  emit_take_b;
+	wire [3:0]  emit_take_b;
 
 	wire elem_in_elem = st_is_elem && (div_bypass_r || memo_hit_r);
 	wire ce_elem_all = elem_in_elem || st_is_div_add;
@@ -795,7 +1018,43 @@ module atg_vf_fetch #(
 
 	generate
 		for (gb = 0; gb < 2; gb = gb + 1) begin : g_ce2_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cnum (.O(ce_num_b[gb]),   .I0(st_is_attr1));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_celm (.O(ce_elm_b[gb]),   .I0(st_is_attr1));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_crem (.O(ce_remn_b[gb]),  .I0(st_is_attr1));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_ccbs (.O(ce_cbase_b[gb]), .I0(st_is_attr2));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cclm (.O(ce_clim_b[gb]),  .I0(st_is_attr2));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cdvq (.O(ce_divq_b[gb]),  .I0(ce_divq_all));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_sdvq (.O(sel_divq_b[gb]), .I0(st_is_div));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cadr (.O(ce_addr_b[gb]),  .I0(st_is_addr));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cbnd (.O(ce_bnd_b[gb]),   .I0(st_is_addr));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cl10 (.O(ce_l1_0_b[gb]),  .I0(st_is_oob));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cl11 (.O(ce_l1_1_b[gb]),  .I0(st_is_oob));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cl20 (.O(ce_l2_0_b[gb]),  .I0(st_is_oob));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cl21 (.O(ce_l2_1_b[gb]),  .I0(st_is_oob));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_coob (.O(ce_oob_b[gb]),   .I0(st_is_oob));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cmnm (.O(ce_mnum_b[gb]),  .I0(st_is_div_add));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cmq  (.O(ce_mq_b[gb]),    .I0(st_is_div_add));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cpl1 (.O(ce_plan1_b[gb]), .I0(st_is_plan1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign ce_num_b[gb] = st_is_attr1;
+			assign ce_elm_b[gb] = st_is_attr1;
+			assign ce_remn_b[gb] = st_is_attr1;
+			assign ce_cbase_b[gb] = st_is_attr2;
+			assign ce_clim_b[gb] = st_is_attr2;
+			assign ce_divq_b[gb] = ce_divq_all;
+			assign sel_divq_b[gb] = st_is_div;
+			assign ce_addr_b[gb] = st_is_addr;
+			assign ce_bnd_b[gb] = st_is_addr;
+			assign ce_l1_0_b[gb] = st_is_oob;
+			assign ce_l1_1_b[gb] = st_is_oob;
+			assign ce_l2_0_b[gb] = st_is_oob;
+			assign ce_l2_1_b[gb] = st_is_oob;
+			assign ce_oob_b[gb] = st_is_oob;
+			assign ce_mnum_b[gb] = st_is_div_add;
+			assign ce_mq_b[gb] = st_is_div_add;
+			assign ce_plan1_b[gb] = st_is_plan1;
+`else
 			assign ce_num_b[gb]   = st_is_attr1;
 			assign ce_elm_b[gb]   = st_is_attr1;
 			assign ce_remn_b[gb]  = st_is_attr1;
@@ -813,44 +1072,89 @@ module atg_vf_fetch #(
 			assign ce_mnum_b[gb]  = st_is_div_add;
 			assign ce_mq_b[gb]    = st_is_div_add;
 			assign ce_plan1_b[gb] = st_is_plan1;
-
+`endif
 		end
 		for (gb = 0; gb < 4; gb = gb + 1) begin : g_elem_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cel  (.O(ce_elem_b[gb]),    .I0(ce_elem_all));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_se0  (.O(sel_el0_b[gb]),    .I0(sel_el_0));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_se1  (.O(sel_el1_b[gb]),    .I0(sel_el_1));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_sda  (.O(sel_divadd_b[gb]), .I0(st_is_div_add));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign ce_elem_b[gb] = ce_elem_all;
+			assign sel_el0_b[gb] = sel_el_0;
+			assign sel_el1_b[gb] = sel_el_1;
+			assign sel_divadd_b[gb] = st_is_div_add;
+`else
 			assign ce_elem_b[gb]    = ce_elem_all;
 			assign sel_el0_b[gb]    = sel_el_0;
 			assign sel_el1_b[gb]    = sel_el_1;
 			assign sel_divadd_b[gb] = st_is_div_add;
-
+`endif
 		end
-		for (gb = 0; gb < 5; gb = gb + 1) begin : g_vin_buf
-
+		for (gb = 0; gb < 7; gb = gb + 1) begin : g_vin_buf
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cvin (.O(ce_vin_b[gb]), .I0(ce_v_in));
+`elsif SYNTH_KINTEX_ULTRASCALE
 			assign ce_vin_b[gb] = ce_v_in;
-
+`else
+			assign ce_vin_b[gb] = ce_v_in;
+`endif
+		end
+		for (gb = 0; gb < 4; gb = gb + 1) begin : g_emt_buf
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_emt (.O(emit_take_b[gb]), .I0(emit_take));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign emit_take_b[gb] = emit_take;
+`else
+			assign emit_take_b[gb] = emit_take;
+`endif
 		end
 		for (gb = 0; gb < 3; gb = gb + 1) begin : g_ce3_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_ctm (.O(ce_tmask_b[gb]),  .I0(ce_tag_masks));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_ca2 (.O(ce_attr2_b[gb]),  .I0(st_is_attr2));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cbo (.O(ce_boff_b[gb]),   .I0(st_is_mul4));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign ce_tmask_b[gb] = ce_tag_masks;
+			assign ce_attr2_b[gb] = st_is_attr2;
+			assign ce_boff_b[gb] = st_is_mul4;
+`else
 			assign ce_tmask_b[gb]  = ce_tag_masks;
 			assign ce_attr2_b[gb]  = st_is_attr2;
 			assign ce_boff_b[gb]   = st_is_mul4;
-			assign emit_take_b[gb] = emit_take;
-
+`endif
 		end
-		for (gb = 0; gb < 12; gb = gb + 1) begin : g_sh1_buf
-
-			assign ce_sh1_b[gb]   = st_is_sh1;
-
+		for (gb = 0; gb < 24; gb = gb + 1) begin : g_sh1_buf
+			wire sh1_src = (gb < 12) ? st_is_sh1 : st_is_sh1_b;
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_csh1 (.O(ce_sh1_b[gb]), .I0(sh1_src));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign ce_sh1_b[gb] = sh1_src;
+`else
+			assign ce_sh1_b[gb]   = sh1_src;
+`endif
 		end
 		for (gb = 0; gb < 9; gb = gb + 1) begin : g_sh2_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_csh2 (.O(ce_sh2_b[gb]), .I0(st_is_sh2));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign ce_sh2_b[gb] = st_is_sh2;
+`else
 			assign ce_sh2_b[gb]   = st_is_sh2;
-
+`endif
 		end
 		for (gb = 0; gb < 8; gb = gb + 1) begin : g_af_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_cafr (.O(ce_afraw_b[gb]),    .I0(ce_afraw_all));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_safz (.O(sel_af_zero_b[gb]), .I0(sel_af_zero));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign ce_afraw_b[gb] = ce_afraw_all;
+			assign sel_af_zero_b[gb] = sel_af_zero;
+`else
 			assign ce_afraw_b[gb]    = ce_afraw_all;
 			assign sel_af_zero_b[gb] = sel_af_zero;
-
+`endif
 		end
 	endgenerate
 
@@ -864,9 +1168,15 @@ module atg_vf_fetch #(
 	(* keep = "true" *) wire [4:0] miss_idx = {k_lo_b[34], miss1 ? sel1 : sel2};
 	(* keep = "true" *) wire req_issue = st_is_req && !rq_pend && (miss1 || miss2);
 	wire [1:0] miss1_line_b;
-
+`ifdef SYNTH_KINTEX7
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_ml1_0 (.O(miss1_line_b[0]), .I0(miss1));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_ml1_1 (.O(miss1_line_b[1]), .I0(miss1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign miss1_line_b[0] = miss1;
+	assign miss1_line_b[1] = miss1;
+`else
 	assign miss1_line_b = {2{miss1}};
-
+`endif
 	(* keep = "true" *) wire [LA_W-1:0] miss_line_w = {
 		miss1_line_b[1] ? l1_r0[LA_W-1:14] : l2_r0[LA_W-1:14],
 		miss1_line_b[0] ? l1_r0[13:0]      : l2_r0[13:0]
@@ -892,40 +1202,76 @@ module atg_vf_fetch #(
 	(* keep = "true" *) wire [1:0] ce_rqline_b;
 	(* keep = "true" *) wire       ce_rqtag_b;
 	(* keep = "true" *) wire       ce_rqpend_b;
-
+`ifdef SYNTH_KINTEX7
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_crql0 (.O(ce_rqline_b[0]), .I0(req_issue));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_crql1 (.O(ce_rqline_b[1]), .I0(req_issue));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_crqt  (.O(ce_rqtag_b),     .I0(req_issue));
+	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_crqp  (.O(ce_rqpend_b),    .I0(req_issue));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign ce_rqline_b[0] = req_issue;
+	assign ce_rqline_b[1] = req_issue;
+	assign ce_rqtag_b = req_issue;
+	assign ce_rqpend_b = req_issue;
+`else
 	assign ce_rqline_b = {2{req_issue}};
 	assign ce_rqtag_b  = req_issue;
 	assign ce_rqpend_b = req_issue;
-
+`endif
 
 	generate
 		for (gb = 0; gb < LA_W; gb = gb + 1) begin : g_mline_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_mlb0 (.O(miss_line_b0[gb]), .I0(miss_line_w[gb]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_mlb1 (.O(miss_line_b1[gb]), .I0(miss_line_w[gb]));
+`elsif SYNTH_KINTEX_ULTRASCALE
 			assign miss_line_b0[gb] = miss_line_w[gb];
 			assign miss_line_b1[gb] = miss_line_w[gb];
-
+`else
+			assign miss_line_b0[gb] = miss_line_w[gb];
+			assign miss_line_b1[gb] = miss_line_w[gb];
+`endif
 		end
 		for (gb = 0; gb < 4; gb = gb + 1) begin : g_midx_buf
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_rqi (.O(req_issue_b[gb]), .I0(req_issue));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_rsd (.O(rsp_done_b[gb]),  .I0(rsp_done_r));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_clc (.O(clr_cache_b[gb]), .I0(clr_cache_raw));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign req_issue_b[gb] = req_issue;
+			assign rsp_done_b[gb] = rsp_done_r;
+			assign clr_cache_b[gb] = clr_cache_raw;
+`else
 			assign req_issue_b[gb] = req_issue;
 			assign rsp_done_b[gb]  = rsp_done_r;
 			assign clr_cache_b[gb] = clr_cache_raw;
-
+`endif
 			for (gc = 0; gc < 5; gc = gc + 1) begin : g_mi
-
+`ifdef SYNTH_KINTEX7
+				(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_mib (.O(miss_idx_b[gb][gc]), .I0(miss_idx[gc]));
+				(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_rdb (.O(rsp_didx_b[gb][gc]), .I0(rsp_done_idx_r[gc]));
+`elsif SYNTH_KINTEX_ULTRASCALE
 				assign miss_idx_b[gb][gc] = miss_idx[gc];
 				assign rsp_didx_b[gb][gc] = rsp_done_idx_r[gc];
-
+`else
+				assign miss_idx_b[gb][gc] = miss_idx[gc];
+				assign rsp_didx_b[gb][gc] = rsp_done_idx_r[gc];
+`endif
 			end
 		end
 		for (gb = 0; gb < 32; gb = gb + 1) begin : g_stag_we
 			localparam integer QTR = gb / 8;
 			assign req_hit_dec[gb] = req_issue_b[QTR] && (miss_idx_b[QTR] == gb[4:0]);
 			assign rsp_hit_dec[gb] = rsp_done_b[QTR]  && (rsp_didx_b[QTR] == gb[4:0]);
-
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_wsl (.O(we_stag_lo[gb]), .I0(req_hit_dec[gb]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_wsh (.O(we_stag_hi[gb]), .I0(req_hit_dec[gb]));
+`elsif SYNTH_KINTEX_ULTRASCALE
 			assign we_stag_lo[gb] = req_hit_dec[gb];
 			assign we_stag_hi[gb] = req_hit_dec[gb];
-
+`else
+			assign we_stag_lo[gb] = req_hit_dec[gb];
+			assign we_stag_hi[gb] = req_hit_dec[gb];
+`endif
 		end
 	endgenerate
 
@@ -1037,6 +1383,7 @@ module atg_vf_fetch #(
 			st_is_data     <= 1'b0;
 			st_is_rd       <= 1'b0;
 			st_is_sh1      <= 1'b0;
+			st_is_sh1_b    <= 1'b0;
 			st_is_sh2      <= 1'b0;
 			st_is_sh3      <= 1'b0;
 			st_is_emit     <= 1'b0;
@@ -1048,8 +1395,10 @@ module atg_vf_fetch #(
 			rem <= 16'd0;
 			rem_next_r <= 16'd0;
 			rem_next_z_r <= 1'b0;
-			k_r <= 4'd0;
-			next_k_r <= 4'd0;
+			k_r          <= 4'd0;
+			k_r_b        <= 2'd0;
+			k_r_stag_vec <= 32'd0;
+			next_k_r  <= 4'd0;
 			for (si = 0; si < 4; si = si + 1)
 				s_rr[si] <= 3'd0;
 			cur_base <= 32'd0;
@@ -1110,6 +1459,7 @@ module atg_vf_fetch #(
 			miss1 <= 1'b0;
 			miss2 <= 1'b0;
 			rq_pend <= 1'b0;
+			rq_pend_ext <= 1'b0;
 			rq_tag <= 8'd0;
 			rq_line <= {LA_W{1'b0}};
 			rsp_done_r <= 1'b0;
@@ -1136,7 +1486,14 @@ module atg_vf_fetch #(
 				v_lane <= vb_lane;
 				v_last <= vb_last;
 				rem    <= en;
-				k_r    <= k_init_w;
+			end
+			if (ce_vin_b[5]) begin
+				k_r                  <= k_init_w;
+				k_r_b                <= k_init_w[1:0];
+				k_r_stag_vec[15:0]   <= {8{k_init_w[1:0]}};
+			end
+			if (ce_vin_b[6]) begin
+				k_r_stag_vec[31:16]  <= {8{k_init_w[1:0]}};
 			end
 
 			if (ce_num_b[0])   num_r[15:0]     <= num_w[15:0];
@@ -1218,17 +1575,17 @@ module atg_vf_fetch #(
 			if (ce_l2_1_b[1]) l2_r1[LA_W-1:14] <= l2_w[LA_W-1:14];
 
 			/* 3-stage byte aligner updates */
-			for (ri = 0; ri < 12; ri = ri + 1) begin
+			for (ri = 0; ri < 24; ri = ri + 1) begin
 				if (ce_sh1_b[ri]) begin
 					case (off_hi_b[ri])
-					3'd0: sh1_r[16*ri +: 16] <= pair_full_1024[0   + 16*ri +: 16];
-					3'd1: sh1_r[16*ri +: 16] <= pair_full_1024[64  + 16*ri +: 16];
-					3'd2: sh1_r[16*ri +: 16] <= pair_full_1024[128 + 16*ri +: 16];
-					3'd3: sh1_r[16*ri +: 16] <= pair_full_1024[192 + 16*ri +: 16];
-					3'd4: sh1_r[16*ri +: 16] <= pair_full_1024[256 + 16*ri +: 16];
-					3'd5: sh1_r[16*ri +: 16] <= pair_full_1024[320 + 16*ri +: 16];
-					3'd6: sh1_r[16*ri +: 16] <= pair_full_1024[384 + 16*ri +: 16];
-					3'd7: sh1_r[16*ri +: 16] <= pair_full_1024[448 + 16*ri +: 16];
+					3'd0: sh1_r[8*ri +: 8] <= pair_full_1024[0   + 8*ri +: 8];
+					3'd1: sh1_r[8*ri +: 8] <= pair_full_1024[64  + 8*ri +: 8];
+					3'd2: sh1_r[8*ri +: 8] <= pair_full_1024[128 + 8*ri +: 8];
+					3'd3: sh1_r[8*ri +: 8] <= pair_full_1024[192 + 8*ri +: 8];
+					3'd4: sh1_r[8*ri +: 8] <= pair_full_1024[256 + 8*ri +: 8];
+					3'd5: sh1_r[8*ri +: 8] <= pair_full_1024[320 + 8*ri +: 8];
+					3'd6: sh1_r[8*ri +: 8] <= pair_full_1024[384 + 8*ri +: 8];
+					3'd7: sh1_r[8*ri +: 8] <= pair_full_1024[448 + 8*ri +: 8];
 					endcase
 				end
 			end
@@ -1422,6 +1779,7 @@ module atg_vf_fetch #(
 				if (rq_pend) begin
 					if (req_ready) begin
 						rq_pend <= 1'b0;
+						rq_pend_ext <= 1'b0;
 						if (miss1)
 							miss1 <= 1'b0;
 						else
@@ -1429,6 +1787,7 @@ module atg_vf_fetch #(
 					end
 				end else if (ce_rqpend_b) begin
 					rq_pend <= 1'b1;
+					rq_pend_ext <= 1'b1;
 					if (miss1 ? (sel1 == rr0_r) : (sel2 == rr0_r)) begin
 						s_rr[k_lo_b[34]] <= rr1_w;
 						rr0_r            <= rr1_w;
@@ -1447,13 +1806,15 @@ module atg_vf_fetch #(
 			end
 
 			if (st_is_rd) begin
-				st_is_rd  <= 1'b0;
-				st_is_sh1 <= 1'b1;
+				st_is_rd    <= 1'b0;
+				st_is_sh1   <= 1'b1;
+				st_is_sh1_b <= 1'b1;
 			end
 
 			if (st_is_sh1) begin
-				st_is_sh1 <= 1'b0;
-				st_is_sh2 <= 1'b1;
+				st_is_sh1   <= 1'b0;
+				st_is_sh1_b <= 1'b0;
+				st_is_sh2   <= 1'b1;
 			end
 
 			if (st_is_sh2) begin
@@ -1478,6 +1839,7 @@ module atg_vf_fetch #(
 				af_valid_r <= 1'b0;
 				st_is_emit <= 1'b0;
 				k_r        <= next_k_r;
+				k_r_b      <= next_k_r[1:0];
 				if (!rem_next_z_r) begin
 					st_is_attr1 <= 1'b1;
 				end else begin
@@ -1485,15 +1847,21 @@ module atg_vf_fetch #(
 					st_is_idle_rdy <= 1'b1;
 				end
 			end
+			if (emit_take_b[2]) begin
+				k_r_stag_vec[15:0] <= {8{next_k_r[1:0]}};
+			end
+			if (emit_take_b[3]) begin
+				k_r_stag_vec[31:16] <= {8{next_k_r[1:0]}};
+			end
 		end
 	end
 
 	wire [LB-129:0] pfull_unused = pair_full[2*LB-1 : LB+128];
 	wire unused_ok = &{1'b0, rsp_tag[7:5], vk_inf[67:15], vk_inf[13:6],
-		pfull_unused, pair_full_1024[1023:640], sh1_r[191:184], div_diff[8], lim_diff_unused,
+		pfull_unused, pair_full_1024[1023:640], sh1_r[191:184], div_diff[8], unused_lim_qeq_lo,
 		num_bo_unused, elm_co_unused, eld_co_unused, div_cnt_bo_unused,
 		ad_co_unused, bnd_co_unused, l2_co_unused, osum_co_unused,
-		ce_remn_b[1], emit_take_b[2], rr1_co_unused};
+		ce_remn_b[1], rr1_co_unused};
 endmodule
 
 `default_nettype wire

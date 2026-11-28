@@ -222,6 +222,150 @@ module atg_su_tile #(
 	wire [7:0] i_rsp_tag;
 	wire [LINE_BITS-1:0] i_rsp_rdata;
 
+	/* Local tile input isolation buffers so multi-SU broadcasts keep FO <= 16 */
+	wire        t_st_we, t_cs_kick, t_cs_mesh, t_lc_kick, t_scrub;
+	wire [8:0]  t_st_idx;
+	wire [31:0] t_st_wdata;
+	wire [3:0]  t_inv;
+	wire        t_vl_we, t_vl_go, t_fl_we, t_fl_pw_we, t_fl_go, t_at_error;
+	wire [5:0]  t_vl_reg, t_fl_reg;
+	wire [4:0]  t_vl_lane, t_fl_lane;
+	wire [31:0] t_vl_data, t_vl_mask, t_fl_data, t_fl_pw_data, t_fl_mask, t_at_old;
+	wire [7:0]  t_vl_go_ptbase;
+	wire [11:0] t_fl_pw_addr;
+	wire [63:0] t_fl_info;
+	wire [15:0] t_ex_next;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tstwe (.I0(st_we),     .O(t_st_we));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tcsk  (.I0(cs_kick),   .O(t_cs_kick));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tcsm  (.I0(cs_mesh),   .O(t_cs_mesh));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tlck  (.I0(lc_kick),   .O(t_lc_kick));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tscrb (.I0(scrub),     .O(t_scrub));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvwe  (.I0(vl_we),     .O(t_vl_we));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvgo  (.I0(vl_go),     .O(t_vl_go));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tfwe  (.I0(fl_we),     .O(t_fl_we));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tfpwe (.I0(fl_pw_we),  .O(t_fl_pw_we));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tfgo  (.I0(fl_go),     .O(t_fl_go));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tater (.I0(at_error),  .O(t_at_error));
+	genvar gtb;
+	generate
+		for (gtb = 0; gtb < 4; gtb = gtb + 1) begin : g_tb4
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tinv (.I0(inv[gtb]), .O(t_inv[gtb]));
+		end
+		for (gtb = 0; gtb < 5; gtb = gtb + 1) begin : g_tb5
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvln (.I0(vl_lane[gtb]), .O(t_vl_lane[gtb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tfln (.I0(fl_lane[gtb]), .O(t_fl_lane[gtb]));
+		end
+		for (gtb = 0; gtb < 6; gtb = gtb + 1) begin : g_tb6
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvrg (.I0(vl_reg[gtb]), .O(t_vl_reg[gtb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tfrg (.I0(fl_reg[gtb]), .O(t_fl_reg[gtb]));
+		end
+		for (gtb = 0; gtb < 8; gtb = gtb + 1) begin : g_tb8
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvpb (.I0(vl_go_ptbase[gtb]), .O(t_vl_go_ptbase[gtb]));
+		end
+		for (gtb = 0; gtb < 9; gtb = gtb + 1) begin : g_tb9
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tsti (.I0(st_idx[gtb]), .O(t_st_idx[gtb]));
+		end
+		for (gtb = 0; gtb < 12; gtb = gtb + 1) begin : g_tb12
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tfpa (.I0(fl_pw_addr[gtb]), .O(t_fl_pw_addr[gtb]));
+		end
+		for (gtb = 0; gtb < 16; gtb = gtb + 1) begin : g_tb16
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_texn (.I0(ex_next[gtb]), .O(t_ex_next[gtb]));
+		end
+		for (gtb = 0; gtb < 32; gtb = gtb + 1) begin : g_tb32
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tstw (.I0(st_wdata[gtb]),   .O(t_st_wdata[gtb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvd  (.I0(vl_data[gtb]),    .O(t_vl_data[gtb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tvm  (.I0(vl_mask[gtb]),    .O(t_vl_mask[gtb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tfd  (.I0(fl_data[gtb]),    .O(t_fl_data[gtb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tfpd (.I0(fl_pw_data[gtb]), .O(t_fl_pw_data[gtb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tfm  (.I0(fl_mask[gtb]),    .O(t_fl_mask[gtb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tato (.I0(at_old[gtb]),     .O(t_at_old[gtb]));
+		end
+		for (gtb = 0; gtb < 64; gtb = gtb + 1) begin : g_tb64
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tfi (.I0(fl_info[gtb]), .O(t_fl_info[gtb]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign t_st_we = st_we;
+	assign t_cs_kick = cs_kick;
+	assign t_cs_mesh = cs_mesh;
+	assign t_lc_kick = lc_kick;
+	assign t_scrub = scrub;
+	assign t_vl_we = vl_we;
+	assign t_vl_go = vl_go;
+	assign t_fl_we = fl_we;
+	assign t_fl_pw_we = fl_pw_we;
+	assign t_fl_go = fl_go;
+	assign t_at_error = at_error;
+	genvar gtb;
+	generate
+		for (gtb = 0; gtb < 4; gtb = gtb + 1) begin : g_tb4
+			assign t_inv[gtb] = inv[gtb];
+		end
+		for (gtb = 0; gtb < 5; gtb = gtb + 1) begin : g_tb5
+			assign t_vl_lane[gtb] = vl_lane[gtb];
+			assign t_fl_lane[gtb] = fl_lane[gtb];
+		end
+		for (gtb = 0; gtb < 6; gtb = gtb + 1) begin : g_tb6
+			assign t_vl_reg[gtb] = vl_reg[gtb];
+			assign t_fl_reg[gtb] = fl_reg[gtb];
+		end
+		for (gtb = 0; gtb < 8; gtb = gtb + 1) begin : g_tb8
+			assign t_vl_go_ptbase[gtb] = vl_go_ptbase[gtb];
+		end
+		for (gtb = 0; gtb < 9; gtb = gtb + 1) begin : g_tb9
+			assign t_st_idx[gtb] = st_idx[gtb];
+		end
+		for (gtb = 0; gtb < 12; gtb = gtb + 1) begin : g_tb12
+			assign t_fl_pw_addr[gtb] = fl_pw_addr[gtb];
+		end
+		for (gtb = 0; gtb < 16; gtb = gtb + 1) begin : g_tb16
+			assign t_ex_next[gtb] = ex_next[gtb];
+		end
+		for (gtb = 0; gtb < 32; gtb = gtb + 1) begin : g_tb32
+			assign t_st_wdata[gtb] = st_wdata[gtb];
+			assign t_vl_data[gtb] = vl_data[gtb];
+			assign t_vl_mask[gtb] = vl_mask[gtb];
+			assign t_fl_data[gtb] = fl_data[gtb];
+			assign t_fl_pw_data[gtb] = fl_pw_data[gtb];
+			assign t_fl_mask[gtb] = fl_mask[gtb];
+			assign t_at_old[gtb] = at_old[gtb];
+		end
+		for (gtb = 0; gtb < 64; gtb = gtb + 1) begin : g_tb64
+			assign t_fl_info[gtb] = fl_info[gtb];
+		end
+	endgenerate
+`else
+	assign t_st_we        = st_we;
+	assign t_st_idx       = st_idx;
+	assign t_st_wdata     = st_wdata;
+	assign t_cs_kick      = cs_kick;
+	assign t_cs_mesh      = cs_mesh;
+	assign t_lc_kick      = lc_kick;
+	assign t_inv          = inv;
+	assign t_scrub        = scrub;
+	assign t_vl_we        = vl_we;
+	assign t_vl_reg       = vl_reg;
+	assign t_vl_lane      = vl_lane;
+	assign t_vl_data      = vl_data;
+	assign t_vl_go        = vl_go;
+	assign t_vl_mask      = vl_mask;
+	assign t_vl_go_ptbase = vl_go_ptbase;
+	assign t_fl_we        = fl_we;
+	assign t_fl_reg       = fl_reg;
+	assign t_fl_lane      = fl_lane;
+	assign t_fl_data      = fl_data;
+	assign t_fl_pw_we     = fl_pw_we;
+	assign t_fl_pw_addr   = fl_pw_addr;
+	assign t_fl_pw_data   = fl_pw_data;
+	assign t_fl_go        = fl_go;
+	assign t_fl_mask      = fl_mask;
+	assign t_fl_info      = fl_info;
+	assign t_ex_next      = ex_next;
+	assign t_at_old       = at_old;
+	assign t_at_error     = at_error;
+`endif
+
 	atg_su #(
 		.NPHYS(NPHYS), .NWARPS(NWARPS), .WARP_W(WARP_W), .GRP_W(GRP_W),
 		.NREGS(NREGS), .SB_ENTRIES(SB_ENTRIES), .SBE_W(SBE_W), .NSU(NSU),
@@ -233,17 +377,17 @@ module atg_su_tile #(
 		.SHARED_PT(SHARED_PT), .HAS_GFX(HAS_GFX), .HAS_TU(HAS_TU)
 	) u_su (
 		.clk(clk), .rst_n(rst_n),
-		.st_we(st_we), .st_idx(st_idx), .st_wdata(st_wdata),
-		.cs_kick(cs_kick), .cs_mesh(cs_mesh), .lc_kick(lc_kick), .inv(inv),
+		.st_we(t_st_we), .st_idx(t_st_idx), .st_wdata(t_st_wdata),
+		.cs_kick(t_cs_kick), .cs_mesh(t_cs_mesh), .lc_kick(t_lc_kick), .inv(t_inv),
 		.vl_req(vl_req), .vl_gnt(vl_gnt), .vl_slot(unused_vl_slot),
 		.vl_ptbase(vl_ptbase), .vl_avail(vl_avail),
-		.vl_we(vl_we), .vl_reg(vl_reg), .vl_lane(vl_lane), .vl_data(vl_data),
-		.vl_go(vl_go), .vl_mask(vl_mask), .vl_go_ptbase(vl_go_ptbase),
+		.vl_we(t_vl_we), .vl_reg(t_vl_reg), .vl_lane(t_vl_lane), .vl_data(t_vl_data),
+		.vl_go(t_vl_go), .vl_mask(t_vl_mask), .vl_go_ptbase(t_vl_go_ptbase),
 		.fl_req(fl_req), .fl_gnt(fl_gnt), .fl_slot(unused_fl_slot),
 		.fl_avail(fl_avail),
-		.fl_we(fl_we), .fl_reg(fl_reg), .fl_lane(fl_lane), .fl_data(fl_data),
-		.fl_pw_we(fl_pw_we), .fl_pw_addr(fl_pw_addr), .fl_pw_data(fl_pw_data),
-		.fl_go(fl_go), .fl_mask(fl_mask), .fl_info(fl_info),
+		.fl_we(t_fl_we), .fl_reg(t_fl_reg), .fl_lane(t_fl_lane), .fl_data(t_fl_data),
+		.fl_pw_we(t_fl_pw_we), .fl_pw_addr(t_fl_pw_addr), .fl_pw_data(t_fl_pw_data),
+		.fl_go(t_fl_go), .fl_mask(t_fl_mask), .fl_info(t_fl_info),
 		.pt_rd(pt_rd), .pt_idx(pt_idx), .pt_word(pt_word), .pt_rdata(pt_rdata),
 		.pt_free(pt_free), .pt_free_idx(pt_free_idx), .pt_done(pt_done),
 		.pt_exp_valid(pt_exp_valid), .pt_exp_ready(pt_exp_ready),
@@ -259,7 +403,7 @@ module atg_su_tile #(
 		.ex_valid(ex_valid), .ex_ready(ex_ready), .ex_seq(ex_seq), .ex_xy(ex_xy),
 		.ex_mask(ex_mask), .ex_color(ex_color), .ex_color1(ex_color1),
 		.ex_has_src1(ex_has_src1), .ex_depth(ex_depth), .ex_last(ex_last),
-		.ex_next(ex_next), .ex_aux(ex_aux),
+		.ex_next(t_ex_next), .ex_aux(ex_aux),
 		.mesh_valid(mesh_valid), .mesh_ready(mesh_ready), .mesh_tri(mesh_tri),
 		.mesh_last(mesh_last), .mesh_id(mesh_id),
 		.d_req_valid(d_req_valid), .d_req_ready(d_req_ready), .d_req_write(d_req_write),
@@ -274,7 +418,7 @@ module atg_su_tile #(
 		.i_rsp_rdata(i_rsp_rdata), .i_rsp_error(i_rsp_error),
 		.at_valid(at_valid), .at_stage(at_stage), .at_ready(at_ready),
 		.at_op(at_op), .at_addr(at_addr), .at_a(at_a), .at_b(at_b),
-		.at_rsp_valid(at_rsp_valid), .at_old(at_old), .at_error(at_error),
+		.at_rsp_valid(at_rsp_valid), .at_old(t_at_old), .at_error(t_at_error),
 		.sa_push_valid(sa_push_valid), .sa_push_ready(sa_push_ready),
 		.sa_push_data(sa_push_data),
 		.sa_pop_valid(sa_pop_valid), .sa_pop_ready(sa_pop_ready),
@@ -282,7 +426,7 @@ module atg_su_tile #(
 		.sa_ctl_valid(sa_ctl_valid), .sa_ctl_data(sa_ctl_data),
 		.sa_qstat(sa_qstat), .sa_stat(sa_stat), .sa_qtag(sa_qtag),
 		.busy(busy), .fsm(fsm),
-		.scrub(scrub), .scrub_busy(scrub_busy),
+		.scrub(t_scrub), .scrub_busy(scrub_busy),
 		.fault(fault), .fault_addr(fault_addr), .fault_stage(fault_stage)
 	);
 

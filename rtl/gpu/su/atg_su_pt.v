@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -175,55 +175,134 @@ module atg_su_pt #(
 	wire [AW-1:0] waddr_a;
 	wire [AW-1:0] raddr_a;
 	wire [31:0] pt_word32 = {25'd0, pt_word};
-	wire wa_co_unused, ra_co_unused;
-	am_add #(.W(AW)) u_waddr (.a(wrow_w_aw), .b(wword[AW-1:0]), .ci(1'b0), .s(waddr_a),
-		.co(wa_co_unused));
+	wire ra_co_unused;
+	/* Pipeline Stage P1 before u_waddr to cut x_warp -> wblk -> wrow_w32 -> u_waddr (24 cmos3 -> <=10). */
+	reg wr_p1;
+	reg [AW-1:0] wrow_w_p1;
+	reg [AW-1:0] wword_p1;
+	reg [NPHYS-1:0] wr_mask_p1;
+	reg [NPHYS*32-1:0] wr_data_p1;
+	always @(posedge clk or posedge rst_p) begin
+		if (rst_p) begin
+			wr_p1      <= 1'b0;
+			wrow_w_p1  <= {AW{1'b0}};
+			wword_p1   <= {AW{1'b0}};
+			wr_mask_p1 <= {NPHYS{1'b0}};
+			wr_data_p1 <= {(NPHYS*32){1'b0}};
+		end else begin
+			wr_p1      <= wr;
+			wrow_w_p1  <= wrow_w_aw;
+			wword_p1   <= wword[AW-1:0];
+			wr_mask_p1 <= wr_mask_eff;
+			wr_data_p1 <= wr_data_eff;
+		end
+	end
+	wire wa_co_unused;
+	generate
+		if (AW > 6) begin : g_wa_csel
+			localparam W_LO = 6;
+			localparam W_HI = AW - W_LO;
+			wire [W_LO-1:0] wa_lo;
+			wire wa_lo_co;
+			wire [W_HI-1:0] wa_hi_0, wa_hi_1;
+			wire wa_co0_unused, wa_co1_unused;
+			am_add #(.W(W_LO)) u_waddr_lo (.a(wrow_w_p1[W_LO-1:0]), .b(wword_p1[W_LO-1:0]), .ci(1'b0), .s(wa_lo), .co(wa_lo_co));
+			am_add #(.W(W_HI)) u_waddr_hi0 (.a(wrow_w_p1[AW-1:W_LO]), .b(wword_p1[AW-1:W_LO]), .ci(1'b0), .s(wa_hi_0), .co(wa_co0_unused));
+			am_add #(.W(W_HI)) u_waddr_hi1 (.a(wrow_w_p1[AW-1:W_LO]), .b(wword_p1[AW-1:W_LO]), .ci(1'b1), .s(wa_hi_1), .co(wa_co1_unused));
+			assign waddr_a = {wa_lo_co ? wa_hi_1 : wa_hi_0, wa_lo};
+			assign wa_co_unused = &{1'b0, wa_co0_unused, wa_co1_unused};
+		end else begin : g_wa_flat
+			am_add #(.W(AW)) u_waddr (.a(wrow_w_p1), .b(wword_p1), .ci(1'b0), .s(waddr_a), .co(wa_co_unused));
+		end
+	endgenerate
 	am_add #(.W(AW)) u_raddr (.a(rrow_w_aw), .b(pt_word32[AW-1:0]), .ci(1'b0), .s(raddr_a),
 		.co(ra_co_unused));
 	wire [31:0] waddr = {{(32-AW){1'b0}}, waddr_a};
 	wire [31:0] raddr = {{(32-AW){1'b0}}, raddr_a};
-	wire unused_addr = &{1'b0, wword[31:AW], wrow[31:RW], rrow[31:RW], wrow_w32[31:AW], rrow_w32[31:AW], pt_word32[31:AW], WPV_V};
+	wire unused_addr = &{1'b0, wword[31:AW], wrow[31:RW], rrow[31:RW], wrow_w32[31:AW], rrow_w32[31:AW], pt_word32[31:AW], WPV_V, wa_co_unused};
 	wire [31:0] rbank = {24'd0, pt_idx} % NPHYS;
 	(* shreg_extract = "no", max_fanout = 12 *) reg [7:0] pt_rd_r1_rep;
 	wire pt_rd_r1 = pt_rd_r1_rep[0];
 	(* dont_touch = "true" *) reg [AW-1:0] raddr_r;
 	(* shreg_extract = "no", max_fanout = 12 *) reg [$clog2(NPHYS)-1:0] rb_r1;
 	(* keep = "true", dont_touch = "true" *) reg [$clog2(NPHYS)-1:0] rb_r2_sl [0:3];
+	(* keep = "true", dont_touch = "true" *) reg [$clog2(NPHYS)-1:0] rb_r3_sl [0:3];
 	wire [NPHYS*32-1:0] rd_q;
-	reg [31:0] pt_rdata_r;
 
 	/* The banks' write port: the vertex warps' exp, or the scrub's zeros (registered for 0-LUT BRAM ADDR, Rule 4). */
-	wire sc_on;
+	wire sc_on_raw;
+	wire sc_on_busy, sc_on_ctl, sc_on_ctl_wa, sc_on_wd_lo, sc_on_wd_hi;
 	wire [AW-1:0] sc_a;
+	wire scrub_sc, scrub_ctl0, scrub_ctl1, scrub_wd;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ptsc_sc (.I0(scrub_i),   .O(scrub_sc));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ptsc_c0 (.I0(scrub_i),   .O(scrub_ctl0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ptsc_c1 (.I0(scrub_i),   .O(scrub_ctl1));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ptsc_wd (.I0(scrub_i),   .O(scrub_wd));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ptsn_bs (.I0(sc_on_raw), .O(sc_on_busy));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ptsn_ct (.I0(sc_on_raw), .O(sc_on_ctl));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ptsn_cw (.I0(sc_on_raw), .O(sc_on_ctl_wa));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ptsn_wl (.I0(sc_on_raw), .O(sc_on_wd_lo));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ptsn_wh (.I0(sc_on_raw), .O(sc_on_wd_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign scrub_sc = scrub_i;
+	assign scrub_ctl0 = scrub_i;
+	assign scrub_ctl1 = scrub_i;
+	assign scrub_wd = scrub_i;
+	assign sc_on_busy = sc_on_raw;
+	assign sc_on_ctl = sc_on_raw;
+	assign sc_on_ctl_wa = sc_on_raw;
+	assign sc_on_wd_lo = sc_on_raw;
+	assign sc_on_wd_hi = sc_on_raw;
+`else
+	assign scrub_sc     = scrub_i;
+	assign scrub_ctl0   = scrub_i;
+	assign scrub_ctl1   = scrub_i;
+	assign scrub_wd     = scrub_i;
+	assign sc_on_busy   = sc_on_raw;
+	assign sc_on_ctl    = sc_on_raw;
+	assign sc_on_ctl_wa = sc_on_raw;
+	assign sc_on_wd_lo  = sc_on_raw;
+	assign sc_on_wd_hi  = sc_on_raw;
+`endif
+	wire sc_on = sc_on_ctl;
 
 	atg_su_scrub #(.DEPTH(DEPTH), .AW(AW)) sc (
-		.clk(clk), .rst_n(rst_n), .start(scrub_i), .on(sc_on), .a(sc_a)
+		.clk(clk), .rst_n(rst_n), .start(scrub_sc), .on(sc_on_raw), .a(sc_a)
 	);
 
 	wire [AW-1:0] sc_a_next;
 	wire sc_a_co_unused;
 	am_add #(.W(AW)) u_sc_a_next (.a(sc_a), .b({AW{1'b0}}), .ci(1'b1), .s(sc_a_next), .co(sc_a_co_unused));
 
-	assign scrub_busy = sc_on;
+	assign scrub_busy = sc_on_busy;
 	(* max_fanout = 12 *) reg [NPHYS-1:0] m_we_r;
 	(* max_fanout = 8 *) reg [AW-1:0] m_wa_r;
 	wire [NPHYS*32-1:0] m_wd_r;
 	always @(posedge clk or posedge rst_p) begin
 		if (rst_p) begin
 			m_we_r <= {NPHYS{1'b0}};
-			m_wa_r <= {AW{1'b0}};
-		end else if (scrub_i) begin
+		end else if (scrub_ctl0) begin
 			m_we_r <= {NPHYS{1'b1}};
-			m_wa_r <= {AW{1'b0}};
-		end else if (sc_on) begin
+		end else if (sc_on_ctl) begin
 			if ({{(32-AW){1'b0}}, sc_a} == DEPTH - 1)
 				m_we_r <= {NPHYS{1'b0}};
-			else begin
+			else
 				m_we_r <= {NPHYS{1'b1}};
-				m_wa_r <= sc_a_next;
-			end
 		end else begin
-			m_we_r <= wr ? wr_mask_eff : {NPHYS{1'b0}};
+			m_we_r <= wr_p1 ? wr_mask_p1 : {NPHYS{1'b0}};
+		end
+	end
+
+	always @(posedge clk or posedge rst_p) begin
+		if (rst_p) begin
+			m_wa_r <= {AW{1'b0}};
+		end else if (scrub_ctl1) begin
+			m_wa_r <= {AW{1'b0}};
+		end else if (sc_on_ctl_wa) begin
+			if ({{(32-AW){1'b0}}, sc_a} != DEPTH - 1)
+				m_wa_r <= sc_a_next;
+		end else begin
 			m_wa_r <= waddr[AW-1:0];
 		end
 	end
@@ -233,27 +312,36 @@ module atg_su_pt #(
 	for (b = 0; b < NPHYS; b = b + 1) begin : g_bank
 		for (gbh = 0; gbh < 2; gbh = gbh + 1) begin : g_wd_half
 			(* shreg_extract = "no" *) reg [15:0] m_wd_h;
-			(* dont_touch = "true" *) wire wd_zero_h = scrub_i || sc_on;
+			wire wd_zero_h;
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_wdz (.I0(scrub_wd || (gbh == 0 ? sc_on_wd_lo : sc_on_wd_hi)), .O(wd_zero_h));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign wd_zero_h = scrub_wd || (gbh == 0 ? sc_on_wd_lo : sc_on_wd_hi);
+`else
+			assign wd_zero_h = scrub_wd || sc_on;
+`endif
 			always @(posedge clk or posedge rst_p) begin
 				if (rst_p)
 					m_wd_h <= 16'd0;
 				else if (wd_zero_h)
 					m_wd_h <= 16'd0;
 				else
-					m_wd_h <= wr_data_eff[b*32 + gbh*16 +: 16];
+					m_wd_h <= wr_data_p1[b*32 + gbh*16 +: 16];
 			end
 			assign m_wd_r[b*32 + gbh*16 +: 16] = m_wd_h;
 		end
 		(* ram_style = "block" *) reg [31:0] m [0:DEPTH-1];
 		reg [31:0] rd_q_b;
+		(* keep = "true", dont_touch = "true" *) reg [31:0] rd_q_pipe_b;
 		(* dont_touch = "true" *) wire pt_rd_b = pt_rd_r1_rep[(b * 8) / NPHYS];
 		always @(posedge clk) begin
 			if (m_we_r[b])
 				m[m_wa_r] <= m_wd_r[32 * b +: 32];
 			if (pt_rd_b)
 				rd_q_b <= m[raddr_r];
+			rd_q_pipe_b <= rd_q_b;
 		end
-		assign rd_q[32 * b +: 32] = rd_q_b;
+		assign rd_q[32 * b +: 32] = rd_q_pipe_b;
 	end
 	endgenerate
 
@@ -265,7 +353,7 @@ module atg_su_pt #(
 		for (grbi = 0; grbi < NPHYS; grbi = grbi + 1) begin : g_rbi
 			assign rdata_b[grbi*8 +: 8] = rd_q[grbi*32 + gbh*8 +: 8];
 		end
-		assign pt_rdata_nxt[gbh*8 +: 8] = rdata_b[rb_r2_sl[gbh]*8 +: 8];
+		assign pt_rdata_nxt[gbh*8 +: 8] = rdata_b[rb_r3_sl[gbh]*8 +: 8];
 	end
 	endgenerate
 
@@ -275,9 +363,10 @@ module atg_su_pt #(
 			pt_rd_r1_rep <= 8'd0;
 			raddr_r      <= {AW{1'b0}};
 			rb_r1        <= {$clog2(NPHYS){1'b0}};
-			for (grs = 0; grs < 4; grs = grs + 1)
+			for (grs = 0; grs < 4; grs = grs + 1) begin
 				rb_r2_sl[grs] <= {$clog2(NPHYS){1'b0}};
-			pt_rdata_r <= 32'd0;
+				rb_r3_sl[grs] <= {$clog2(NPHYS){1'b0}};
+			end
 		end else begin
 			pt_rd_r1_rep <= {8{pt_rd}};
 			if (pt_rd) begin
@@ -288,30 +377,29 @@ module atg_su_pt #(
 				for (grs = 0; grs < 4; grs = grs + 1)
 					rb_r2_sl[grs] <= rb_r1;
 			end
-			pt_rdata_r <= pt_rdata_nxt;
+			for (grs = 0; grs < 4; grs = grs + 1)
+				rb_r3_sl[grs] <= rb_r2_sl[grs];
 		end
 	end
-	assign pt_rdata = pt_rdata_r;
+	assign pt_rdata = pt_rdata_nxt;
 
 	/* ---- The allocator. */
 	reg [NB*6-1:0] cnt;	/* entries in use, 0..32 */
+	reg [NB-1:0]   cnt_z_r;
+	reg            pt_ok_r;
 	reg [NB*WARP_W-1:0] own;	/* the vertex warp that took the block */
 	reg [NB-1:0] done;
 	reg [BW-1:0] last_blk;	/* the block of the latest grant (for vl_go) */
 
 	reg [BW-1:0] fb;
-	reg any;
 	integer i;
 	always @(*) begin
-		any = 1'b0;
 		fb = {BW{1'b0}};
 		for (i = NB - 1; i >= 0; i = i - 1)
-			if (cnt[i*6 +: 6] == 6'd0) begin
-				any = 1'b1;
+			if (cnt_z_r[i])
 				fb = i[BW-1:0];
-			end
 	end
-	assign pt_ok = any;
+	assign pt_ok = pt_ok_r;
 	assign pt_base = {{(3-BW){1'b0}}, fb, 5'd0};
 	assign pt_done = {{(8-NB){1'b0}}, done};
 
@@ -343,11 +431,18 @@ module atg_su_pt #(
 	am_add #(.W(3)) u_p16_hi_add1 (.a(p4_hi[2]), .b(p4_hi[3]), .ci(1'b0), .s(p16_hi_s1[2:0]), .co(p16_hi_s1[3]));
 	am_add #(.W(4)) u_p16_hi_add2 (.a(p16_hi_s0), .b(p16_hi_s1), .ci(1'b0), .s(p16_hi_comb[3:0]), .co(p16_hi_comb[4]));
 
+	wire [5:0] p16_lo_m1_comb;
+	wire p16_m1_bo_unused;
+	am_sub #(.W(6)) u_p16_lo_m1 (
+		.a({1'b0, p16_lo_comb}), .b(6'd1), .bi(1'b0), .d(p16_lo_m1_comb), .bo(p16_m1_bo_unused)
+	);
+
 	reg vl_go_d1;
 	reg [BW-1:0] last_blk_d1;
 	reg [4:0] p16_lo_r, p16_hi_r;
-	wire [5:0] pop32_s;
-	wire pop32_co_unused;
+	reg [5:0] p16_lo_m1_r;
+	wire [5:0] pop32_s, pop32_dec;
+	wire pop32_co_unused, pop32_dec_co_unused;
 	am_add #(.W(6)) u_pop32 (
 		.a({1'b0, p16_lo_r}),
 		.b({1'b0, p16_hi_r}),
@@ -355,37 +450,61 @@ module atg_su_pt #(
 		.s(pop32_s),
 		.co(pop32_co_unused)
 	);
+	am_add #(.W(6)) u_pop32_dec (
+		.a(p16_lo_m1_r),
+		.b({1'b0, p16_hi_r}),
+		.ci(1'b0),
+		.s(pop32_dec),
+		.co(pop32_dec_co_unused)
+	);
+	wire pop32_is1 = ((p16_lo_r == 5'd1) && (p16_hi_r == 5'd0)) ||
+		((p16_lo_r == 5'd0) && (p16_hi_r == 5'd1));
 
 	wire [BW-1:0] free_blk = pt_free_idx[5 +: BW];
 	wire vl_mask_zero = (vl_mask_pt == 32'd0);
 
-	reg [5:0] cnt_free;
-	integer mxi;
-	always @(*) begin
-		cnt_free = 6'd0;
-		for (mxi = 0; mxi < NB; mxi = mxi + 1) begin
-			if (free_blk == mxi[BW-1:0])
-				cnt_free = cnt[mxi*6 +: 6];
+	wire [NB*6-1:0] cnt_dec_blk;
+	wire [NB-1:0]   cnt_is1_blk;
+	wire [NB-1:0]   cnt_dec_bo_unused;
+	genvar gcb;
+	generate
+		for (gcb = 0; gcb < NB; gcb = gcb + 1) begin : g_cnt_dec
+			wire [5:0] cnt_blk_cur = cnt[gcb*6 +: 6];
+			am_sub #(.W(6)) u_cnt_blk_dec (
+				.a(cnt_blk_cur), .b(6'd1), .bi(1'b0),
+				.d(cnt_dec_blk[gcb*6 +: 6]), .bo(cnt_dec_bo_unused[gcb])
+			);
+			assign cnt_is1_blk[gcb] = (cnt_blk_cur == 6'd1);
 		end
-	end
-	wire [5:0] cnt_free_dec;
-	wire [5:0] pop32_dec;
-	wire pt_dec_bo0, pt_dec_bo1;
-	am_sub #(.W(6)) u_cnt_dec (
-		.a(cnt_free), .b(6'd1), .bi(1'b0), .d(cnt_free_dec), .bo(pt_dec_bo0)
-	);
-	am_sub #(.W(6)) u_pop32_dec (
-		.a(pop32_s),  .b(6'd1), .bi(1'b0), .d(pop32_dec),     .bo(pt_dec_bo1)
-	);
+	endgenerate
 
 	wire [BW-1:0] end_blk = (SHARED_PT != 0) ? pt_exp_blk[BW-1:0] : wblk[wc_warp*BW +: BW];
 	wire end_own = (SHARED_PT != 0) ? (pt_exp_valid && pt_exp_ready && pt_exp_end) :
 		(wc_end && wv[wc_warp] && own[end_blk*WARP_W +: WARP_W] == wc_warp);
 
+	reg [NB-1:0] nxt_cnt_z;
+	integer cz_i;
+	always @(*) begin
+		for (cz_i = 0; cz_i < NB; cz_i = cz_i + 1) begin
+			if (pt_take && fb == cz_i[BW-1:0])
+				nxt_cnt_z[cz_i] = 1'b0;
+			else if (vl_go_pt && vl_mask_zero && last_blk == cz_i[BW-1:0])
+				nxt_cnt_z[cz_i] = 1'b1;
+			else if (vl_go_d1 && last_blk_d1 == cz_i[BW-1:0])
+				nxt_cnt_z[cz_i] = (pt_free && free_blk == cz_i[BW-1:0]) ? pop32_is1 : 1'b0;
+			else if (pt_free && free_blk == cz_i[BW-1:0])
+				nxt_cnt_z[cz_i] = cnt_is1_blk[cz_i];
+			else
+				nxt_cnt_z[cz_i] = cnt_z_r[cz_i];
+		end
+	end
+
 	integer cb_i;
 	always @(posedge clk or posedge rst_p) begin
 		if (rst_p) begin
 			cnt <= {(NB*6){1'b0}};
+			cnt_z_r <= {NB{1'b1}};
+			pt_ok_r <= 1'b1;
 			own <= {(NB*WARP_W){1'b0}};
 			done <= {NB{1'b0}};
 			last_blk <= {BW{1'b0}};
@@ -393,14 +512,18 @@ module atg_su_pt #(
 			vl_go_d1 <= 1'b0;
 			p16_lo_r <= 5'd0;
 			p16_hi_r <= 5'd0;
+			p16_lo_m1_r <= 6'd0;
 			wblk <= {(NWARPS*BW){1'b0}};
 			wv <= {NWARPS{1'b0}};
 		end else begin
+			cnt_z_r <= nxt_cnt_z;
+			pt_ok_r <= |nxt_cnt_z;
 			vl_go_d1 <= vl_go_pt && !vl_mask_zero;
 			if (vl_go_pt) begin
 				last_blk_d1 <= last_blk;
 				p16_lo_r <= p16_lo_comb;
 				p16_hi_r <= p16_hi_comb;
+				p16_lo_m1_r <= p16_lo_m1_comb;
 			end
 			for (cb_i = 0; cb_i < NB; cb_i = cb_i + 1) begin
 				if (pt_take && fb == cb_i[BW-1:0])
@@ -410,7 +533,7 @@ module atg_su_pt #(
 				else if (vl_go_d1 && last_blk_d1 == cb_i[BW-1:0])
 					cnt[cb_i*6 +: 6] <= (pt_free && free_blk == cb_i[BW-1:0]) ? pop32_dec : pop32_s;
 				else if (pt_free && free_blk == cb_i[BW-1:0])
-					cnt[cb_i*6 +: 6] <= cnt_free_dec;
+					cnt[cb_i*6 +: 6] <= cnt_dec_blk[cb_i*6 +: 6];
 			end
 			if (end_own)
 				done[end_blk] <= 1'b1;
@@ -431,7 +554,7 @@ module atg_su_pt #(
 	wire unused_ok = &{1'b0, waddr, raddr, rbank, pt_free_idx, x_valid, x_warp, x_grp, x_b, x_mask, x_info, x_uop,
 		pt_exp_valid, pt_exp_end, pt_exp_blk, pt_exp_grp, pt_exp_word, pt_exp_mask, pt_exp_data,
 		pt_warp, wc_end, wc_warp, tv_bo_unused, is_pos, is_var,
-		sc_a_co_unused, pop32_co_unused, pt_dec_bo0, pt_dec_bo1};
+		sc_a_co_unused, pop32_co_unused, pop32_dec_co_unused, p16_m1_bo_unused, cnt_dec_bo_unused};
 endmodule
 
 module atg_su_pt_pop4 (

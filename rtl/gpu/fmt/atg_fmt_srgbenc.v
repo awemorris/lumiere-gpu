@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -59,7 +59,7 @@ module atg_fmt_srgbenc (
 	reg [3:0] state;
 	reg [30:0] x;	/* the magnitude; the sign and NaN are folded to 0 on input */
 	reg [7:0] lo;
-	reg [31:0] t_mid, t_lo, t_hi, t_c3;
+	reg [31:0] t_mid, t_lo, t_hi;
 
 	wire [31:0] xf = {1'b0, x};
 	wire c1_127 = cmp_ge32(xf, atg_srgb_thr(8'd127));
@@ -88,7 +88,6 @@ module atg_fmt_srgbenc (
 			t_mid <= 32'd0;
 			t_lo <= 32'd0;
 			t_hi <= 32'd0;
-			t_c3 <= 32'd0;
 		end else begin
 			case (state)
 			S_IDLE:
@@ -126,14 +125,10 @@ module atg_fmt_srgbenc (
 				state <= S_C6;
 			end
 			S_C6: begin
-				t_lo  <= atg_srgb_thr({lo[7:3], 3'b000});
-				t_mid <= atg_srgb_thr({lo[7:3], 3'b010});
-				t_hi  <= atg_srgb_thr({lo[7:3], 3'b100});
-				t_c3  <= atg_srgb_thr({lo[7:3], 3'b110});
+				t_mid <= atg_srgb_thr({lo[7:1], 1'b0});
 				state <= S_C7;
 			end
 			S_C7: begin
-				t_mid <= lo[2] ? (lo[1] ? t_c3 : t_hi) : (lo[1] ? t_mid : t_lo);
 				state <= S_C8;
 			end
 			S_C8: begin

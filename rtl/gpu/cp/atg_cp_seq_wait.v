@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -57,6 +57,12 @@ module atg_cp_seq_wait (
 	input wire is_draw_raw,
 	input wire is_dispatch,
 	input wire is_load_const,
+	input wire p_lt_3_i,
+	input wire p_lt_4_i,
+	input wire p_lt_9_i,
+	input wire p_eq_0_i,
+	input wire is_dbg_mark_i,
+	input wire is_flip_i,
 	output reg pay_we,
 	output reg [9:0] pay_idx,
 	output reg [8:0] pay_wait,
@@ -142,18 +148,18 @@ module atg_cp_seq_wait (
 
 	wire [8:0] s9 = sidx[8:0];
 
-	wire p_lt_3 = (p[7:2] == 6'd0) && (p[1:0] != 2'd3);
-	wire p_lt_4 = (p[7:2] == 6'd0);
-	wire p_lt_9 = (p[7:3] == 5'd0) || (p == 8'd8);
-	wire p_eq_0 = (p == 8'd0);
+	wire p_lt_3 = p_lt_3_i;
+	wire p_lt_4 = p_lt_4_i;
+	wire p_lt_9 = p_lt_9_i;
+	wire p_eq_0 = p_eq_0_i;
 
 	wire pay_disp_set = set_val && (sidx[9:8] == 2'b11);
 	wire pay_set_std  = set_val && (sidx[9:8] != 2'b11);
-	wire pay_raw      = !set_val && is_draw_raw && p_lt_9;
-	wire pay_dbg      = !set_val && !is_draw_raw && vendor && (op == VOP_DBG_MARK) && p_eq_0;
-	wire pay_disp     = !set_val && !is_draw_raw && !pay_dbg && is_dispatch && p_lt_3;
-	wire pay_lc       = !set_val && !is_draw_raw && !pay_dbg && !is_dispatch && is_load_const && p_lt_3;
-	wire pay_flip     = !set_val && !is_draw_raw && !vendor && !is_ghci && !is_dispatch && !is_load_const && (op == OP_FLIP) && p_lt_4;
+	wire pay_raw      = is_draw_raw && p_lt_9;
+	wire pay_dbg      = is_dbg_mark_i && p_eq_0;
+	wire pay_disp     = is_dispatch && p_lt_3;
+	wire pay_lc       = is_load_const && p_lt_3;
+	wire pay_flip     = !set_val && is_flip_i && p_lt_4;
 
 	wire [9:0] idx_raw  = {1'b0, GHCI_S_RAW | {5'd0, p[3:0]}};
 	wire [9:0] idx_dbg  = {1'b0, GHCI_S_DBG_MARK};
@@ -179,7 +185,7 @@ module atg_cp_seq_wait (
 		 ({8{r_attr}} & B_VF));
 
 	always @(*) begin
-		pay_we = pay_disp_set || pay_set_std || pay_raw || pay_dbg || pay_disp || pay_lc || pay_flip;
+		pay_we = set_val || pay_raw || pay_dbg || pay_disp || pay_lc || pay_flip;
 		pay_idx =
 			({10{pay_disp_set || pay_set_std}} & sidx)     |
 			({10{pay_raw}}                     & idx_raw)  |
@@ -194,70 +200,61 @@ module atg_cp_seq_wait (
 			({9{pay_disp || pay_lc}}           & {1'b0, B_SU});
 	end
 
+	wire flags_z = (flags == 8'd0);
+	wire [7:0] bar_mask = flags_z ? B_ALL : (flags | B_MEM);
+
+	/* Flat one-hot opcode decodes with is_ghci at final mux to keep pre shallow. */
+	wire op_hi_z = !(op[7] | op[6]);
+	wire op_ok   = !vendor && op_hi_z;
+	wire sop_blit    = op_ok && (op[5:0] == OP_BLIT[5:0]);
+	wire sop_draw    = op_ok && (op[5:0] == OP_DRAW[5:0]);
+	wire sop_fence   = op_ok && (op[5:0] == OP_FENCE[5:0]);
+	wire sop_w_or_b  = op_ok && ((op[5:0] == OP_WAIT_IDLE[5:0]) || (op[5:0] == OP_BARRIER[5:0]));
+	wire sop_ssig    = op_ok && (op[5:0] == OP_SEMAPHORE_SIGNAL[5:0]);
+	wire sop_swait   = op_ok && (op[5:0] == OP_SEMAPHORE_WAIT[5:0]);
+	wire sop_lc      = op_ok && (op[5:0] == OP_LOAD_CONST[5:0]);
+	wire sop_res     = op_ok && (op[5:0] == OP_RESULT[5:0]);
+	wire sop_qry     = op_ok && (op[5:0] == OP_QUERY[5:0]);
+	wire sop_dset    = op_ok && (op[5:0] == OP_DISP_SET[5:0]);
+	wire sop_flip    = op_ok && (op[5:0] == OP_FLIP[5:0]);
+
+	wire gop_pipe    = op_ok && (op[5:0] == CMD_BIND_PIPELINE[5:0]);
+	wire gop_vb_ib   = op_ok && ((op[5:0] == CMD_BIND_VERTEX_BUFFERS[5:0]) || (op[5:0] == CMD_BIND_INDEX_BUFFER[5:0]));
+	wire gop_desc    = op_ok && (op[5:0] == CMD_BIND_DESCRIPTOR_TABLE[5:0]);
+	wire gop_rxrop   = op_ok && ((op[5:0] == CMD_SET_VIEWPORT[5:0]) || (op[5:0] == CMD_SET_SCISSOR[5:0]) || (op[5:0] == CMD_SET_DYNAMIC_STATE[5:0]));
+	wire gop_draw    = op_ok && ((op[5:0] == CMD_DRAW[5:0]) || (op[5:0] == CMD_DRAW_INDEXED[5:0]) || (op[5:0] == CMD_DRAW_INDIRECT[5:0]));
+	wire gop_su      = op_ok && ((op[5:0] == CMD_DISPATCH[5:0]) || (op[5:0] == CMD_DRAW_MESH_TASKS[5:0]));
+	wire gop_bar     = op_ok && (op[5:0] == CMD_BARRIER[5:0]);
+	wire gop_fence   = op_ok && (op[5:0] == CMD_FENCE[5:0]);
+
+	wire pre_all_std = sop_fence || sop_res || (sop_qry && !flags[0])
+`ifndef MUT_DISP_NOWAIT
+		|| (sop_flip && flags[0])
+`endif
+		;
+	wire pre_bar_std = sop_w_or_b || sop_ssig;
+	wire [7:0] pre_std_lo =
+		({8{vendor && op_hi_z && (op[5:0] == VOP_DRAW_RAW[5:0])}} & B_RX) |
+		({8{sop_blit}}    & B_BLT) |
+		({8{sop_draw}}    & B_VF) |
+		({8{sop_lc}}      & B_LCPRE) |
+		({8{pre_all_std}} & B_ALL) |
+		({8{pre_bar_std}} & bar_mask);
+	wire [7:0] pre_ghci_lo =
+		({8{gop_vb_ib || gop_draw}} & B_VF) |
+		({8{gop_fence}}             & B_ALL) |
+		({8{gop_bar}}               & bar_mask) |
+		({8{gop_pipe}}              & B_PROGW) |
+		({8{gop_desc}}              & B_TUW) |
+		({8{gop_rxrop}}             & B_RXROP) |
+		({8{gop_su}}                & B_SU);
+	wire [7:0] pre_lo = is_ghci ? pre_ghci_lo : pre_std_lo;
+
 	always @(*) begin
-		pre = 9'd0;
-		pre_f = 1'b0;
-		post = 9'd0;
-		if (vendor) begin
-			pre = {1'b0, op == VOP_DRAW_RAW ? B_RX : 8'd0};
-		end else if (!is_ghci) begin
-			case (op)
-			OP_BLIT: begin
-				pre = {1'b0, B_BLT};
-				post = {1'b0, flags[0] ? B_BLT : 8'd0};
-			end
-			OP_DRAW: pre = {1'b0, B_VF};
-			OP_FENCE: pre = {1'b0, B_ALL};
-			OP_WAIT_IDLE: pre = {1'b0, flags == 8'd0 ? B_ALL : flags | B_MEM};
-			OP_BARRIER: pre = {1'b0, flags == 8'd0 ? B_ALL : flags | B_MEM};
-			OP_SEMAPHORE_SIGNAL: begin
-				pre = {1'b0, flags == 8'd0 ? B_ALL : flags | B_MEM};
-				pre_f = 1'b1;
-			end
-			OP_SEMAPHORE_WAIT: begin
-				pre_f = 1'b1;
-			end
-			OP_LOAD_CONST: begin
-				pre = {1'b0, B_LCPRE};
-				post = {1'b0, B_SU};
-			end
-			OP_RESULT: begin
-				pre = {1'b0, B_ALL};
-				pre_f = 1'b1;
-			end
-			/* QUERY: as RESULT; flags[0] (clear only) does not wait */
-			OP_QUERY: begin
-				pre = {1'b0, flags[0] ? 8'd0 : B_ALL};
-				pre_f = !flags[0];
-			end
-			/* DISP_SET flags[0]: the controller's idle after the kick. */
-			OP_DISP_SET: post = flags[0] ? B_DISP : 9'd0;
-			/* FLIP: the plane free; flags[0] COMPLETE: every unit first. */
-			`ifdef MUT_DISP_NOWAIT
-			OP_FLIP: pre = B_DISP;
-			`else
-			OP_FLIP: pre = {1'b0, flags[0] ? B_ALL : 8'd0} | B_DISP;
-			`endif
-			default: ;
-			endcase
-		end else begin
-			case (op)
-			/* GHCI 1.0 Structured Commands */
-			CMD_BIND_PIPELINE: pre = {1'b0, B_PROGW};
-			CMD_BIND_VERTEX_BUFFERS, CMD_BIND_INDEX_BUFFER: pre = {1'b0, B_VF};
-			CMD_BIND_DESCRIPTOR_TABLE: pre = {1'b0, B_TUW};
-			CMD_SET_VIEWPORT, CMD_SET_SCISSOR, CMD_SET_DYNAMIC_STATE: pre = {1'b0, B_RXROP};
-			CMD_DRAW, CMD_DRAW_INDEXED, CMD_DRAW_INDIRECT: pre = {1'b0, B_VF};
-			CMD_DISPATCH, CMD_DRAW_MESH_TASKS: pre = {1'b0, B_SU};
-			CMD_BARRIER: pre = {1'b0, flags == 8'd0 ? B_ALL : flags | B_MEM};
-			CMD_EXECUTE_COMMANDS, CMD_QUERY_CAPS: pre = 9'd0;
-			CMD_FENCE: begin
-				pre = {1'b0, B_ALL};
-				pre_f = 1'b1;
-			end
-			default: ;
-			endcase
-		end
+		pre   = {!is_ghci && sop_flip, pre_lo};
+		pre_f = (!is_ghci && (sop_ssig || sop_swait || sop_res || (sop_qry && !flags[0]))) || (is_ghci && gop_fence);
+		post  = (!is_ghci && sop_dset && flags[0]) ? B_DISP :
+			{1'b0, ({8{!is_ghci && sop_blit && flags[0]}} & B_BLT) | ({8{!is_ghci && sop_lc}} & B_SU)};
 	end
 endmodule
 

@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -79,11 +79,57 @@ module atg_su_rf #(
 	wire [A_W-1:0] ra1 = ra1_32[A_W-1:0];
 	wire [A_W-1:0] ra2 = ra2_32[A_W-1:0];
 
-	wire sc_on;
+	wire sc_on_raw;
+	wire sc_on_busy, sc_on_wd, sc_on, sc_on_wa, sc_on_we;
+	wire sc_on_din_lo, sc_on_din_hi;
 	wire [A_W-1:0] sc_a;
 
+	wire scrub_sc, scrub_wd, scrub_we, scrub_ctl, scrub_ctl_a, scrub_ctl_b;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_sc_sc   (.I0(scrub),     .O(scrub_sc));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_sc_wd   (.I0(scrub),     .O(scrub_wd));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_sc_we   (.I0(scrub),     .O(scrub_we));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_sc_ctl  (.I0(scrub),     .O(scrub_ctl));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_sc_ctla (.I0(scrub),     .O(scrub_ctl_a));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_sc_ctlb (.I0(scrub),     .O(scrub_ctl_b));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rfsn_bs (.I0(sc_on_raw), .O(sc_on_busy));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rfsn_wd (.I0(sc_on_raw), .O(sc_on_wd));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rfsn_ct (.I0(sc_on_raw), .O(sc_on));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rfsn_wa (.I0(sc_on_raw), .O(sc_on_wa));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rfsn_we (.I0(sc_on_raw), .O(sc_on_we));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rfsn_dl (.I0(sc_on_raw), .O(sc_on_din_lo));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rfsn_dh (.I0(sc_on_raw), .O(sc_on_din_hi));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign scrub_sc = scrub;
+	assign scrub_wd = scrub;
+	assign scrub_we = scrub;
+	assign scrub_ctl = scrub;
+	assign scrub_ctl_a = scrub;
+	assign scrub_ctl_b = scrub;
+	assign sc_on_busy = sc_on_raw;
+	assign sc_on_wd = sc_on_raw;
+	assign sc_on = sc_on_raw;
+	assign sc_on_wa = sc_on_raw;
+	assign sc_on_we = sc_on_raw;
+	assign sc_on_din_lo = sc_on_raw;
+	assign sc_on_din_hi = sc_on_raw;
+`else
+	assign scrub_sc     = scrub;
+	assign scrub_wd     = scrub;
+	assign scrub_we     = scrub;
+	assign scrub_ctl    = scrub;
+	assign scrub_ctl_a  = scrub;
+	assign scrub_ctl_b  = scrub;
+	assign sc_on_busy   = sc_on_raw;
+	assign sc_on_wd     = sc_on_raw;
+	assign sc_on        = sc_on_raw;
+	assign sc_on_wa     = sc_on_raw;
+	assign sc_on_we     = sc_on_raw;
+	assign sc_on_din_lo = sc_on_raw;
+	assign sc_on_din_hi = sc_on_raw;
+`endif
 	atg_su_scrub #(.DEPTH(DEPTH), .AW(A_W)) sc (
-		.clk(clk), .rst_n(rst_n), .start(scrub), .on(sc_on), .a(sc_a)
+		.clk(clk), .rst_n(rst_n), .start(scrub_sc), .on(sc_on_raw), .a(sc_a)
 	);
 
 	wire [A_W-1:0] sc_a_next;
@@ -92,16 +138,18 @@ module atg_su_rf #(
 		.a(sc_a), .b({A_W{1'b0}}), .ci(1'b1), .s(sc_a_next), .co(sc_co_unused)
 	);
 
-	assign scrub_busy = sc_on;
+	assign scrub_busy = sc_on_busy;
 	/* The write port: the scrub's zeros or the write-back's data. */
 	(* dont_touch = "true" *) wire rst_p = !rst_n;
-	(* dont_touch = "true" *) wire wd_zero_all = scrub || sc_on;
+	(* dont_touch = "true" *) wire wd_zero_all = scrub_wd || sc_on_wd;
 	wire [NPHYS-1:0] wd_zero_lane;
 	genvar lz;
 	generate
 		for (lz = 0; lz < NPHYS; lz = lz + 1) begin : g_wd_z_lane
 `ifdef SYNTH_KINTEX7
 			LUT1 #(.INIT(2'h2)) u_buf_zl (.O(wd_zero_lane[lz]), .I0(wd_zero_all));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign wd_zero_lane[lz] = wd_zero_all;
 `else
 			assign wd_zero_lane[lz] = wd_zero_all;
 `endif
@@ -112,28 +160,50 @@ module atg_su_rf #(
 	(* max_fanout = 12 *) reg [NPHYS-1:0] we_r;
 	(* dont_touch = "true" *) reg [A_W-1:0] wa_r1;
 	(* dont_touch = "true" *) reg [A_W-1:0] wa_r2;
+	reg sc_last_r;
 	wire [NPHYS*32-1:0] wd_r;
 
 	always @(posedge clk or posedge rst_p) begin
 		if (rst_p) begin
-			we_r  <= {NPHYS{1'b0}};
-			wa_r1 <= {A_W{1'b0}};
-			wa_r2 <= {A_W{1'b0}};
-		end else if (scrub) begin
-			we_r  <= {NPHYS{1'b1}};
-			wa_r1 <= {A_W{1'b0}};
-			wa_r2 <= {A_W{1'b0}};
-		end else if (sc_on) begin
-			if ({{(32-A_W){1'b0}}, sc_a} == DEPTH - 1) begin
+			we_r      <= {NPHYS{1'b0}};
+			sc_last_r <= (DEPTH <= 1);
+		end else if (scrub_ctl_a) begin
+			if (scrub_we) we_r <= {NPHYS{1'b1}};
+			sc_last_r <= (DEPTH <= 1);
+		end else if (sc_on_we) begin
+			if (sc_last_r) begin
 				we_r <= {NPHYS{1'b0}};
 			end else begin
-				we_r  <= {NPHYS{1'b1}};
-				wa_r1 <= sc_a_next;
-				wa_r2 <= sc_a_next;
+				we_r      <= {NPHYS{1'b1}};
+				sc_last_r <= ({{(32-A_W){1'b0}}, sc_a} == DEPTH - 2);
 			end
 		end else begin
-			we_r  <= w_en ? w_lanes : {NPHYS{1'b0}};
+			we_r <= w_en ? w_lanes : {NPHYS{1'b0}};
+		end
+	end
+
+	always @(posedge clk or posedge rst_p) begin
+		if (rst_p) begin
+			wa_r1 <= {A_W{1'b0}};
+		end else if (scrub_ctl_b) begin
+			wa_r1 <= {A_W{1'b0}};
+		end else if (sc_on_wa) begin
+			if (!sc_last_r)
+				wa_r1 <= sc_a_next;
+		end else begin
 			wa_r1 <= wa;
+		end
+	end
+
+	always @(posedge clk or posedge rst_p) begin
+		if (rst_p) begin
+			wa_r2 <= {A_W{1'b0}};
+		end else if (scrub_ctl) begin
+			wa_r2 <= {A_W{1'b0}};
+		end else if (sc_on) begin
+			if (!sc_last_r)
+				wa_r2 <= sc_a_next;
+		end else begin
 			wa_r2 <= wa;
 		end
 	end
@@ -148,6 +218,9 @@ module atg_su_rf #(
 `ifdef SYNTH_KINTEX7
 				LUT1 #(.INIT(2'h2)) u_buf_zlo (.O(wd_zero_lo), .I0(wd_zero_lane[l]));
 				LUT1 #(.INIT(2'h2)) u_buf_zhi (.O(wd_zero_hi), .I0(wd_zero_lane[l]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				assign wd_zero_lo = wd_zero_lane[l];
+				assign wd_zero_hi = wd_zero_lane[l];
 `else
 				assign wd_zero_lo = wd_zero_lane[l];
 				assign wd_zero_hi = wd_zero_lane[l];

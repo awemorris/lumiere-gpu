@@ -29,65 +29,53 @@ module am_fp_rint #(
 	wire x_s = e_nz && x[31];
 	wire [23:0] m = {e_nz, x[22:0]};
 
-	/* Parallel suffix/prefix OR: sp[k] = |m[k-1:0] for k=1..24, sp[0]=0.
-	 * Computed directly from x in 5 OR levels in parallel with shift amount decode. */
-	wire [24:0] sp;
-	assign sp[0] = 1'b0;
-	genvar gi;
-	generate
-		for (gi = 1; gi <= 24; gi = gi + 1) begin : g_sp
-			assign sp[gi] = |m[gi-1:0];
-		end
-	endgenerate
-
 	wire e_ge150 = e[7] && (|e[6:5] || (e[4] && (e[3] || (e[2] && e[1]))));
 	wire e_lt126 = !e[7] && !(&e[6:1]);
 	wire e_hi011 = (e[7:5] == 3'b011) && (&e[4:1]);
 	wire e_hi100 = (e[7:5] == 3'b100);
 
-	/* 1-hot exponent decoder for sticky only: e_oh[k] = (e == 150 - k) for k = 2..24. */
-	wire [24:0] e_oh;
-	assign e_oh[0] = e_ge150;
-	assign e_oh[1] = e_hi100 && (e[4:0] == 5'd21);
+	/* Direct per-bit exponent-threshold sticky mask (replaces 24-bit suffix OR + 1-hot e_oh) */
+	wire [22:0] st_mask_hi;
+	wire [22:0] st_bits;
+	genvar gi;
 	generate
-		for (gi = 2; gi <= 22; gi = gi + 1) begin : g_eoh
-			localparam [4:0] TGT5 = 22 - gi;
-			assign e_oh[gi] = e_hi100 && (e[4:0] == TGT5);
+		for (gi = 0; gi <= 20; gi = gi + 1) begin : g_st_mask
+			localparam [4:0] MAX_E5 = 20 - gi;
+			assign st_mask_hi[gi] = e_hi011 || (e_hi100 && (e[4:0] <= MAX_E5));
+			assign st_bits[gi]    = m[gi] && st_mask_hi[gi];
 		end
 	endgenerate
-	assign e_oh[23] = e_hi011 &&  e[0];
-	assign e_oh[24] = e_hi011 && !e[0];
+	assign st_mask_hi[21] = e_hi011;
+	assign st_bits[21]    = m[21] && st_mask_hi[21];
+	assign st_mask_hi[22] = e_hi011 && !e[0];
+	assign st_bits[22]    = m[22] && st_mask_hi[22];
 
-	wire st_lo = e_lt126 && e_nz && sp[24];
-	wire st_hi = |(e_oh[24:2] & sp[23:1]);
+	wire st_lo = e_lt126 && e_nz && (|m);
+	wire st_hi = |st_bits;
 	wire st = st_lo || st_hi;
 
-	/* Direct 2-stage right shift on {m, 1'b0}: lo_oh from e[1:0], hi_oh from e[4:0], mask e_lt126 after shift. */
-	wire [3:0] lo_oh = {
-		!e_ge150 && (e[1:0] == 2'd3),
-		!e_ge150 && (e[1:0] == 2'd0),
-		!e_ge150 && (e[1:0] == 2'd1),
-		 e_ge150 || (e[1:0] == 2'd2)
-	};
+	/* Direct 2-stage right shift aligned to e[7:2] (single LUT6 per hi_oh bit). */
 	wire [6:0] hi_oh = {
-		e_hi011 && !e[0],
-		(e_hi100 && (e[4:0] <= 5'd2)) || (e_hi011 && e[0]),
-		e_hi100 && (e[4:0] >= 5'd3  && e[4:0] <= 5'd6),
-		e_hi100 && (e[4:0] >= 5'd7  && e[4:0] <= 5'd10),
-		e_hi100 && (e[4:0] >= 5'd11 && e[4:0] <= 5'd14),
-		e_hi100 && (e[4:0] >= 5'd15 && e[4:0] <= 5'd18),
-		e_ge150 || (e_hi100 && (e[4:0] >= 5'd19 && e[4:0] <= 5'd21))
+		(e[7:2] == 6'd31),
+		(e[7:2] == 6'd32),
+		(e[7:2] == 6'd33),
+		(e[7:2] == 6'd34),
+		(e[7:2] == 6'd35),
+		(e[7:2] == 6'd36),
+		(e[7:2] == 6'd37)
 	};
 
-	wire [28:0] pre_sh_g = {4'd0, m, 1'b0};
+	wire [28:0] pre_sh_g = {3'd0, m, 2'd0};
 	wire [25:0] s1_sh;
 	wire [49:0] s1_sh_p = {24'd0, s1_sh};
 	wire [25:0] sh_out;
 	generate
 		for (gi = 0; gi < 26; gi = gi + 1) begin : g_s1_sh
 			assign s1_sh[gi] =
-				(lo_oh[0] & pre_sh_g[gi])     | (lo_oh[1] & pre_sh_g[gi + 1]) |
-				(lo_oh[2] & pre_sh_g[gi + 2]) | (lo_oh[3] & pre_sh_g[gi + 3]);
+				(e[1:0] == 2'd3) ? pre_sh_g[gi]     :
+				(e[1:0] == 2'd2) ? pre_sh_g[gi + 1] :
+				(e[1:0] == 2'd1) ? pre_sh_g[gi + 2] :
+				                   pre_sh_g[gi + 3];
 		end
 		for (gi = 0; gi < 26; gi = gi + 1) begin : g_s2_sh
 			assign sh_out[gi] =
@@ -98,8 +86,8 @@ module am_fp_rint #(
 		end
 	endgenerate
 
-	wire [24:0] sh_m = e_lt126 ? 25'd0 : sh_out[25:1];
-	wire g = !e_lt126 && sh_out[0];
+	wire [24:0] sh_m = sh_out[25:1];
+	wire g = sh_out[0];
 	wire q_lsb = sh_m[0];
 
 	reg up;
@@ -128,9 +116,9 @@ module am_fp_rint #(
 		end
 	endgenerate
 	assign inc_raw[24] = inc_p4[6];
-	assign n = sh_m ^ ({25{up}} & inc_raw);
+	assign n = e_ge150 ? {1'b0, m} : (sh_m ^ ({25{up}} & inc_raw));
 
-	wire unused_ok = &{1'b0, pre_sh_g[28:26], s1_sh_p[49:26], sp[0], e_oh[1:0]};
+	wire unused_ok = &{1'b0, pre_sh_g[28:26], s1_sh_p[49:26]};
 endmodule
 
 `default_nettype wire

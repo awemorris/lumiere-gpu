@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -79,18 +79,39 @@ module atg_mc_grant #(
 		end
 	end
 
-	/* Parallel per-entry match + OR reduction keeps depth O(1) for NGRANT=64. */
+	/* Parallel per-entry chunked compare + OR reduction keeps depth <= 10 cmos3 for NGRANT=64. */
 	wire [NGRANT-1:0] entry_hit;
 	genvar gk;
 	generate
 		for (gk = 0; gk < NGRANT; gk = gk + 1) begin : g_ent
+			wire [19:0] eb = e_base[gk*20 +: 20];
+			wire [20:0] el = e_limit[gk*21 +: 21];
 			wire dir_ok = write ? e_write[gk] : e_read[gk];
 			wire slot_ok = e_slot[gk*6 +: 6] == slot;
-			wire lo_ok = e_base[gk*20 +: 20] <= g;
+
+			/* Chunked unsigned eb <= g (5+5+5+5) */
+			wire le_b0 = eb[4:0] <= g[4:0];
+			wire eq_b1 = eb[9:5] == g[9:5];
+			wire lt_b1 = eb[9:5] <  g[9:5];
+			wire eq_b2 = eb[14:10] == g[14:10];
+			wire lt_b2 = eb[14:10] <  g[14:10];
+			wire eq_b3 = eb[19:15] == g[19:15];
+			wire lt_b3 = eb[19:15] <  g[19:15];
+			wire lo_ok = lt_b3 || (eq_b3 && (lt_b2 || (eq_b2 && (lt_b1 || (eq_b1 && le_b0)))));
+
+			/* Chunked unsigned {1'b0, g} < el (5+5+5+6) */
+			wire lt_l0 = g[4:0] < el[4:0];
+			wire eq_l1 = g[9:5] == el[9:5];
+			wire lt_l1 = g[9:5] < el[9:5];
+			wire eq_l2 = g[14:10] == el[14:10];
+			wire lt_l2 = g[14:10] < el[14:10];
+			wire eq_l3 = {1'b0, g[19:15]} == el[20:15];
+			wire lt_l3 = {1'b0, g[19:15]} < el[20:15];
 `ifdef MUT_PROT_LIMIT
-			wire hi_ok = {1'b0, g} <= e_limit[gk*21 +: 21];
+			wire le_l0 = g[4:0] <= el[4:0];
+			wire hi_ok = lt_l3 || (eq_l3 && (lt_l2 || (eq_l2 && (lt_l1 || (eq_l1 && le_l0)))));
 `else
-			wire hi_ok = {1'b0, g} < e_limit[gk*21 +: 21];
+			wire hi_ok = lt_l3 || (eq_l3 && (lt_l2 || (eq_l2 && (lt_l1 || (eq_l1 && lt_l0)))));
 `endif
 			assign entry_hit[gk] = e_valid[gk] && dir_ok && slot_ok && lo_ok && hi_ok;
 		end

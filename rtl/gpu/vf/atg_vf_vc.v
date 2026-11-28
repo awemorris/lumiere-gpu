@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -40,122 +40,123 @@ module atg_vf_vc #(
 	input  wire [31:0] commit_index,
 	input  wire [VDATA_W-1:0] commit_vdata
 );
-	reg [31:0]        entry_idx   [0:NENTRIES-1];
-	reg [VDATA_W-1:0] entry_vdata [0:NENTRIES-1];
+	(* keep = "true" *) wire rst_sync = !rst_n;
+
+	reg [31:0]         entry_idx   [0:NENTRIES-1];
+	reg [VDATA_W-1:0]  entry_vdata [0:NENTRIES-1];
 	reg [NENTRIES-1:0] entry_valid;
-	reg [SLOT_W-1:0]  victim_ptr;
+	reg [NENTRIES-1:0] alloc_ptr_oh;
 
-	wire [SLOT_W-1:0] victim_ptr_next;
-	wire victim_ptr_co_unused;
-	am_add #(.W(SLOT_W)) u_inc_victim (
-		.a(victim_ptr),
-		.b({{SLOT_W-1{1'b0}}, 1'b1}),
-		.ci(1'b0),
-		.s(victim_ptr_next),
-		.co(victim_ptr_co_unused)
-	);
+	reg                c1_valid;
+	reg [31:0]         c1_idx;
+	reg [VDATA_W-1:0]  c1_vdata;
+	reg [NENTRIES-1:0] c1_match;
 
-	function [4:0] prio32;
-		input [31:0] m;
-		casez (m)
-		32'b???????????????????????????????1: prio32 = 5'd0;
-		32'b??????????????????????????????10: prio32 = 5'd1;
-		32'b?????????????????????????????100: prio32 = 5'd2;
-		32'b????????????????????????????1000: prio32 = 5'd3;
-		32'b???????????????????????????10000: prio32 = 5'd4;
-		32'b??????????????????????????100000: prio32 = 5'd5;
-		32'b?????????????????????????1000000: prio32 = 5'd6;
-		32'b????????????????????????10000000: prio32 = 5'd7;
-		32'b???????????????????????100000000: prio32 = 5'd8;
-		32'b??????????????????????1000000000: prio32 = 5'd9;
-		32'b?????????????????????10000000000: prio32 = 5'd10;
-		32'b????????????????????100000000000: prio32 = 5'd11;
-		32'b???????????????????1000000000000: prio32 = 5'd12;
-		32'b??????????????????10000000000000: prio32 = 5'd13;
-		32'b?????????????????100000000000000: prio32 = 5'd14;
-		32'b????????????????1000000000000000: prio32 = 5'd15;
-		32'b???????????????10000000000000000: prio32 = 5'd16;
-		32'b??????????????100000000000000000: prio32 = 5'd17;
-		32'b?????????????1000000000000000000: prio32 = 5'd18;
-		32'b????????????10000000000000000000: prio32 = 5'd19;
-		32'b???????????100000000000000000000: prio32 = 5'd20;
-		32'b??????????1000000000000000000000: prio32 = 5'd21;
-		32'b?????????10000000000000000000000: prio32 = 5'd22;
-		32'b????????100000000000000000000000: prio32 = 5'd23;
-		32'b???????1000000000000000000000000: prio32 = 5'd24;
-		32'b??????10000000000000000000000000: prio32 = 5'd25;
-		32'b?????100000000000000000000000000: prio32 = 5'd26;
-		32'b????1000000000000000000000000000: prio32 = 5'd27;
-		32'b???10000000000000000000000000000: prio32 = 5'd28;
-		32'b??100000000000000000000000000000: prio32 = 5'd29;
-		32'b?1000000000000000000000000000000: prio32 = 5'd30;
-		32'b10000000000000000000000000000000: prio32 = 5'd31;
-		default: prio32 = 5'd0;
-		endcase
-	endfunction
+	/* Stage C1 commit resolution (<= 7 cmos3 gates from FFs) */
+	wire c1_hit = |c1_match;
+	wire [NENTRIES-1:0] c1_alloc_oh = c1_hit ? c1_match : alloc_ptr_oh;
 
-	/* CAM Lookup logic */
-	wire [NENTRIES-1:0] match_vec;
+	/* Stage C0 incoming commit match (with 1-cycle C1 forwarding) */
+	wire [NENTRIES-1:0] c0_match;
 	genvar gi;
 	generate
-		for (gi = 0; gi < NENTRIES; gi = gi + 1) begin: g_match
-			assign match_vec[gi] = entry_valid[gi] && (entry_idx[gi] == lookup_index);
-		end
-	endgenerate
-
-	wire is_hit = lookup_valid && (|match_vec);
-	wire [4:0] hit_idx = prio32(match_vec);
-
-	assign hit = is_hit;
-	assign hit_slot = hit_idx;
-	assign hit_vdata = entry_vdata[hit_idx];
-
-	/* Commit logic */
-	wire [NENTRIES-1:0] commit_match_vec;
-	generate
 		for (gi = 0; gi < NENTRIES; gi = gi + 1) begin: g_commit_match
-			assign commit_match_vec[gi] = entry_valid[gi] && (entry_idx[gi] == commit_index);
+			assign c0_match[gi] = entry_valid[gi] && (entry_idx[gi] == commit_index);
+		end
+	endgenerate
+	wire c0_same_c1 = c1_valid && (commit_index == c1_idx);
+	wire [NENTRIES-1:0] c0_match_fwd = c0_same_c1 ? c1_alloc_oh :
+		((c1_valid && !c1_hit) ? (c0_match & ~alloc_ptr_oh) : c0_match);
+
+	/* CAM Lookup logic (0-cycle, including Stage C1 bypass and miss-evict mask) */
+	wire c1_hit_lu = c1_valid && (c1_idx == lookup_index);
+	wire [NENTRIES-1:0] c1_mask_oh = c1_valid ? c1_alloc_oh : {NENTRIES{1'b0}};
+	wire [NENTRIES-1:0] match_vec;
+	generate
+		for (gi = 0; gi < NENTRIES; gi = gi + 1) begin: g_match
+			assign match_vec[gi] = entry_valid[gi] && !c1_mask_oh[gi] && (entry_idx[gi] == lookup_index);
 		end
 	endgenerate
 
-	wire commit_hit = |commit_match_vec;
-	wire [4:0] commit_hit_slot = prio32(commit_match_vec);
+	wire cam_hit   = |match_vec;
+	assign hit = lookup_valid && (c1_hit_lu || cam_hit);
 
-	wire [31:0] free_vec = ~entry_valid;
-	wire has_free = |free_vec;
-	wire [4:0] free_slot = prio32(free_vec);
-
-	wire [4:0] alloc_slot = commit_hit ? commit_hit_slot :
-		(has_free ? free_slot : victim_ptr);
-
-	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n) begin
-			entry_valid <= {NENTRIES{1'b0}};
-			victim_ptr  <= 5'd0;
-		end else if (flush) begin
-			entry_valid <= {NENTRIES{1'b0}};
-			victim_ptr  <= 5'd0;
-		end else if (commit_valid) begin
-			entry_valid[alloc_slot] <= 1'b1;
-			if (!commit_hit && !has_free)
-				victim_ptr <= victim_ptr_next;
-		end
-	end
-
-	integer i;
-	always @(posedge clk) begin
-		if (flush) begin
-			for (i = 0; i < NENTRIES; i = i + 1) begin
-				entry_idx[i]   <= 32'd0;
-				entry_vdata[i] <= {VDATA_W{1'b0}};
+	/* One-hot to binary slot index (OR-mask tree, 0-cycle) */
+	wire [SLOT_W-1:0] cam_slot, c1_slot;
+	generate
+		for (gi = 0; gi < SLOT_W; gi = gi + 1) begin: g_slot_enc
+			wire [NENTRIES-1:0] cam_sbits, c1_sbits;
+			genvar sj;
+			for (sj = 0; sj < NENTRIES; sj = sj + 1) begin: g_sb
+				assign cam_sbits[sj] = ((sj >> gi) & 1) ? match_vec[sj] : 1'b0;
+				assign c1_sbits[sj]  = ((sj >> gi) & 1) ? c1_alloc_oh[sj] : 1'b0;
 			end
-		end else if (commit_valid) begin
-			entry_idx[alloc_slot]   <= commit_index;
-			entry_vdata[alloc_slot] <= commit_vdata;
+			assign cam_slot[gi] = |cam_sbits;
+			assign c1_slot[gi]  = |c1_sbits;
+		end
+	endgenerate
+	assign hit_slot = c1_hit_lu ? c1_slot : cam_slot;
+
+	/* Balanced 33-to-1 DeMorgan NAND/NOR OR-AND tree for hit_vdata (entries 0..31 + C1 bypass at 32) */
+	wire [VDATA_W-1:0] vd_n0 [0:32];
+	wire [VDATA_W-1:0] vd_p1 [0:10];
+	wire [VDATA_W-1:0] vd_n2 [0:3];
+	wire [VDATA_W-1:0] vd_p3 [0:1];
+	generate
+		for (gi = 0; gi < 32; gi = gi + 1) begin: g_vd0
+			assign vd_n0[gi] = ~(entry_vdata[gi] & {VDATA_W{match_vec[gi]}});
+		end
+		assign vd_n0[32] = ~(c1_vdata & {VDATA_W{c1_hit_lu}});
+		for (gi = 0; gi < 11; gi = gi + 1) begin: g_vd1
+			assign vd_p1[gi] = ~(vd_n0[3*gi] & vd_n0[3*gi+1] & vd_n0[3*gi+2]);
+		end
+		for (gi = 0; gi < 3; gi = gi + 1) begin: g_vd2
+			assign vd_n2[gi] = ~(vd_p1[3*gi] | vd_p1[3*gi+1] | vd_p1[3*gi+2]);
+		end
+		assign vd_n2[3] = ~(vd_p1[9] | vd_p1[10]);
+		assign vd_p3[0] = ~(vd_n2[0] & vd_n2[1]);
+		assign vd_p3[1] = ~(vd_n2[2] & vd_n2[3]);
+	endgenerate
+	assign hit_vdata = vd_p3[0] | vd_p3[1];
+
+	always @(posedge clk or posedge rst_sync) begin
+		if (rst_sync) begin
+			entry_valid  <= {NENTRIES{1'b0}};
+			alloc_ptr_oh <= {{NENTRIES-1{1'b0}}, 1'b1};
+			c1_valid     <= 1'b0;
+			c1_idx       <= 32'd0;
+			c1_vdata     <= {VDATA_W{1'b0}};
+			c1_match     <= {NENTRIES{1'b0}};
+		end else if (flush) begin
+			entry_valid  <= {NENTRIES{1'b0}};
+			alloc_ptr_oh <= {{NENTRIES-1{1'b0}}, 1'b1};
+			c1_valid     <= 1'b0;
+			c1_match     <= {NENTRIES{1'b0}};
+		end else begin
+			if (c1_valid) begin
+				entry_valid <= entry_valid | c1_alloc_oh;
+				if (!c1_hit)
+					alloc_ptr_oh <= {alloc_ptr_oh[NENTRIES-2:0], alloc_ptr_oh[NENTRIES-1]};
+			end
+			c1_valid <= commit_valid;
+			if (commit_valid) begin
+				c1_idx   <= commit_index;
+				c1_vdata <= commit_vdata;
+				c1_match <= c0_match_fwd;
+			end
 		end
 	end
 
-	wire unused_ok = &{1'b0, victim_ptr_co_unused};
+	generate
+		for (gi = 0; gi < NENTRIES; gi = gi + 1) begin: g_entry_wr
+			always @(posedge clk) begin
+				if (c1_valid && c1_alloc_oh[gi]) begin
+					entry_idx[gi]   <= c1_idx;
+					entry_vdata[gi] <= c1_vdata;
+				end
+			end
+		end
+	endgenerate
 endmodule
 
 `default_nettype wire

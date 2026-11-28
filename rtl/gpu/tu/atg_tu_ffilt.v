@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -297,7 +297,10 @@ module atg_tu_ffilt (
 	end
 	endgenerate
 
-	(* keep_hierarchy = "yes" *) atg_tu_ffront front (
+`ifndef SYNTH_ASIC
+	(* keep_hierarchy = "yes" *)
+`endif
+	atg_tu_ffront front (
 		.clk(clk), .rst_n(rst_n), .i_vld(issue), .i_op(iop), .i_cs(gathq ? gsrc : c),
 		.i_aid(aid), .i_t_slw(cur_it_slw), .i_t_aux(cur_it_aux), .i_sl(front_sl), .i_bd(bd[cur_ik_aux*4 +: 4]),
 		.i_lo(lo[cur_ik_aux*8 +: 8]), .i_ft(ift), .i_wl(front_wl), .i_bil(bil),
@@ -357,7 +360,10 @@ module atg_tu_ffilt (
 	end
 	endgenerate
 
-	(* keep_hierarchy = "yes" *) atg_tu_fma #(.TW(4)) fma (
+`ifndef SYNTH_ASIC
+	(* keep_hierarchy = "yes" *)
+`endif
+	atg_tu_fma #(.TW(4)) fma (
 		.clk(clk), .rst_n(rst_n), .i_vld(vldv && opv == OP_FMA), .i_tag(aidv),
 		.i_a(wfv), .i_b(val), .c_vld(f_cvld), .c_tag(f_ctag), .c_val(fma_c_val),
 		.rm(3'd0), .noc(1'b0),

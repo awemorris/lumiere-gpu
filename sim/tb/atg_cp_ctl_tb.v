@@ -198,6 +198,7 @@ module atg_cp_ctl_tb;
 		input [31:0] info;
 		input [31:0] addr;
 		begin
+			@(negedge clk);
 			hcr_read(GHCI_REG_FAULT_INFO[11:0], v);
 			if (v !== info) begin
 				errors = errors + 1;
@@ -651,6 +652,7 @@ module atg_cp_ctl_tb;
 		nocpu_mc_fault = 1;
 		@(negedge clk);
 		nocpu_mc_fault = 0;
+		@(negedge clk);
 		#1;
 		if (nocpu_rdata[7:4] !== GHCI_FAULT_UNIT_VF) begin
 			errors = errors + 1;

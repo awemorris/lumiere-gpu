@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -34,18 +34,19 @@ module atg_tu_fsum (
 	genvar g;
 	generate
 	for (g = 0; g < 4; g = g + 1) begin : g_pr
-		am_mul #(.AW(8), .BW(17), .SIGNED(0), .LAT(2)) u_pr (
+		am_mul #(.AW(8), .BW(17), .SIGNED(0), .LAT(3)) u_pr (
 			.clk(clk), .en(1'b1), .a(i_by[g*8 +: 8]), .b(i_w[g*17 +: 17]), .p(pr[g])
 		);
 	end
 	endgenerate
 
-	reg [16:0] wp6, wp7, wp8, wp9;
+	reg [16:0] wp6, wp7, wp8, wp9, wp10;
 	always @(posedge clk) begin
-		wp6 <= i_wp;
-		wp7 <= wp6;
-		wp8 <= wp7;
-		wp9 <= wp8;
+		wp6  <= i_wp;
+		wp7  <= wp6;
+		wp8  <= wp7;
+		wp9  <= wp8;
+		wp10 <= wp9;
 	end
 
 	wire [25:0] s01, s23, rs;
@@ -67,8 +68,8 @@ module atg_tu_fsum (
 
 	wire [40:0] rw11;
 
-	am_mul #(.AW(24), .BW(17), .SIGNED(0), .LAT(2)) u_rw (
-		.clk(clk), .en(1'b1), .a(r9), .b(wp9), .p(rw11)
+	am_mul #(.AW(24), .BW(17), .SIGNED(0), .LAT(3)) u_rw (
+		.clk(clk), .en(1'b1), .a(r9), .b(wp10), .p(rw11)
 	);
 	am_add #(.W(40)) u_rr (.a(i_acc ? i_al : 40'd0), .b(rw11[39:0]), .ci(1'b0), .s(o_rr),
 		.co(s_nc[3]));

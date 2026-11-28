@@ -92,6 +92,59 @@ module am_shift #(
 		end
 	end
 	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	/* Kintex-7 FPGA implementation: direct shift operations mapped to LUT6/MUXF7/MUXF8 or DSP */
+	generate
+	if (USE_DSP != 0) begin : g_dsp_k7
+		(* use_dsp = "yes" *) wire [W-1:0] rsh_dsp;
+		(* use_dsp = "yes" *) wire [W-1:0] lsh_dsp;
+		if (DIR != 2) begin : g_rsh_dsp
+			wire fill = ((DIR == 1) ? arith : (!left && arith)) ? a[W - 1] : 1'b0;
+			wire [W-1:0] log_rsh = a >> amt;
+			wire [W-1:0] mask = ~({W{1'b1}} >> amt);
+			assign rsh_dsp = fill ? (log_rsh | mask) : log_rsh;
+		end else begin : g_rsh_stub
+			assign rsh_dsp = {W{1'b0}};
+		end
+
+		if (DIR != 1) begin : g_lsh_dsp
+			assign lsh_dsp = a << amt;
+		end else begin : g_lsh_stub
+			assign lsh_dsp = {W{1'b0}};
+		end
+
+		if (DIR == 1) begin : g_out_r
+			assign y = rsh_dsp;
+		end else if (DIR == 2) begin : g_out_l
+			assign y = lsh_dsp;
+		end else begin : g_out_dyn
+			assign y = left ? lsh_dsp : rsh_dsp;
+		end
+	end else begin : g_lut_k7
+		if (DIR != 2) begin : g_rsh_k7
+			wire fill = ((DIR == 1) ? arith : (!left && arith)) ? a[W - 1] : 1'b0;
+			wire [W-1:0] log_rsh = a >> amt;
+			wire [W-1:0] mask = ~({W{1'b1}} >> amt);
+			assign rsh = fill ? (log_rsh | mask) : log_rsh;
+		end else begin : g_rsh_stub
+			assign rsh = {W{1'b0}};
+		end
+
+		if (DIR != 1) begin : g_lsh_k7
+			assign lsh = a << amt;
+		end else begin : g_lsh_stub
+			assign lsh = {W{1'b0}};
+		end
+
+		if (DIR == 1) begin : g_out_r
+			assign y = rsh;
+		end else if (DIR == 2) begin : g_out_l
+			assign y = lsh;
+		end else begin : g_out_dyn
+			assign y = left ? lsh : rsh;
+		end
+	end
+	endgenerate
 `elsif SYNTH_ASIC
 	localparam NNIB = (W + 3) / 4;
 	localparam NBR = (NNIB + 3) / 4;

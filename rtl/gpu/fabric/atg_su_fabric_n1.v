@@ -48,6 +48,7 @@ module atg_su_fabric_n1 #(
 	parameter SU_RW = 1,
 	parameter FW = LINE_BYTES * 8,
 	parameter RFW = LINE_BYTES * 8 + 10 + SU_RW,
+	parameter REP_STAGES = 0,
 	parameter PT_W = 1 + 3 + GRP_W + 7 + NPHYS + NPHYS * 32
 ) (
 	input wire clk,
@@ -190,6 +191,42 @@ module atg_su_fabric_n1 #(
 	localparam [SU_RW-1:0] ROUTE_I0 = {{(SU_RW > 1 ? SU_RW - 1 : 1){1'b0}}, 1'b1};
 	wire unused_rop = 1'b0 && (HAS_ROP != 0);
 
+	/* 1-hop NoC + control/status repeater isolating SU tile from trunk & spine */
+	wire r_st_we, r_cs_kick, r_cs_mesh, r_lc_kick, r_scrub;
+	wire [8:0] r_st_idx;
+	wire [31:0] r_st_wdata;
+	wire [3:0] r_inv, r_session_id;
+	wire t_req_valid, t_req_ready, t_req_last;
+	wire [FW-1:0] t_req_data;
+	wire t_rsp_valid, t_rsp_ready;
+	wire [RFW-1:0] t_rsp_data;
+	wire t_busy, t_scrub_busy, t_fault;
+	wire [31:0] t_fault_addr;
+	wire [3:0] t_fault_stage;
+	wire r_rsp_idle_unused;
+
+	atg_rep #(.FW(FW), .RFW(RFW), .STAGES(REP_STAGES)) u_rep_su0 (
+		.clk(clk), .rst_n(rst_n), .core_rst_n(rst_n), .flush(flush),
+		.dn_req_valid(t_req_valid), .dn_req_ready(t_req_ready),
+		.dn_req_data(t_req_data), .dn_req_last(t_req_last),
+		.up_req_valid(trunk_req_valid[0]), .up_req_ready(trunk_req_ready[0]),
+		.up_req_data(trunk_req_data), .up_req_last(trunk_req_last[0]),
+		.up_rsp_valid(trunk_rsp_valid[0]), .up_rsp_ready(trunk_rsp_ready[0]),
+		.up_rsp_data(trunk_rsp_data),
+		.dn_rsp_valid(t_rsp_valid), .dn_rsp_ready(t_rsp_ready),
+		.dn_rsp_data(t_rsp_data), .rsp_idle(r_rsp_idle_unused),
+		.in_st_we(st_we), .in_st_idx(st_idx), .in_st_wdata(st_wdata),
+		.in_cs_kick(cs_kick), .in_cs_mesh(cs_mesh), .in_lc_kick(lc_kick),
+		.in_inv(inv), .in_scrub(scrub), .in_session_id(session_id),
+		.out_st_we(r_st_we), .out_st_idx(r_st_idx), .out_st_wdata(r_st_wdata),
+		.out_cs_kick(r_cs_kick), .out_cs_mesh(r_cs_mesh), .out_lc_kick(r_lc_kick),
+		.out_inv(r_inv), .out_scrub(r_scrub), .out_session_id(r_session_id),
+		.in_busy(t_busy), .in_scrub_busy(t_scrub_busy), .in_fault(t_fault),
+		.in_fault_addr(t_fault_addr), .in_fault_stage(t_fault_stage),
+		.out_busy(busy), .out_scrub_busy(scrub_busy), .out_fault(fault),
+		.out_fault_addr(fault_addr), .out_fault_stage(fault_stage)
+	);
+
 	atg_su_tile #(
 		.NPHYS(NPHYS), .NWARPS(NWARPS), .WARP_W(WARP_W), .GRP_W(GRP_W),
 		.NREGS(NREGS), .SB_ENTRIES(SB_ENTRIES), .SBE_W(SBE_W), .NSU(1),
@@ -203,9 +240,9 @@ module atg_su_fabric_n1 #(
 		.RBIT_SU(10), .FW(FW), .RFW(RFW), .PT_W(PT_W)
 	) su0 (
 		.clk(clk), .rst_n(rst_n), .flush(flush),
-		.st_we(st_we), .st_idx(st_idx), .st_wdata(st_wdata),
-		.cs_kick(cs_kick), .cs_mesh(cs_mesh), .lc_kick(lc_kick), .inv(inv),
-		.scrub(scrub), .session_id(session_id),
+		.st_we(r_st_we), .st_idx(r_st_idx), .st_wdata(r_st_wdata),
+		.cs_kick(r_cs_kick), .cs_mesh(r_cs_mesh), .lc_kick(r_lc_kick), .inv(r_inv),
+		.scrub(r_scrub), .session_id(r_session_id),
 		.vl_req(vl_req), .vl_gnt(vl_gnt), .vl_ptbase(vl_ptbase), .vl_avail(vl_avail),
 		.vl_we(vl_we), .vl_reg(vl_reg), .vl_lane(vl_lane), .vl_data(vl_data),
 		.vl_go(vl_go), .vl_mask(vl_mask), .vl_go_ptbase(vl_go_ptbase),
@@ -228,10 +265,10 @@ module atg_su_fabric_n1 #(
 		.ex_next(ex_next), .ex_aux(ex_aux),
 		.mesh_valid(su0_mesh_valid), .mesh_ready(su0_mesh_ready), .mesh_tri(su0_mesh_tri),
 		.mesh_last(su0_mesh_last), .mesh_id(su0_mesh_id),
-		.t_req_valid(trunk_req_valid[0]), .t_req_ready(trunk_req_ready[0]),
-		.t_req_data(trunk_req_data), .t_req_last(trunk_req_last[0]),
-		.t_rsp_valid(trunk_rsp_valid[0]), .t_rsp_ready(trunk_rsp_ready[0]),
-		.t_rsp_data(trunk_rsp_data),
+		.t_req_valid(t_req_valid), .t_req_ready(t_req_ready),
+		.t_req_data(t_req_data), .t_req_last(t_req_last),
+		.t_rsp_valid(t_rsp_valid), .t_rsp_ready(t_rsp_ready),
+		.t_rsp_data(t_rsp_data),
 		.at_valid(at_valid), .at_stage(at_stage), .at_ready(at_ready),
 		.at_op(at_op), .at_addr(at_addr), .at_a(at_a), .at_b(at_b),
 		.at_rsp_valid(at_rsp_valid), .at_old(at_old), .at_error(at_error),
@@ -241,8 +278,8 @@ module atg_su_fabric_n1 #(
 		.sa_pop_data(su0_sa_pop_data),
 		.sa_ctl_valid(su0_sa_ctl_valid), .sa_ctl_data(su0_sa_ctl_data),
 		.sa_qstat(su0_sa_qstat), .sa_stat(su0_sa_stat), .sa_qtag(su0_sa_qtag),
-		.busy(busy), .scrub_busy(scrub_busy), .fault(fault),
-		.fault_addr(fault_addr), .fault_stage(fault_stage), .fsm(fsm0)
+		.busy(t_busy), .scrub_busy(t_scrub_busy), .fault(t_fault),
+		.fault_addr(t_fault_addr), .fault_stage(t_fault_stage), .fsm(fsm0)
 	);
 endmodule
 

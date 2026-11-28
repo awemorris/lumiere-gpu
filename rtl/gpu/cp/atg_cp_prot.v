@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -140,13 +140,12 @@ module atg_cp_prot #(
 
 	reg [255:0] map_v;
 	reg [255:0] map_faulted;
+	reg [63:0] slot_faulted;
 	reg [5:0] map_d [0:255];
 	reg [63:0] tag_v;
 	reg [7:0] tag_d [0:63];
 	reg [6:0] n_slots;
 
-	wire [5:0] map_u = map_v[u_tag] ? map_d[u_tag] : 6'd0;
-	assign v_slot = map_v[v_tag] ? map_d[v_tag] : 6'd0;
 	wire [7:0] w_tag = sb_wdata[7:0];
 	wire [5:0] w_slot = sb_wdata[13:8];
 	wire [5:0] w_old = map_v[w_tag] ? map_d[w_tag] : 6'd0;
@@ -164,23 +163,66 @@ module atg_cp_prot #(
 		.a(n_slots), .b({{6{ns_dec && !ns_inc}}, ns_inc ^ ns_dec}), .ci(1'b0), .s(n_slots_n),
 		.co(ns_co)
 	);
+	reg [7:0] unit_tag_r;
+	reg [7:0] tgt_tag_r;
 	assign fault_tag = tag_v[fault_slot] ? tag_d[fault_slot] : 8'd0;
-	assign unit_tag = tag_v[prot_unit] ? tag_d[prot_unit] : 8'd0;
+	assign unit_tag = unit_tag_r;
+
+	/* Pipelined fault_clear decode (fanout <= 16, depth <= 8). */
+	reg fc_en_r, fc_en_r2;
+	reg [7:0] fc_tag_r;
+	reg [15:0] fc_en_hi_r;
+	reg [15:0] fc_lo_oh_r;
+	reg [5:0] fc_map_d_16 [0:15];
+	reg [5:0] fc_slot_r;
+	integer fi;
+
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			fc_en_r <= 1'b0;
+			fc_en_r2 <= 1'b0;
+			fc_tag_r <= 8'd0;
+			fc_en_hi_r <= 16'd0;
+			fc_lo_oh_r <= 16'd0;
+			fc_slot_r <= 6'd0;
+			for (fi = 0; fi < 16; fi = fi + 1)
+				fc_map_d_16[fi] <= 6'd0;
+		end else begin
+			fc_en_r <= fault_clear_en && (fault_clear_tag != 8'd0);
+			fc_tag_r <= fault_clear_tag;
+			for (fi = 0; fi < 16; fi = fi + 1) begin
+				fc_en_hi_r[fi] <= fault_clear_en && (fault_clear_tag != 8'd0) && (fault_clear_tag[7:4] == fi[3:0]);
+				fc_lo_oh_r[fi] <= (fault_clear_tag[3:0] == fi[3:0]);
+				fc_map_d_16[fi] <= map_v[{fi[3:0], fault_clear_tag[3:0]}] ? map_d[{fi[3:0], fault_clear_tag[3:0]}] : 6'd0;
+			end
+			fc_en_r2 <= fc_en_r;
+			fc_slot_r <= fc_map_d_16[fc_tag_r[7:4]];
+		end
+	end
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
 			map_v <= 256'd0;
 			map_faulted <= 256'd0;
+			slot_faulted <= 64'd0;
 			tag_v <= 64'd0;
 			n_slots <= 7'd0;
 		end else begin
-			if (fault_clear_en && fault_clear_tag != 8'd0) begin
-				map_v[fault_clear_tag] <= 1'b0;
-				map_faulted[fault_clear_tag] <= 1'b1;
+			if (fc_en_r) begin
+				for (fi = 0; fi < 256; fi = fi + 1) begin
+					if (fc_en_hi_r[fi[7:4]] && fc_lo_oh_r[fi[3:0]]) begin
+						map_v[fi] <= 1'b0;
+						map_faulted[fi] <= 1'b1;
+					end
+				end
 			end
+			if (fc_en_r2 && (fc_slot_r != 6'd0))
+				slot_faulted[fc_slot_r] <= 1'b1;
 			if (slot_wr) begin
 				map_v[w_tag] <= w_slot != 6'd0;
 				map_faulted[w_tag] <= 1'b0;
+				if (w_slot != 6'd0)
+					slot_faulted[w_slot] <= 1'b0;
 				if (slot_gone)
 					tag_v[w_old] <= 1'b0;
 				if (w_slot != 6'd0)
@@ -199,24 +241,49 @@ module atg_cp_prot #(
 		end
 	end
 
-	/* ------------------------------------------- the µop's slot */
+	/* Pipelined v_tag -> v_slot (2 stages: 16:1 + 16:1, depth <= 8). */
+	reg [7:0] v_tag_q1;
+	reg [5:0] v_map_d_16 [0:15];
+	reg [5:0] v_slot_r;
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			v_tag_q1 <= 8'd0;
+			v_slot_r <= 6'd0;
+			for (fi = 0; fi < 16; fi = fi + 1)
+				v_map_d_16[fi] <= 6'd0;
+		end else begin
+			v_tag_q1 <= v_tag;
+			for (fi = 0; fi < 16; fi = fi + 1)
+				v_map_d_16[fi] <= map_v[{fi[3:0], v_tag[3:0]}] ? map_d[{fi[3:0], v_tag[3:0]}] : 6'd0;
+			v_slot_r <= v_map_d_16[v_tag_q1[7:4]];
+		end
+	end
+	assign v_slot = v_slot_r;
 
-	wire [5:0] cur_slot = u_fw ? u_side[5:0] : map_u;
+	/* ------------------------------------------- the µop's slot (2-stage lookup + registered active/ok) */
+
+	reg [7:0] u_tag_q1;
+	reg u_fw_q1, u_tag_nz_q1, u_fw_flt_r;
+	reg [6:0] u_side_q1;
+	reg [5:0] u_map_d_16 [0:15];
+	reg [15:0] u_mf_16;
+	reg [5:0] cur_slot_r;
+	reg u_fchk_r, u_active_r;
+	reg u_req_q;
+	reg u_in_stable_1, u_in_stable_2;
+
+	wire u_in_eq = (u_tag == u_tag_q1) && (u_fw == u_fw_q1) && (u_side == u_side_q1) &&
+		!slot_wr && !fault_clear_en && !fc_en_r;
+	wire u_tag_flt_w = u_tag_nz_q1 && u_mf_16[u_tag_q1[7:4]];
+	wire u_fw_flt_w = (u_side_q1[5:0] != 6'd0) ? u_fw_flt_r : u_tag_flt_w;
+
 `ifdef MUT_CPPROT_FCHK
 	assign f_chk = 1'b0;
 `else
-	assign f_chk = u_fw && !u_side[6] && cur_slot != 6'd0;
+	assign f_chk = u_fchk_r;
 `endif
-	assign f_slot = cur_slot;
-
-	/* Session active check for N05:
-	 * Tag 0 is session 0 (kernel/driver), always active.
-	 * For client sessions (tag != 0), active unless the session has faulted.
-	 * Firmware SELF µops (u_fw && u_side[6]) are always active.
-	 */
-	wire u_tag_faulted = (u_tag != 8'd0) && map_faulted[u_tag];
-	wire u_fw_faulted = !u_side[6] && (u_side[5:0] != 6'd0 ? map_faulted[tag_d[u_side[5:0]]] : u_tag_faulted);
-	assign u_active = !(u_fw ? u_fw_faulted : u_tag_faulted);
+	assign f_slot = cur_slot_r;
+	assign u_active = u_active_r;
 
 	/* ------------------------------------------- the switch */
 
@@ -229,7 +296,7 @@ module atg_cp_prot #(
 	localparam [1:0] R_SLOT = 2'd1;
 	localparam [1:0] R_MIXED = 2'd2;
 
-	reg [2:0] st;
+	(* max_fanout = 12, extract_enable = "no" *) reg [2:0] st;
 	reg known;
 	reg [5:0] tgt;
 	reg [1:0] r_kind;
@@ -240,10 +307,12 @@ module atg_cp_prot #(
 
 	am_add #(.W(2)) sw_add (.a(sw_cnt), .b(2'd0), .ci(1'b1), .s(sw_cnt_n), .co(sw_co));
 
-	wire need = u_req[0] && (cur_slot != prot_unit || !known);
-	assign u_ok = st == S_IDLE && !need;
+	wire need_slot_c = (cur_slot_r != prot_unit) || !known;
+	wire u_lookup_rdy = u_req_q && u_in_stable_2;
+	wire need = u_req[0] && u_lookup_rdy && need_slot_c;
+	assign u_ok = (st == S_IDLE) && (!u_req[0] || (u_lookup_rdy && !need_slot_c));
 	assign kick_ok = st == S_IDLE && prot_unit == 6'd0;
-	assign wdt_tag = st != S_IDLE ? unit_tag : 8'd0;
+	assign wdt_tag = st != S_IDLE ? unit_tag_r : 8'd0;
 `ifdef MUT_CPPROT_NOINV
 	assign sw_inv = 1'b0;
 `else
@@ -273,20 +342,52 @@ module atg_cp_prot #(
 
 	always @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
+			u_tag_q1 <= 8'd0;
+			u_fw_q1 <= 1'b0;
+			u_tag_nz_q1 <= 1'b0;
+			u_fw_flt_r <= 1'b0;
+			u_side_q1 <= 7'd0;
+			for (fi = 0; fi < 16; fi = fi + 1)
+				u_map_d_16[fi] <= 6'd0;
+			u_mf_16 <= 16'd0;
+			cur_slot_r <= 6'd0;
+			u_fchk_r <= 1'b0;
+			u_active_r <= 1'b1;
+			u_req_q <= 1'b0;
+			u_in_stable_1 <= 1'b0;
+			u_in_stable_2 <= 1'b0;
 			st <= S_IDLE;
 			known <= 1'b0;
 			prot_unit <= 6'd0;
+			unit_tag_r <= 8'd0;
+			tgt_tag_r <= 8'd0;
 			tgt <= 6'd0;
 			r_kind <= R_RESET;
 			r_slot <= 6'd0;
 			sw_cnt <= 2'd0;
 		end else begin
+			u_tag_q1 <= u_tag;
+			u_fw_q1 <= u_fw;
+			u_tag_nz_q1 <= (u_tag != 8'd0);
+			u_fw_flt_r <= !u_side[6] && (u_side[5:0] != 6'd0 ? slot_faulted[u_side[5:0]] : 1'b0);
+			u_side_q1 <= u_side;
+			for (fi = 0; fi < 16; fi = fi + 1) begin
+				u_map_d_16[fi] <= map_v[{fi[3:0], u_tag[3:0]}] ? map_d[{fi[3:0], u_tag[3:0]}] : 6'd0;
+				u_mf_16[fi] <= map_faulted[{fi[3:0], u_tag[3:0]}];
+			end
+			cur_slot_r <= u_fw_q1 ? u_side_q1[5:0] : u_map_d_16[u_tag_q1[7:4]];
+			u_fchk_r <= u_fw_q1 && !u_side_q1[6] && (u_side_q1[5:0] != 6'd0);
+			u_active_r <= !(u_fw_q1 ? u_fw_flt_w : u_tag_flt_w);
+			u_req_q <= u_req[0];
+			u_in_stable_1 <= u_in_eq;
+			u_in_stable_2 <= u_in_stable_1 && u_in_eq && (st == S_IDLE);
+
 			case (st)
 			S_IDLE:
 				if (need) begin
-					tgt <= cur_slot;
+					tgt <= cur_slot_r;
 					st <= S_DRAIN;
-				end else if (u_req[1] || su_kick) begin
+				end else if ((u_req[1] && u_lookup_rdy && !need_slot_c) || su_kick) begin
 					/* The shader units get prot_unit's data. */
 					if (r_kind == R_NONE) begin
 						r_kind <= R_SLOT;
@@ -312,9 +413,17 @@ module atg_cp_prot #(
 					st <= S_IDLE;
 				end
 			endcase
+			if (st != S_IDLE)
+				tgt_tag_r <= (slot_wr && w_slot != 6'd0 && w_slot == tgt) ? w_tag :
+				             (slot_gone && w_old == tgt) ? 8'd0 :
+				             (tag_v[tgt] ? tag_d[tgt] : 8'd0);
 			if (st == S_INV && !scrub_need || st == S_SWAIT && sw_cnt == 2'd2 && !scrub_busy) begin
 				prot_unit <= tgt;
 				known <= 1'b1;
+				unit_tag_r <= (slot_wr && w_slot != 6'd0 && w_slot == tgt) ? w_tag :
+				              (slot_gone && w_old == tgt) ? 8'd0 : tgt_tag_r;
+			end else if (slot_wr && w_slot != 6'd0 && w_slot == prot_unit) begin
+				unit_tag_r <= w_tag;
 			end
 			/* A slot's session ended: its data and its prot_unit are not its successor's. */
 			if (gone) begin
@@ -323,6 +432,7 @@ module atg_cp_prot #(
 				if (prot_unit == w_old) begin
 					prot_unit <= 6'd0;
 					known <= 1'b0;
+					unit_tag_r <= 8'd0;
 				end
 			end
 		end
@@ -333,33 +443,51 @@ module atg_cp_prot #(
 	wire [GW-1:0] g0 = aperture_base[ADDR_W-1:12];
 	/*
 	 * The table's bytes for the aperture: one byte a 4 KiB granule of
-	 * [g0, g1), g1 the limit rounded up, rounded up to 4 KiB (two adders and
-	 * a subtractor).
+	 * [g0, g1), g1 the limit rounded up, rounded up to 4 KiB (pipelined
+	 * in 3 stages so each stage stays <= 12 cmos3 gates and 0 feedthroughs).
 	 */
-	wire [ADDR_W:0] lim_up, tgran;
-	wire [GW:0] g_span;
+	wire [GW:0] g1_w;
+	wire [GW:0] g_span_w;
+	wire [ADDR_W-25:0] tgran_hi;
 	wire lim_co, span_bo, tg_co;
 
-	am_add #(.W(ADDR_W + 1)) lim_add (
-		.a({1'b0, aperture_limit}), .b({{(ADDR_W - 11){1'b0}}, 12'hFFF}), .ci(1'b0),
-		.s(lim_up), .co(lim_co)
+	am_add #(.W(GW + 1)) lim_add (
+		.a({1'b0, aperture_limit[ADDR_W-1:12]}), .b({(GW+1){1'b0}}), .ci(|aperture_limit[11:0]),
+		.s(g1_w), .co(lim_co)
 	);
-	wire [GW:0] g1 = lim_up[ADDR_W:12];
-	am_sub #(.W(GW + 1)) span_sub (.a(g1), .b({1'b0, g0}), .bi(1'b0), .d(g_span), .bo(span_bo));
-	am_add #(.W(ADDR_W + 1)) tg_add (
-		.a({{(ADDR_W-GW){1'b0}}, g_span}), .b({{(ADDR_W - 11){1'b0}}, 12'hFFF}), .ci(1'b0),
-		.s(tgran), .co(tg_co)
+	reg [GW-1:0] g0_r;
+	reg [GW:0] g1_r;
+	reg [GW:0] g_span_r;
+	reg [ADDR_W-1:0] tbytes_r;
+
+	am_sub #(.W(GW + 1)) span_sub (.a(g1_r), .b({1'b0, g0_r}), .bi(1'b0), .d(g_span_w), .bo(span_bo));
+	am_add #(.W(ADDR_W - 24)) tg_add (
+		.a(g_span_r[GW-1:12]), .b({(ADDR_W-24){1'b0}}), .ci(|g_span_r[11:0]),
+		.s(tgran_hi), .co(tg_co)
 	);
-	wire [ADDR_W-1:0] tbytes = {tgran[ADDR_W-1:12], 12'd0};
+
+	always @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			g0_r <= {GW{1'b0}};
+			g1_r <= {(GW+1){1'b0}};
+			g_span_r <= {(GW+1){1'b0}};
+			tbytes_r <= {ADDR_W{1'b0}};
+		end else begin
+			g0_r <= g0;
+			g1_r <= g1_w;
+			g_span_r <= g_span_w;
+			tbytes_r <= {{12{1'b0}}, tgran_hi, 12'd0};
+		end
+	end
 	wire [63:0] sb_wdata64 = {32'd0, sb_wdata};
 	wire [63:0] tbase_wmask = {32'd0, hcr_wmask};
 	wire [63:0] tbase_wdata = {32'd0, hcr_wdata};
 	wire [ADDR_W-1:0] tbase_next = (tbase & ~tbase_wmask[ADDR_W-1:0]) |
 		(tbase_wdata[ADDR_W-1:0] & tbase_wmask[ADDR_W-1:0]);
 	wire [63:0] tbase_ext = {{(64-ADDR_W){1'b0}}, tbase};
-	wire [63:0] tbytes_ext = {{(64-ADDR_W){1'b0}}, tbytes};
-	wire [63:0] g0_ext = {{(64-GW){1'b0}}, g0};
-	wire [63:0] g1_ext = {{(63-GW){1'b0}}, g1};
+	wire [63:0] tbytes_ext = {{(64-ADDR_W){1'b0}}, tbytes_r};
+	wire [63:0] g0_ext = {{(64-GW){1'b0}}, g0_r};
+	wire [63:0] g1_ext = {{(63-GW){1'b0}}, g1_r};
 
 	reg inv_p, gw_p;
 	reg [19:0] gbase;
@@ -425,8 +553,8 @@ module atg_cp_prot #(
 		endcase
 	end
 
-	wire unused_ok = &{1'b0, lim_up, tgran, hcr_wdata, SLOTS[7:6], gctl[3], aperture_base[11:0],
-		ns_co, sw_co, lim_co, span_bo, tg_co,
+	wire unused_ok = &{1'b0, hcr_wdata, SLOTS[7:6], gctl[3], aperture_base[11:0],
+		ns_co, sw_co, lim_co, span_bo, tg_co, g_span_r[GW],
 		sb_wdata64[63:32], tbase_wmask[63:32], tbase_wdata[63:32],
 		tbase_ext[63:32], tbytes_ext[63:32], g0_ext[63:32], g1_ext[63:32]};
 endmodule

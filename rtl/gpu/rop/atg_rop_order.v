@@ -81,19 +81,25 @@ module atg_rop_order (
 	assign dx_eq3[5] = (dx_seq[15]    == next[15]) && dx_valid;
 	(* keep = "true" *) wire dx_ok = &dx_eq3;
 
-	(* keep = "true" *) wire [5:0] busy_eq3;
-	assign busy_eq3[0] = (issued[2:0]   == next[2:0]);
-	assign busy_eq3[1] = (issued[5:3]   == next[5:3]);
-	assign busy_eq3[2] = (issued[8:6]   == next[8:6]);
-	assign busy_eq3[3] = (issued[11:9]  == next[11:9]);
-	assign busy_eq3[4] = (issued[14:12] == next[14:12]);
-	assign busy_eq3[5] = (issued[15]    == next[15]);
-	assign busy = !(&busy_eq3) || q_valid;
+	(* keep = "true" *) wire [3:0] busy_eq4;
+	assign busy_eq4[0] = (issued[3:0]   == next[3:0]);
+	assign busy_eq4[1] = (issued[7:4]   == next[7:4]);
+	assign busy_eq4[2] = (issued[11:8]  == next[11:8]);
+	assign busy_eq4[3] = (issued[15:12] == next[15:12]);
+	assign busy = !(&busy_eq4) || q_valid;
 
 	assign ex_next = next;
 
 	reg r_ex_ready, r_dx_ready;
+`ifdef SYNTH_KINTEX7
+	(* keep = "true", dont_touch = "true" *) reg r_ex_ready_port;
+	assign ex_ready = r_ex_ready_port;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true", dont_touch = "true" *) reg r_ex_ready_port;
+	assign ex_ready = r_ex_ready_port;
+`else
 	assign ex_ready = r_ex_ready;
+`endif
 	assign dx_ready = r_dx_ready;
 
 	wire ex_take = r_ex_ready && ex_valid;
@@ -107,14 +113,20 @@ module atg_rop_order (
 	wire q_in_dbg;
 	wire [154:0] q_in_aux;
 `ifdef SYNTH_KINTEX7
+	wire [3:0] ex_ok_mid;
 	wire [40:0] ex_ok_buf;
 	wire [127:0] ex_v_buf;
 	wire [7:0] ex_v_mid;
 	genvar g_ev_m, g_ev_b, g_qc;
 	generate
+	for (g_ev_m = 0; g_ev_m < 4; g_ev_m = g_ev_m + 1) begin : g_ok_mid
+		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_okm (
+			.I0(r_ex_ready), .O(ex_ok_mid[g_ev_m])
+		);
+	end
 	for (g_ev_b = 0; g_ev_b < 41; g_ev_b = g_ev_b + 1) begin : g_ok_leaf
 		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_okl (
-			.I0(r_ex_ready), .O(ex_ok_buf[g_ev_b])
+			.I0(ex_ok_mid[g_ev_b / 11]), .O(ex_ok_buf[g_ev_b])
 		);
 	end
 	for (g_ev_m = 0; g_ev_m < 8; g_ev_m = g_ev_m + 1) begin : g_ev_mid
@@ -126,6 +138,46 @@ module atg_rop_order (
 		(* keep = "true", dont_touch = "true" *) LUT1 #(.INIT(2'h2)) u_leaf (
 			.I0(ex_v_mid[g_ev_b / 16]), .O(ex_v_buf[g_ev_b])
 		);
+	end
+	for (g_qc = 0; g_qc < 64; g_qc = g_qc + 1) begin : g_qcol
+		assign q_in_color[8 * g_qc +: 8] = ex_v_buf[g_qc] ? ex_color[8 * g_qc +: 8] : 8'd0;
+		assign q_in_color1[8 * g_qc +: 8] = ex_v_buf[64 + g_qc] ? ex_color1[8 * g_qc +: 8] : 8'd0;
+	end
+	for (g_qc = 0; g_qc < 4; g_qc = g_qc + 1) begin : g_qxy
+		assign q_in_xy[8 * g_qc +: 8] = ex_ok_buf[g_qc] ? ex_xy[8 * g_qc +: 8] : dx_xy[8 * g_qc +: 8];
+	end
+	for (g_qc = 0; g_qc < 16; g_qc = g_qc + 1) begin : g_qdep
+		assign q_in_depth[8 * g_qc +: 8] = ex_ok_buf[4 + g_qc] ? ex_depth[8 * g_qc +: 8] : dx_depth[8 * g_qc +: 8];
+	end
+	endgenerate
+	assign q_in_mask = ex_ok_buf[20] ? ex_mask : dx_mask;
+	assign q_in_dbg = !ex_ok_buf[20];
+	wire [154:0] dx_aux_val = {3'd0, 1'b1, 1'b1, 1'b0, 1'b1, 128'd0, 4'hF, {4{dx_mask[3]}},
+		{4{dx_mask[2]}}, {4{dx_mask[1]}}, {4{dx_mask[0]}}};
+	generate
+	for (g_qc = 0; g_qc < 19; g_qc = g_qc + 1) begin : g_qaux
+		assign q_in_aux[8 * g_qc +: 8] = ex_ok_buf[21 + g_qc] ? ex_aux[8 * g_qc +: 8] : dx_aux_val[8 * g_qc +: 8];
+	end
+	endgenerate
+	assign q_in_aux[154:152] = ex_ok_buf[40] ? ex_aux[154:152] : dx_aux_val[154:152];
+`elsif SYNTH_KINTEX_ULTRASCALE
+	wire [3:0] ex_ok_mid;
+	wire [40:0] ex_ok_buf;
+	wire [127:0] ex_v_buf;
+	wire [7:0] ex_v_mid;
+	genvar g_ev_m, g_ev_b, g_qc;
+	generate
+	for (g_ev_m = 0; g_ev_m < 4; g_ev_m = g_ev_m + 1) begin : g_ok_mid
+		assign ex_ok_mid[g_ev_m] = r_ex_ready;
+	end
+	for (g_ev_b = 0; g_ev_b < 41; g_ev_b = g_ev_b + 1) begin : g_ok_leaf
+		assign ex_ok_buf[g_ev_b] = ex_ok_mid[g_ev_b / 11];
+	end
+	for (g_ev_m = 0; g_ev_m < 8; g_ev_m = g_ev_m + 1) begin : g_ev_mid
+		assign ex_v_mid[g_ev_m] = ex_take;
+	end
+	for (g_ev_b = 0; g_ev_b < 128; g_ev_b = g_ev_b + 1) begin : g_ev_leaf
+		assign ex_v_buf[g_ev_b] = ex_v_mid[g_ev_b / 16];
 	end
 	for (g_qc = 0; g_qc < 64; g_qc = g_qc + 1) begin : g_qcol
 		assign q_in_color[8 * g_qc +: 8] = ex_v_buf[g_qc] ? ex_color[8 * g_qc +: 8] : 8'd0;
@@ -162,7 +214,7 @@ module atg_rop_order (
 `endif
 
 	localparam integer Q_SKID_W = 32 + 4 + 512 + 512 + 128 + 1 + 155;
-	am_skid #(.W(Q_SKID_W)) u_q_skid (
+	atg_rop_skid #(.W(Q_SKID_W)) u_q_skid (
 		.clk(clk),
 		.rst_n(rst_n),
 		.in_valid(q_in_valid),
@@ -173,19 +225,46 @@ module atg_rop_order (
 		.out_data({q_xy, q_mask, q_color, q_color1, q_depth, q_dbg, q_aux})
 	);
 
-	wire [15:0] seq1, next1;	/* ord_seq + 1, next + 1 */
-	wire s1_co_unused, n1_co_unused;
+	wire [15:0] seq1;	/* ord_seq + 1 */
+	wire s1_co_unused;
 	am_add #(.W(16)) u_seq1 (.a(ord_seq), .b(16'd0), .ci(1'b1), .s(seq1), .co(s1_co_unused));
-	am_add #(.W(16)) u_next1 (.a(next), .b(16'd0), .ci(1'b1), .s(next1), .co(n1_co_unused));
+
+	/* Shallow 4-bit-group prefix +1 for next (<= 6 cmos3 vs 10 cmos3 Kogge-Stone) */
+	wire [2:0] n_grp_ff = {&next[11:8], &next[7:4], &next[3:0]};
+	wire [3:0] n_c4 = {n_grp_ff[2] & n_grp_ff[1] & n_grp_ff[0], n_grp_ff[1] & n_grp_ff[0], n_grp_ff[0], 1'b1};
+	wire [15:0] next1;
+	genvar gnx;
+	generate
+	for (gnx = 0; gnx < 16; gnx = gnx + 1) begin : g_next1
+		localparam integer NI = gnx / 4;
+		localparam integer NB = gnx % 4;
+		if (NB == 0) begin : g_b0
+			assign next1[gnx] = next[gnx] ^ n_c4[NI];
+		end else begin : g_bn
+			assign next1[gnx] = next[gnx] ^ (n_c4[NI] & (&next[4*NI +: NB]));
+		end
+	end
+	endgenerate
+	wire n1_co_unused = 1'b0;
 
 	always @(posedge clk or posedge rst_sync)
 		if (rst_sync) begin
 			next <= 16'd0;
 			issued <= 16'd0;
 			r_ex_ready <= 1'b0;
+`ifdef SYNTH_KINTEX7
+			r_ex_ready_port <= 1'b0;
+`elsif SYNTH_KINTEX_ULTRASCALE
+			r_ex_ready_port <= 1'b0;
+`endif
 			r_dx_ready <= 1'b0;
 		end else begin
 			r_ex_ready <= !r_ex_ready && !r_dx_ready && q_skid_in_ready && ex_ok;
+`ifdef SYNTH_KINTEX7
+			r_ex_ready_port <= !r_ex_ready && !r_dx_ready && q_skid_in_ready && ex_ok;
+`elsif SYNTH_KINTEX_ULTRASCALE
+			r_ex_ready_port <= !r_ex_ready && !r_dx_ready && q_skid_in_ready && ex_ok;
+`endif
 			r_dx_ready <= !r_ex_ready && !r_dx_ready && q_skid_in_ready && !ex_ok && dx_ok;
 			if (ord_valid)
 				issued <= seq1;

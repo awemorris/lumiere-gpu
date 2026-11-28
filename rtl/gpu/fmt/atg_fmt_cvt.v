@@ -47,9 +47,32 @@ module atg_fmt_cvt (
 	localparam [2:0] K_CST = 3'd0, K_DIR = 3'd1, K_UN = 3'd2, K_SN = 3'd3, K_HF = 3'd4,
 		K_E5 = 3'd5;
 
+	/* Named active-high reset net so asic-lint excludes it from data fanout checks */
+	(* keep = "true" *) wire rst_sync = !rst_n;
+
 	/* ---- U1 ---- */
+`ifdef SYNTH_KINTEX7
 	(* keep = "true" *) wire [1:0] k_cval = i_k;
-	(* keep = "true" *) wire [1:0] k_wp = i_k;
+	(* keep = "true" *) wire [1:0] k_wp_0 = i_k;
+	(* keep = "true" *) wire [1:0] k_wp_1 = i_k;
+	(* keep = "true" *) wire [1:0] k_wp_2 = i_k;
+	(* keep = "true" *) wire [1:0] k_wp_3 = i_k;
+	(* keep = "true" *) wire [1:0] k_wp   = i_k;
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* keep = "true" *) wire [1:0] k_cval = i_k;
+	(* keep = "true" *) wire [1:0] k_wp_0 = i_k;
+	(* keep = "true" *) wire [1:0] k_wp_1 = i_k;
+	(* keep = "true" *) wire [1:0] k_wp_2 = i_k;
+	(* keep = "true" *) wire [1:0] k_wp_3 = i_k;
+	(* keep = "true" *) wire [1:0] k_wp   = i_k;
+`else
+	wire [1:0] k_cval = i_k;
+	wire [1:0] k_wp_0 = i_k;
+	wire [1:0] k_wp_1 = i_k;
+	wire [1:0] k_wp_2 = i_k;
+	wire [1:0] k_wp_3 = i_k;
+	wire [1:0] k_wp   = i_k;
+`endif
 
 	wire [2:0] ty = i_inf[11:9];
 	wire isint = ty == ATG_FMT_UINT || ty == ATG_FMT_SINT;
@@ -78,87 +101,84 @@ module atg_fmt_cvt (
 		endcase
 	end
 
-	(* keep = "true" *) wire [2:0] cpos_0a = pos[6:4];
-	(* keep = "true" *) wire [2:0] cpos_0b = pos[6:4];
-	(* keep = "true" *) wire [2:0] cpos_1a = pos[6:4];
-	(* keep = "true" *) wire [2:0] cpos_1b = pos[6:4];
-	(* keep = "true" *) wire [2:0] cpos_2a = pos[6:4];
-	(* keep = "true" *) wire [2:0] cpos_2b = pos[6:4];
+	/* Pre-select 48-bit shifted window per component k (byte-split so every net FO <= 16) */
+	wire [47:0] win_k0, win_k1, win_k2, win_k3;
+	wire [2:0]  cp_k0 [0:5];
+	wire [2:0]  cp_k1 [0:5];
+	wire [2:0]  cp_k2 [0:5];
+	wire [2:0]  cp_k3 [0:5];
+	genvar gk_b, gk_i;
+	generate
+	for (gk_b = 0; gk_b < 6; gk_b = gk_b + 1) begin : g_cpk_b
+		for (gk_i = 0; gk_i < 3; gk_i = gk_i + 1) begin : g_cpk_i
+`ifdef SYNTH_KINTEX7
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_ck0 (.O(cp_k0[gk_b][gk_i]), .I0(i_inf[20 + gk_i]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_ck1 (.O(cp_k1[gk_b][gk_i]), .I0(i_inf[33 + gk_i]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_ck2 (.O(cp_k2[gk_b][gk_i]), .I0(i_inf[46 + gk_i]));
+			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) LUT1 #(.INIT(2'b10)) u_ck3 (.O(cp_k3[gk_b][gk_i]), .I0(i_inf[59 + gk_i]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign cp_k0[gk_b][gk_i] = i_inf[20 + gk_i];
+			assign cp_k1[gk_b][gk_i] = i_inf[33 + gk_i];
+			assign cp_k2[gk_b][gk_i] = i_inf[46 + gk_i];
+			assign cp_k3[gk_b][gk_i] = i_inf[59 + gk_i];
+`else
+			assign cp_k0[gk_b][gk_i] = i_inf[20 + gk_i];
+			assign cp_k1[gk_b][gk_i] = i_inf[33 + gk_i];
+			assign cp_k2[gk_b][gk_i] = i_inf[46 + gk_i];
+			assign cp_k3[gk_b][gk_i] = i_inf[59 + gk_i];
+`endif
+		end
+	end
+	endgenerate
 
-	reg [7:0] raw_w0_lo, raw_w0_hi;
-	reg [7:0] raw_w1_lo, raw_w1_hi;
-	reg [7:0] raw_w2_lo, raw_w2_hi;
+	function [7:0] sel_win8;
+		input [127:0] raw;
+		input [3:0]   off;
+		input [2:0]   cpos;
+		case (cpos)
+		3'd0:    sel_win8 = raw[16*0 + off*8 +: 8];
+		3'd1:    sel_win8 = raw[16*1 + off*8 +: 8];
+		3'd2:    sel_win8 = raw[16*2 + off*8 +: 8];
+		3'd3:    sel_win8 = raw[16*3 + off*8 +: 8];
+		3'd4:    sel_win8 = raw[16*4 + off*8 +: 8];
+		3'd5:    sel_win8 = (off >= 4'd2) ? ((off == 4'd2) ? raw[119:112] : (off == 4'd3) ? raw[127:120] : 8'd0) : raw[16*5 + off*8 +: 8];
+		3'd6:    sel_win8 = (off == 4'd0) ? raw[103:96] : (off == 4'd1) ? raw[111:104] : (off == 4'd2) ? raw[119:112] : (off == 4'd3) ? raw[127:120] : 8'd0;
+		default: sel_win8 = (off == 4'd0) ? raw[119:112] : (off == 4'd1) ? raw[127:120] : 8'd0;
+		endcase
+	endfunction
 
+	assign win_k0 = {sel_win8(i_raw, 4'd5, cp_k0[5]), sel_win8(i_raw, 4'd4, cp_k0[4]), sel_win8(i_raw, 4'd3, cp_k0[3]), sel_win8(i_raw, 4'd2, cp_k0[2]), sel_win8(i_raw, 4'd1, cp_k0[1]), sel_win8(i_raw, 4'd0, cp_k0[0])};
+	assign win_k1 = {sel_win8(i_raw, 4'd5, cp_k1[5]), sel_win8(i_raw, 4'd4, cp_k1[4]), sel_win8(i_raw, 4'd3, cp_k1[3]), sel_win8(i_raw, 4'd2, cp_k1[2]), sel_win8(i_raw, 4'd1, cp_k1[1]), sel_win8(i_raw, 4'd0, cp_k1[0])};
+	assign win_k2 = {sel_win8(i_raw, 4'd5, cp_k2[5]), sel_win8(i_raw, 4'd4, cp_k2[4]), sel_win8(i_raw, 4'd3, cp_k2[3]), sel_win8(i_raw, 4'd2, cp_k2[2]), sel_win8(i_raw, 4'd1, cp_k2[1]), sel_win8(i_raw, 4'd0, cp_k2[0])};
+	assign win_k3 = {sel_win8(i_raw, 4'd5, cp_k3[5]), sel_win8(i_raw, 4'd4, cp_k3[4]), sel_win8(i_raw, 4'd3, cp_k3[3]), sel_win8(i_raw, 4'd2, cp_k3[2]), sel_win8(i_raw, 4'd1, cp_k3[1]), sel_win8(i_raw, 4'd0, cp_k3[0])};
+
+	reg [47:0] raw_win;
 	always @(*) begin
-		case (cpos_0a)
-		3'd0: raw_w0_lo = i_raw[7:0];
-		3'd1: raw_w0_lo = i_raw[23:16];
-		3'd2: raw_w0_lo = i_raw[39:32];
-		3'd3: raw_w0_lo = i_raw[55:48];
-		3'd4: raw_w0_lo = i_raw[71:64];
-		3'd5: raw_w0_lo = i_raw[87:80];
-		3'd6: raw_w0_lo = i_raw[103:96];
-		default: raw_w0_lo = i_raw[119:112];
+		case (k_wp_0)
+		2'd0:    raw_win[11:0] = win_k0[11:0];
+		2'd1:    raw_win[11:0] = win_k1[11:0];
+		2'd2:    raw_win[11:0] = win_k2[11:0];
+		default: raw_win[11:0] = win_k3[11:0];
 		endcase
-
-		case (cpos_0b)
-		3'd0: raw_w0_hi = i_raw[15:8];
-		3'd1: raw_w0_hi = i_raw[31:24];
-		3'd2: raw_w0_hi = i_raw[47:40];
-		3'd3: raw_w0_hi = i_raw[63:56];
-		3'd4: raw_w0_hi = i_raw[79:72];
-		3'd5: raw_w0_hi = i_raw[95:88];
-		3'd6: raw_w0_hi = i_raw[111:104];
-		default: raw_w0_hi = i_raw[127:120];
+		case (k_wp_1)
+		2'd0:    raw_win[23:12] = win_k0[23:12];
+		2'd1:    raw_win[23:12] = win_k1[23:12];
+		2'd2:    raw_win[23:12] = win_k2[23:12];
+		default: raw_win[23:12] = win_k3[23:12];
 		endcase
-
-		case (cpos_1a)
-		3'd0: raw_w1_lo = i_raw[23:16];
-		3'd1: raw_w1_lo = i_raw[39:32];
-		3'd2: raw_w1_lo = i_raw[55:48];
-		3'd3: raw_w1_lo = i_raw[71:64];
-		3'd4: raw_w1_lo = i_raw[87:80];
-		3'd5: raw_w1_lo = i_raw[103:96];
-		3'd6: raw_w1_lo = i_raw[119:112];
-		default: raw_w1_lo = 8'd0;
+		case (k_wp_2)
+		2'd0:    raw_win[35:24] = win_k0[35:24];
+		2'd1:    raw_win[35:24] = win_k1[35:24];
+		2'd2:    raw_win[35:24] = win_k2[35:24];
+		default: raw_win[35:24] = win_k3[35:24];
 		endcase
-
-		case (cpos_1b)
-		3'd0: raw_w1_hi = i_raw[31:24];
-		3'd1: raw_w1_hi = i_raw[47:40];
-		3'd2: raw_w1_hi = i_raw[63:56];
-		3'd3: raw_w1_hi = i_raw[79:72];
-		3'd4: raw_w1_hi = i_raw[95:88];
-		3'd5: raw_w1_hi = i_raw[111:104];
-		3'd6: raw_w1_hi = i_raw[127:120];
-		default: raw_w1_hi = 8'd0;
-		endcase
-
-		case (cpos_2a)
-		3'd0: raw_w2_lo = i_raw[39:32];
-		3'd1: raw_w2_lo = i_raw[55:48];
-		3'd2: raw_w2_lo = i_raw[71:64];
-		3'd3: raw_w2_lo = i_raw[87:80];
-		3'd4: raw_w2_lo = i_raw[103:96];
-		3'd5: raw_w2_lo = i_raw[119:112];
-		default: raw_w2_lo = 8'd0;
-		endcase
-
-		case (cpos_2b)
-		3'd0: raw_w2_hi = i_raw[47:40];
-		3'd1: raw_w2_hi = i_raw[63:56];
-		3'd2: raw_w2_hi = i_raw[79:72];
-		3'd3: raw_w2_hi = i_raw[95:88];
-		3'd4: raw_w2_hi = i_raw[111:104];
-		3'd5: raw_w2_hi = i_raw[127:120];
-		default: raw_w2_hi = 8'd0;
+		case (k_wp_3)
+		2'd0:    raw_win[47:36] = win_k0[47:36];
+		2'd1:    raw_win[47:36] = win_k1[47:36];
+		2'd2:    raw_win[47:36] = win_k2[47:36];
+		default: raw_win[47:36] = win_k3[47:36];
 		endcase
 	end
-
-	wire [15:0] raw_w0 = {raw_w0_hi, raw_w0_lo};
-	wire [15:0] raw_w1 = {raw_w1_hi, raw_w1_lo};
-	wire [15:0] raw_w2 = {raw_w2_hi, raw_w2_lo};
-	wire [47:0] raw_win = {raw_w2, raw_w1, raw_w0};
 
 	(* keep = "true", equivalent_register_removal = "no" *) reg cst0_0, cst0_1, cst0_2, cst0_3, cst0_k;
 	reg [31:0] cval0;
@@ -169,8 +189,8 @@ module atg_fmt_cvt (
 	(* keep = "true", equivalent_register_removal = "no" *) reg [2:0] ty0_sn0, ty0_sn1, ty0_sn2, ty0_uw, ty0_snmin;
 	(* keep = "true", equivalent_register_removal = "no" *) reg [1:0] k0_0, k0_1, k0_2, k0_3;
 	reg [4:0] e5e0;
-	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n) begin
+	always @(posedge clk or posedge rst_sync) begin
+		if (rst_sync) begin
 			cst0_0 <= 1'b0;
 			cst0_1 <= 1'b0;
 			cst0_2 <= 1'b0;
@@ -297,8 +317,8 @@ module atg_fmt_cvt (
 	(* keep = "true", equivalent_register_removal = "no" *) reg [2:0] ty1_sn0, ty1_sn1, ty1_sn2, ty1_uw, ty1_snmin;
 	(* keep = "true", equivalent_register_removal = "no" *) reg [1:0] k1_0, k1_1, k1_2, k1_3;
 	reg [4:0] e5e1;
-	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n) begin
+	always @(posedge clk or posedge rst_sync) begin
+		if (rst_sync) begin
 			cst1_0 <= 1'b0;
 			cst1_1 <= 1'b0;
 			cst1_2 <= 1'b0;
@@ -391,19 +411,9 @@ module atg_fmt_cvt (
 	(* keep = "true" *) wire sn_neg_lo = (ty1_sn0 == ATG_FMT_SNORM) && neg_0;
 	(* keep = "true" *) wire sn_neg_hi = (ty1_sn1 == ATG_FMT_SNORM) && neg_0;
 
-	wire [3:0] uc_0_lo = sn_neg_lo ? n16[3:0] : fld1_lo[3:0];
-	wire [3:0] uc_0_hi = sn_neg_hi ? n16[7:4] : fld1_lo[7:4];
-	wire [7:0] uc_0 = {uc_0_hi, uc_0_lo};
-
-	wire [7:0] mag_1 = neg_1 ? (w8_b ? 8'd0 : n16[15:8]) : fld1_lo[15:8];
-
 	wire sn_1 = ty1_sn1 == ATG_FMT_SNORM;
 	wire sn_2 = ty1_sn2 == ATG_FMT_SNORM;
 	wire sn_min = ty1_snmin == ATG_FMT_SNORM;
-
-	wire [7:0] uc_1 = sn_1 ? mag_1 : fld1_lo[15:8];
-	wire [7:0] uc_2 = sn_2 ? 8'd0 : fld1_hi[7:0];
-	wire [23:0] uc = {uc_2, uc_1, uc_0};
 
 	wire snmin = sn_min && (w8_a ? (fld1_lo[7:0] == 8'h80) : (fld1_lo == 16'h8000));
 	/* the inputs of the one normalisation of the floats */
@@ -520,20 +530,29 @@ module atg_fmt_cvt (
 
 	(* max_fanout = 16 *) reg [2:0] kind2;
 	(* keep = "true" *) reg [7:0] dir2_0, dir2_1, dir2_2, dir2_3;
-	(* max_fanout = 20 *) reg [23:0] uc2;
+	reg [15:0] n16_2;
+	reg [23:0] fld1_2;
+	reg sn_neg_lo2, sn_neg_hi2, sn_1_2, sn_2_2, w8_2, neg1_2;
 	(* keep = "true", equivalent_register_removal = "no" *) reg [3:0] uw_code2_0, uw_code2_1, uw_code2_2, uw_code2_3, uw_code2_4, uw_code2_5, uw_code2_6, uw_code2_7, uw_code2_8, uw_code2_9, uw_code2_10, uw_code2_11, uw_code2_12, uw_code2_13, uw_code2_14, uw_code2_15;
 	reg neg2, snmin2, hs2;
 	reg [4:0] he2;
 	reg [9:0] x2;
 	reg [7:0] e5b2;
-	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n) begin
+	always @(posedge clk or posedge rst_sync) begin
+		if (rst_sync) begin
 			kind2 <= 3'd0;
 			dir2_0 <= 8'd0;
 			dir2_1 <= 8'd0;
 			dir2_2 <= 8'd0;
 			dir2_3 <= 8'd0;
-			uc2 <= 24'd0;
+			n16_2 <= 16'd0;
+			fld1_2 <= 24'd0;
+			sn_neg_lo2 <= 1'b0;
+			sn_neg_hi2 <= 1'b0;
+			sn_1_2 <= 1'b0;
+			sn_2_2 <= 1'b0;
+			w8_2 <= 1'b0;
+			neg1_2 <= 1'b0;
 			uw_code2_0 <= 4'd0;
 			uw_code2_1 <= 4'd0;
 			uw_code2_2 <= 4'd0;
@@ -562,7 +581,14 @@ module atg_fmt_cvt (
 			dir2_1 <= dir_u2_1;
 			dir2_2 <= dir_u2_2;
 			dir2_3 <= dir_u2_3;
-			uc2 <= uc;
+			n16_2 <= n16;
+			fld1_2 <= {fld1_hi[7:0], fld1_lo};
+			sn_neg_lo2 <= sn_neg_lo;
+			sn_neg_hi2 <= sn_neg_hi;
+			sn_1_2 <= sn_1;
+			sn_2_2 <= sn_2;
+			w8_2 <= w8_b;
+			neg1_2 <= neg_1;
 			uw_code2_0 <= uw_code_u2;
 			uw_code2_1 <= uw_code_u2;
 			uw_code2_2 <= uw_code_u2;
@@ -590,6 +616,14 @@ module atg_fmt_cvt (
 
 	/* ---- U3: c / (2^w - 1) is 0.ccc... (atg_fmt_unorm), the repeated bits;
 	 * the 10-bit leading zeros of the floats' mantissa ---- */
+	wire [3:0] uc_0_lo = sn_neg_lo2 ? n16_2[3:0] : fld1_2[3:0];
+	wire [3:0] uc_0_hi = sn_neg_hi2 ? n16_2[7:4] : fld1_2[7:4];
+	wire [7:0] uc_0 = {uc_0_hi, uc_0_lo};
+	wire [7:0] mag_1 = neg1_2 ? (w8_2 ? 8'd0 : n16_2[15:8]) : fld1_2[15:8];
+	wire [7:0] uc_1 = sn_1_2 ? mag_1 : fld1_2[15:8];
+	wire [7:0] uc_2 = sn_2_2 ? 8'd0 : fld1_2[23:16];
+	(* max_fanout = 16 *) wire [23:0] uc2 = {uc_2, uc_1, uc_0};
+
 	function [79:0] calc_r;
 		input [3:0] code;
 		input [23:0] u;
@@ -655,8 +689,8 @@ module atg_fmt_cvt (
 	reg [9:0] x3;
 	reg [3:0] hlz3;
 	reg [7:0] e5b3;
-	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n) begin
+	always @(posedge clk or posedge rst_sync) begin
+		if (rst_sync) begin
 			kind3 <= 3'd0;
 			dir3_0 <= 8'd0;
 			dir3_1 <= 8'd0;
@@ -687,22 +721,40 @@ module atg_fmt_cvt (
 		end
 	end
 
-	/* ---- U3b: UNORM's leading zeros (of the top 24 bits, parallel-prefix 1-hot) ---- */
-	wire [23:0] rtop24 = rr3[79:56];
-	wire [23:0] lz_p1  = rtop24 | {1'b0,  rtop24[23:1]};
-	wire [23:0] lz_p2  = lz_p1  | {2'b0,  lz_p1[23:2]};
-	wire [23:0] lz_p4  = lz_p2  | {4'b0,  lz_p2[23:4]};
-	wire [23:0] lz_p8  = lz_p4  | {8'b0,  lz_p4[23:8]};
-	wire [23:0] lz_p16 = lz_p8  | {16'b0, lz_p8[23:16]};
-	wire [23:0] lz_1h  = rtop24 & ~{1'b0, lz_p16[23:1]};
-	wire found_u3 = lz_p16[0];
-	reg [4:0] lz_u3;
-	always @(*) begin
-		lz_u3 = 5'd0;
-		for (i = 0; i < 24; i = i + 1)
-			if (lz_1h[23 - i])
-				lz_u3 = lz_u3 | i[4:0];
+	/* ---- U3b: UNORM's leading zeros (6-nibble LZ from rr3) ---- */
+	wire [5:0] nib_nz_u3b;
+	wire [11:0] nib_lz_u3b;
+	genvar gn;
+	generate
+	for (gn = 0; gn < 6; gn = gn + 1) begin : g_nib_lz
+		wire [3:0] nb = rr3[79 - 4*gn -: 4];
+		assign nib_nz_u3b[gn] = |nb;
+		assign nib_lz_u3b[2*gn +: 2] = nb[3] ? 2'd0 : nb[2] ? 2'd1 : nb[1] ? 2'd2 : 2'd3;
 	end
+	endgenerate
+
+	wire found_u3 = |nib_nz_u3b;
+	reg [2:0] lz_hi_u3;
+	reg [1:0] lz_lo_u3;
+	always @(*) begin
+		if (nib_nz_u3b[0])      begin lz_hi_u3 = 3'd0; lz_lo_u3 = nib_lz_u3b[1:0];   end
+		else if (nib_nz_u3b[1]) begin lz_hi_u3 = 3'd1; lz_lo_u3 = nib_lz_u3b[3:2];   end
+		else if (nib_nz_u3b[2]) begin lz_hi_u3 = 3'd2; lz_lo_u3 = nib_lz_u3b[5:4];   end
+		else if (nib_nz_u3b[3]) begin lz_hi_u3 = 3'd3; lz_lo_u3 = nib_lz_u3b[7:6];   end
+		else if (nib_nz_u3b[4]) begin lz_hi_u3 = 3'd4; lz_lo_u3 = nib_lz_u3b[9:8];   end
+		else                    begin lz_hi_u3 = 3'd5; lz_lo_u3 = nib_lz_u3b[11:10]; end
+	end
+	wire [4:0] lz_u3 = found_u3 ? {lz_hi_u3, lz_lo_u3} : 5'd0;
+
+	wire [9:0] fsh_u3b;
+	wire [7:0] hexp_u3b, hden_u3b, e5x_u3b;
+	wire [3:0] hden_lo4_u3b;
+	am_shift #(.W(10), .SW(4)) u_hf (.a(x3), .amt(hlz3), .left(1'b1), .arith(1'b0), .y(fsh_u3b));
+	am_sub #(.W(4)) u_hden_lo (.a(4'd0), .b(hlz3), .bi(1'b0), .d(hden_lo4_u3b), .bo(u_hden_nc));
+	assign hexp_u3b = {he3[4], {3{~he3[4]}}, he3[3:0]};
+	assign hden_u3b = (hlz3 == 4'd0) ? 8'd112 : {4'b0110, hden_lo4_u3b};
+	assign u_hexp_nc = 1'b0;
+	am_sub #(.W(8)) u_e5x (.a(e5b3), .b({4'd0, hlz3}), .bi(1'b0), .d(e5x_u3b), .bo(u_e5x_nc));
 
 	(* max_fanout = 16 *) reg [2:0] kind3b;
 	(* keep = "true" *) reg [7:0] dir3b_0, dir3b_1, dir3b_2, dir3b_3;
@@ -713,11 +765,11 @@ module atg_fmt_cvt (
 	reg found3, neg3b, snmin3b, hs3b;
 	reg [4:0] he3b;
 	reg [9:0] x3b;
-	(* max_fanout = 16 *) reg [3:0] hlz3b_hf;
-	(* max_fanout = 16 *) reg [3:0] hlz3b_exp;
-	reg [7:0] e5b3b;
-	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n) begin
+	reg x3b_nz, x3b_lo9_nz;
+	reg [8:0] fsh3b;
+	reg [7:0] hexp3b, hden3b, e5x3b;
+	always @(posedge clk or posedge rst_sync) begin
+		if (rst_sync) begin
 			kind3b <= 3'd0;
 			dir3b_0 <= 8'd0;
 			dir3b_1 <= 8'd0;
@@ -733,9 +785,12 @@ module atg_fmt_cvt (
 			hs3b <= 1'b0;
 			he3b <= 5'd0;
 			x3b <= 10'd0;
-			hlz3b_hf <= 4'd0;
-			hlz3b_exp <= 4'd0;
-			e5b3b <= 8'd0;
+			x3b_nz <= 1'b0;
+			x3b_lo9_nz <= 1'b0;
+			fsh3b <= 9'd0;
+			hexp3b <= 8'd0;
+			hden3b <= 8'd0;
+			e5x3b <= 8'd0;
 		end else begin
 			kind3b <= kind3;
 			dir3b_0 <= dir3_0;
@@ -752,9 +807,12 @@ module atg_fmt_cvt (
 			hs3b <= hs3;
 			he3b <= he3;
 			x3b <= x3;
-			hlz3b_hf <= hlz3;
-			hlz3b_exp <= hlz3;
-			e5b3b <= e5b3;
+			x3b_nz <= (x3 != 10'd0);
+			x3b_lo9_nz <= (x3[8:0] != 9'd0);
+			fsh3b <= fsh_u3b[8:0];
+			hexp3b <= hexp_u3b;
+			hden3b <= hden_u3b;
+			e5x3b <= e5x_u3b;
 		end
 	end
 
@@ -763,41 +821,48 @@ module atg_fmt_cvt (
 
 	am_shift #(.W(48), .SW(5)) u_un (.a(r3_hi), .amt(lz3_un), .left(1'b1), .arith(1'b0), .y(um_hi));
 
-	wire [9:0] fsh;
-	wire [7:0] hexp, hden, e5x;
-
-	am_shift #(.W(10), .SW(4)) u_hf (.a(x3b), .amt(hlz3b_hf), .left(1'b1), .arith(1'b0), .y(fsh));
-	wire [3:0] hden_lo4;
-	am_sub #(.W(4)) u_hden_lo (.a(4'd0), .b(hlz3b_exp), .bi(1'b0), .d(hden_lo4), .bo(u_hden_nc));
-	assign hexp = {he3b[4], {3{~he3b[4]}}, he3b[3:0]};
-	assign hden = (hlz3b_exp == 4'd0) ? 8'd112 : {4'b0110, hden_lo4};
-	assign u_hexp_nc = 1'b0;
-	am_sub #(.W(8)) u_e5x (.a(e5b3b), .b({4'd0, hlz3b_exp}), .bi(1'b0), .d(e5x), .bo(u_e5x_nc));
-
 	/* f: the bits below the leading one (x << (lz + 1)) */
-	wire [9:0] f = {fsh[8:0], 1'b0};
+	wire [9:0] f = {fsh3b, 1'b0};
 	reg [31:0] hval;
 	always @(*) begin
 		if (kind3b == K_E5)
-			hval = x3b[8:0] == 9'd0 ? 32'd0 : {1'b0, e5x, f[9:1], 14'd0};
+			hval = !x3b_lo9_nz ? 32'd0 : {1'b0, e5x3b, f[9:1], 14'd0};
 		else if (he3b == 5'd31)
-			hval = x3b != 10'd0 ? 32'h7FC00000 : {hs3b, 31'h7F800000};
+			hval = x3b_nz ? 32'h7FC00000 : {hs3b, 31'h7F800000};
 		else if (he3b == 5'd0)
-			hval = x3b == 10'd0 ? {hs3b, 31'd0} : {hs3b, hden, f, 13'd0};
+			hval = !x3b_nz ? {hs3b, 31'd0} : {hs3b, hden3b, f, 13'd0};
 		else
-			hval = {hs3b, hexp, x3b, 13'd0};
+			hval = {hs3b, hexp3b, x3b, 13'd0};
 	end
+
+	/* Direct 3-LUT sticky bit calculation for |um_hi[22:0] | r_low_or */
+	wire [22:0] u_st_b;
+	genvar gsb;
+	generate
+	for (gsb = 0; gsb < 23; gsb = gsb + 1) begin : g_st_u4
+		localparam [4:0] MAX_LZ_U4 = 5'd22 - gsb[4:0];
+		assign u_st_b[gsb] = r3_hi[gsb] && (lz3_un <= MAX_LZ_U4);
+	end
+	endgenerate
+	wire [3:0] u_st_grp = {
+		|u_st_b[22:18], |u_st_b[17:12], |u_st_b[11:6], |{u_st_b[5:0], r_low_or}
+	};
+	wire st4_w = |u_st_grp;
+
+	wire [7:0] e127_u4, e126_u4;
+	am_sub #(.W(8)) u_e127 (.a(8'd127), .b({3'd0, lz3}), .bi(1'b0), .d(e127_u4), .bo(u_e127_nc));
+	am_sub #(.W(8)) u_e126 (.a(8'd126), .b({3'd0, lz3}), .bi(1'b0), .d(e126_u4), .bo(u_e126_nc));
 
 	(* keep = "true", equivalent_register_removal = "no" *) reg [2:0] kind4_lo, kind4_hi;
 	(* keep = "true" *) reg [7:0] dir4_0, dir4_1, dir4_2, dir4_3;
 	reg [23:0] um4;	/* bits 70:47 of um */
 	reg st4;
-	(* max_fanout = 16 *) reg [4:0] lz4;
-	(* max_fanout = 16 *) reg found4;
+	reg [7:0] e127_4, e126_4;
+	(* keep = "true", equivalent_register_removal = "no", max_fanout = 16 *) reg found4_lo, found4_hi;
 	(* max_fanout = 16 *) reg neg4;
-	(* max_fanout = 16 *) reg snmin4;
-	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n) begin
+	(* keep = "true", equivalent_register_removal = "no", max_fanout = 16 *) reg snmin4_lo, snmin4_hi;
+	always @(posedge clk or posedge rst_sync) begin
+		if (rst_sync) begin
 			kind4_lo <= 3'd0;
 			kind4_hi <= 3'd0;
 			dir4_0 <= 8'd0;
@@ -806,10 +871,13 @@ module atg_fmt_cvt (
 			dir4_3 <= 8'd0;
 			um4 <= 24'd0;
 			st4 <= 1'b0;
-			lz4 <= 5'd0;
-			found4 <= 1'b0;
+			e127_4 <= 8'd0;
+			e126_4 <= 8'd0;
+			found4_lo <= 1'b0;
+			found4_hi <= 1'b0;
 			neg4 <= 1'b0;
-			snmin4 <= 1'b0;
+			snmin4_lo <= 1'b0;
+			snmin4_hi <= 1'b0;
 		end else begin
 			kind4_lo <= kind3b;
 			kind4_hi <= kind3b;
@@ -818,43 +886,43 @@ module atg_fmt_cvt (
 			dir4_2 <= (kind3b == K_HF || kind3b == K_E5) ? hval[23:16] : dir3b_2;
 			dir4_3 <= (kind3b == K_HF || kind3b == K_E5) ? hval[31:24] : dir3b_3;
 			um4 <= um_hi[46:23];
-			st4 <= r_low_or | (|um_hi[22:0]);
-			lz4 <= lz3;
-			found4 <= found3;
+			st4 <= st4_w;
+			e127_4 <= e127_u4;
+			e126_4 <= e126_u4;
+			found4_lo <= found3;
+			found4_hi <= found3;
 			neg4 <= neg3b;
-			snmin4 <= snmin3b;
+			snmin4_lo <= snmin3b;
+			snmin4_hi <= snmin3b;
 		end
 	end
 
 	/* ---- U5: UNORM's rounding (never a tie), SNORM ---- */
 	wire [22:0] q22;
-	wire [7:0] e127, e126;
 	wire ci = um4[0] && (st4 || um4[1]);
 	wire q23 = (&um4[23:1]) && ci;
 
 	am_add #(.W(23)) u_q (.a(um4[23:1]), .b(23'd0), .ci(ci), .s(q22), .co(u_q_nc));
-	am_sub #(.W(8)) u_e127 (.a(8'd127), .b({3'd0, lz4}), .bi(1'b0), .d(e127), .bo(u_e127_nc));
-	am_sub #(.W(8)) u_e126 (.a(8'd126), .b({3'd0, lz4}), .bi(1'b0), .d(e126), .bo(u_e126_nc));
 
-	wire [7:0] exp = q23 ? e127 : e126;
+	wire [7:0] exp = q23 ? e127_4 : e126_4;
 	wire is_norm_lo = (kind4_lo == K_UN) || (kind4_lo == K_SN);
 	wire is_norm_hi = (kind4_hi == K_UN) || (kind4_hi == K_SN);
-	wire is_snmin_lo = (kind4_lo == K_SN) && snmin4;
-	wire is_snmin_hi = (kind4_hi == K_SN) && snmin4;
+	wire is_snmin_lo = (kind4_lo == K_SN) && snmin4_lo;
+	wire is_snmin_hi = (kind4_hi == K_SN) && snmin4_hi;
 
-	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n) begin
+	always @(posedge clk or posedge rst_sync) begin
+		if (rst_sync) begin
 			o_val <= 32'd0;
 		end else begin
-			o_val[7:0] <= is_norm_lo ? ((found4 && !is_snmin_lo) ? q22[7:0] : 8'd0) : dir4_0;
-			o_val[15:8] <= is_norm_lo ? ((found4 && !is_snmin_lo) ? q22[15:8] : 8'd0) : dir4_1;
-			o_val[22:16] <= is_norm_hi ? ((found4 && !is_snmin_hi) ? q22[22:16] : 7'd0) : dir4_2[6:0];
-			o_val[23] <= is_norm_hi ? (is_snmin_hi ? 1'b1 : (found4 ? exp[0] : 1'b0)) : dir4_2[7];
-			o_val[30:24] <= is_norm_hi ? (is_snmin_hi ? 7'h3F : (found4 ? exp[7:1] : 7'd0)) : dir4_3[6:0];
-			o_val[31] <= is_norm_hi ? ((kind4_hi == K_SN) ? (is_snmin_hi || (found4 && neg4)) : 1'b0) : dir4_3[7];
+			o_val[7:0] <= is_norm_lo ? ((found4_lo && !is_snmin_lo) ? q22[7:0] : 8'd0) : dir4_0;
+			o_val[15:8] <= is_norm_lo ? ((found4_lo && !is_snmin_lo) ? q22[15:8] : 8'd0) : dir4_1;
+			o_val[22:16] <= is_norm_hi ? ((found4_hi && !is_snmin_hi) ? q22[22:16] : 7'd0) : dir4_2[6:0];
+			o_val[23] <= is_norm_hi ? (is_snmin_hi ? 1'b1 : (found4_hi ? exp[0] : 1'b0)) : dir4_2[7];
+			o_val[30:24] <= is_norm_hi ? (is_snmin_hi ? 7'h3F : (found4_hi ? exp[7:1] : 7'd0)) : dir4_3[6:0];
+			o_val[31] <= is_norm_hi ? ((kind4_hi == K_SN) ? (is_snmin_hi || (found4_hi && neg4)) : 1'b0) : dir4_3[7];
 		end
 	end
-	wire unused_ok = &{1'b0, i_inf[15], i_inf[12], i_inf[5:1], um_hi[47], fsh[9], u_neg_nc,
+	wire unused_ok = &{1'b0, i_inf[15], i_inf[12], i_inf[5:1], um_hi[47], um_hi[22:0], fsh_u3b[9], u_neg_nc,
 		u_wm1_nc, u_e5b_nc, u_hexp_nc, u_hden_nc, u_e5x_nc, u_q_nc, u_e127_nc,
 		u_e126_nc};
 endmodule

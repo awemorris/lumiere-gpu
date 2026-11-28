@@ -40,7 +40,7 @@ module atg_pt_exp_rt #(
 	genvar gk;
 	generate
 		for (gk = 0; gk < K; gk = gk + 1) begin : g_sk
-			am_skid #(.WIDTH(W), .RST_DATA(0)) u_sk (
+			atg_ex_rt_skid #(.WIDTH(W), .SL_S(7)) u_sk (
 				.clk(clk), .rst_n(rst_n),
 				.in_valid(c_valid[gk]), .in_ready(c_ready[gk]),
 				.in_data(c_data[gk*W +: W]),
@@ -74,15 +74,40 @@ module atg_pt_exp_rt #(
 		end
 	endgenerate
 
-	localparam integer SL_W = 48;
+	localparam integer SL_W = 8;
 	localparam integer N_SL = (W + SL_W - 1) / SL_W;
+	localparam integer N_M1 = (N_SL + 11) / 12;
+	wire [N_M1*KW-1:0] sel_m1;
+	genvar gm1, gmb;
+	generate
+		for (gm1 = 0; gm1 < N_M1; gm1 = gm1 + 1) begin : g_pt_m1
+			for (gmb = 0; gmb < KW; gmb = gmb + 1) begin : g_m1_b
+`ifdef SYNTH_KINTEX7
+				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_m1 (.I0(pick[gmb]), .O(sel_m1[gm1*KW + gmb]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				assign sel_m1[gm1*KW + gmb] = pick[gmb];
+`else
+				assign sel_m1[gm1*KW + gmb] = pick[gmb];
+`endif
+			end
+		end
+	endgenerate
 	wire [W-1:0] mux_data;
-	genvar gs;
+	genvar gs, gsb;
 	generate
 		for (gs = 0; gs < N_SL; gs = gs + 1) begin : g_mux
 			localparam integer B0 = gs * SL_W;
 			localparam integer BW = (B0 + SL_W <= W) ? SL_W : (W - B0);
-			(* max_fanout = 16 *) wire [KW-1:0] sel_sl = pick;
+			wire [KW-1:0] sel_sl;
+			for (gsb = 0; gsb < KW; gsb = gsb + 1) begin : g_sb
+`ifdef SYNTH_KINTEX7
+				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_bsl (.I0(sel_m1[(gs / 12)*KW + gsb]), .O(sel_sl[gsb]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				assign sel_sl[gsb] = sel_m1[(gs / 12)*KW + gsb];
+`else
+				assign sel_sl[gsb] = sel_m1[(gs / 12)*KW + gsb];
+`endif
+			end
 			reg [BW-1:0] sl_v;
 			integer mi;
 			always @(*) begin
@@ -103,7 +128,7 @@ module atg_pt_exp_rt #(
 		end
 	end
 
-	am_skid #(.WIDTH(W), .RST_DATA(0)) u_out_sk (
+	atg_ex_rt_skid #(.WIDTH(W), .SL_S(7)) u_out_sk (
 		.clk(clk), .rst_n(rst_n),
 		.in_valid(pick_valid), .in_ready(out_in_ready),
 		.in_data(mux_data),

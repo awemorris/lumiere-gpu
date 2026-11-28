@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -112,6 +112,12 @@ module atg_vf_index #(
 			LUT1 #(.INIT(2'b10)) u_ic (.O(we_icount_b[gb]), .I0(we_icount));
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_fn (.O(we_finst_b[gb]),  .I0(we_finst));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign we_ibase_b[gb] = we_ibase;
+			assign we_first_b[gb] = we_first;
+			assign we_count_b[gb] = we_count;
+			assign we_icount_b[gb] = we_icount;
+			assign we_finst_b[gb] = we_finst;
 `else
 			assign we_ibase_b[gb]  = we_ibase;
 			assign we_first_b[gb]  = we_first;
@@ -133,6 +139,7 @@ module atg_vf_index #(
 			s_ifmt <= 2'd0;
 			s_first <= 32'd0;
 			s_count <= 32'd0;
+			s_count_lo_z <= 1'b0;
 			s_restart <= 1'b0;
 			s_icount <= 32'd0;
 			s_finst <= 32'd0;
@@ -149,8 +156,9 @@ module atg_vf_index #(
 			if (we_count_b[0])  s_count[15:0]   <= st_wdata[15:0];
 			if (we_count_b[1])  s_count[31:16]  <= st_wdata[31:16];
 			if (we_count) begin
-				s_count_nz  <= !wdata_is0;
-				s_count_is1 <= wdata_is1;
+				s_count_nz   <= !wdata_is0;
+				s_count_is1  <= wdata_is1;
+				s_count_lo_z <= (st_wdata[15:0] == 16'd0);
 			end
 			if (we_rst)         s_restart       <= st_wdata[0];
 			if (we_icount_b[0]) s_icount[15:0]  <= st_wdata[15:0];
@@ -166,12 +174,14 @@ module atg_vf_index #(
 
 	/* INDEX_FORMAT: 0 none, 1 u16, 2 (and the reserved 3) u32. */
 	wire k_ind = s_ifmt != 2'd0;
-	wire [1:0] k_u32_b;
+	wire [3:0] k_u32_b;
 	generate
-		for (gb = 0; gb < 2; gb = gb + 1) begin : g_ku32_buf
+		for (gb = 0; gb < 4; gb = gb + 1) begin : g_ku32_buf
 `ifdef SYNTH_KINTEX7
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_ku (.O(k_u32_b[gb]), .I0(s_ifmt[1]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign k_u32_b[gb] = s_ifmt[1];
 `else
 			assign k_u32_b[gb] = s_ifmt[1];
 `endif
@@ -182,11 +192,37 @@ module atg_vf_index #(
 		k_u32_b[1] ? s_first[29:14] : s_first[30:15],
 		k_u32_b[0] ? {s_first[13:0], 2'b00} : {s_first[14:0], 1'b0}
 	};
+	reg s_count_lo_z;
 	wire [31:0] k_a0;
 	wire [31:0] k_cm1;
 	wire a0_co_unused, cm1_bo_unused;
 	am_add #(.W(32)) u_a0 (.a(s_ibase), .b(first_sh), .ci(1'b0), .s(k_a0), .co(a0_co_unused));
-	am_sub #(.W(32)) cm1 (.a(s_count), .b(32'd1), .bi(1'b0), .d(k_cm1), .bo(cm1_bo_unused));
+	/* Fast 32b nibble-prefix decrementer for k_cm1 = s_count - 1 using pre-registered s_count_lo_z (<= 9 cmos3) */
+	wire [7:0] cm1_nib_z;
+	wire [7:0] cm1_bin;
+	genvar gcm;
+	generate
+		for (gcm = 0; gcm < 8; gcm = gcm + 1) begin : g_cm1_z
+			assign cm1_nib_z[gcm] = ~(|s_count[gcm*4 +: 4]);
+		end
+		assign cm1_bin[0] = 1'b1;
+		assign cm1_bin[1] = cm1_nib_z[0];
+		assign cm1_bin[2] = cm1_nib_z[0] && cm1_nib_z[1];
+		assign cm1_bin[3] = &cm1_nib_z[2:0];
+		assign cm1_bin[4] = s_count_lo_z;
+		assign cm1_bin[5] = s_count_lo_z && cm1_nib_z[4];
+		assign cm1_bin[6] = s_count_lo_z && cm1_nib_z[4] && cm1_nib_z[5];
+		assign cm1_bin[7] = s_count_lo_z && (&cm1_nib_z[6:4]);
+		for (gcm = 0; gcm < 8; gcm = gcm + 1) begin : g_cm1_sub
+			wire [3:0] sc = s_count[gcm*4 +: 4];
+			wire bc = cm1_bin[gcm];
+			assign k_cm1[gcm*4 + 0] = sc[0] ^ bc;
+			assign k_cm1[gcm*4 + 1] = sc[1] ^ (bc && !sc[0]);
+			assign k_cm1[gcm*4 + 2] = sc[2] ^ (bc && !sc[1] && !sc[0]);
+			assign k_cm1[gcm*4 + 3] = sc[3] ^ (bc && !sc[2] && !sc[1] && !sc[0]);
+		end
+	endgenerate
+	assign cm1_bo_unused = 1'b0;
 
 	/* Explicit one-hot state flags */
 	reg st_is_idle;
@@ -207,6 +243,9 @@ module atg_vf_index #(
 			LUT1 #(.INIT(2'b10)) u_ib (.O(ind_b[gb]), .I0(ind));
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_ub (.O(u32_b[gb]), .I0(u32));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign ind_b[gb] = ind;
+			assign u32_b[gb] = u32;
 `else
 			assign ind_b[gb] = ind;
 			assign u32_b[gb] = u32;
@@ -216,6 +255,8 @@ module atg_vf_index #(
 `ifdef SYNTH_KINTEX7
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_uc (.O(u32_cm1_b[gb]), .I0(u32));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign u32_cm1_b[gb] = u32;
 `else
 			assign u32_cm1_b[gb] = u32;
 `endif
@@ -228,13 +269,9 @@ module atg_vf_index #(
 	reg [LA_W-1:0] l0, lend, lend_m1;
 	reg l0_eq_lend;
 
-	wire [31:0] cm1_sh = {
-		u32_cm1_b[1] ? k_cm1_r[29:14] : k_cm1_r[30:15],
-		u32_cm1_b[0] ? {k_cm1_r[13:0], 2'b00} : {k_cm1_r[14:0], 1'b0}
-	};
 	wire [31:0] k_alast;
 	wire al_co_unused;
-	am_add #(.W(32)) al (.a(k_a0_r), .b(cm1_sh), .ci(1'b0), .s(k_alast), .co(al_co_unused));
+	am_add #(.W(32)) al (.a(k_a0_r), .b(k_cm1_r), .ci(1'b0), .s(k_alast), .co(al_co_unused));
 
 	wire [LA_W-1:0] lend_m1_w;
 	wire lm1_bo_unused;
@@ -256,6 +293,8 @@ module atg_vf_index #(
 `ifdef SYNTH_KINTEX7
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_rw (.O(rq_wrap_b[gb]), .I0(rq_wrap_r));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign rq_wrap_b[gb] = rq_wrap_r;
 `else
 			assign rq_wrap_b[gb] = rq_wrap_r;
 `endif
@@ -291,9 +330,89 @@ module atg_vf_index #(
 
 	wire [LA_W-1:0] rql_next;
 	wire [31:0] rqileft_next;
-	wire rql_co_unused, rqi_bo_unused;
-	am_add #(.W(LA_W)) u_rql_inc (.a(rq_l), .b({LA_W{1'b0}}), .ci(1'b1), .s(rql_next), .co(rql_co_unused));
-	am_sub #(.W(32)) u_rqileft_dec (.a(rq_ileft), .b(32'd0), .bi(1'b1), .d(rqileft_next), .bo(rqi_bo_unused));
+	wire rql_hi_co_unused, rqi_bo_unused;
+	reg rql_lo_all1;
+	wire rql_g0  = &rq_l[3:0];
+	wire rql_g1  = &rq_l[7:4];
+	wire rql_g2  = &rq_l[11:8];
+	wire rql_c4  = rql_g0;
+	wire rql_c8  = rql_g0 && rql_g1;
+	wire rql_c12 = rql_g0 && rql_g1 && rql_g2;
+	assign rql_next[0]  = ~rq_l[0];
+	assign rql_next[1]  = rq_l[1]  ^ rq_l[0];
+	assign rql_next[2]  = rq_l[2]  ^ (&rq_l[1:0]);
+	assign rql_next[3]  = rq_l[3]  ^ (&rq_l[2:0]);
+	assign rql_next[4]  = rq_l[4]  ^ rql_c4;
+	assign rql_next[5]  = rq_l[5]  ^ (rql_c4 && rq_l[4]);
+	assign rql_next[6]  = rq_l[6]  ^ (rql_c4 && (&rq_l[5:4]));
+	assign rql_next[7]  = rq_l[7]  ^ (rql_c4 && (&rq_l[6:4]));
+	assign rql_next[8]  = rq_l[8]  ^ rql_c8;
+	assign rql_next[9]  = rq_l[9]  ^ (rql_c8 && rq_l[8]);
+	assign rql_next[10] = rq_l[10] ^ (rql_c8 && (&rq_l[9:8]));
+	assign rql_next[11] = rq_l[11] ^ (rql_c8 && (&rq_l[10:8]));
+	assign rql_next[12] = rq_l[12] ^ rql_c12;
+	wire rql_lo_all1_nxt = sel_rql_b[0] ? (&ka0_ext[LINE_SHIFT+12:LINE_SHIFT]) :
+	                       (rq_wrap_b[0] ? (&l0[12:0]) : (&rq_l[12:1] && !rq_l[0]));
+	/* Fast 4-bit nibble-prefix incrementer for rq_l[LA_W-1:13] (<= 6 cmos3) */
+	localparam integer RQL_HI_W = LA_W - 13;
+	localparam integer RQL_PAD_W = ((RQL_HI_W + 3) / 4) * 4;
+	localparam integer RQL_NIBS = RQL_PAD_W / 4;
+	wire [RQL_PAD_W-1:0] rql_hi_pad = {{(RQL_PAD_W-RQL_HI_W){1'b0}}, rq_l[LA_W-1:13]};
+	wire [RQL_NIBS-1:0]  rql_hi_nib_all1;
+	wire [RQL_NIBS-1:0]  rql_hi_cin;
+	wire [RQL_PAD_W-1:0] rql_hi_next_pad;
+	genvar grh;
+	generate
+		for (grh = 0; grh < RQL_NIBS; grh = grh + 1) begin : g_rql_hi_all1
+			assign rql_hi_nib_all1[grh] = &rql_hi_pad[grh*4 +: 4];
+		end
+		assign rql_hi_cin[0] = rql_lo_all1;
+		for (grh = 1; grh < RQL_NIBS; grh = grh + 1) begin : g_rql_hi_cin
+			assign rql_hi_cin[grh] = rql_lo_all1 && (&rql_hi_nib_all1[grh-1:0]);
+		end
+		for (grh = 0; grh < RQL_NIBS; grh = grh + 1) begin : g_rql_hi_sum
+			wire [3:0] rhn = rql_hi_pad[grh*4 +: 4];
+			wire rhc = rql_hi_cin[grh];
+			assign rql_hi_next_pad[grh*4 + 0] = rhn[0] ^ rhc;
+			assign rql_hi_next_pad[grh*4 + 1] = rhn[1] ^ (rhc && rhn[0]);
+			assign rql_hi_next_pad[grh*4 + 2] = rhn[2] ^ (rhc && rhn[1] && rhn[0]);
+			assign rql_hi_next_pad[grh*4 + 3] = rhn[3] ^ (rhc && rhn[2] && rhn[1] && rhn[0]);
+		end
+	endgenerate
+	assign rql_next[LA_W-1:13] = rql_hi_next_pad[RQL_HI_W-1:0];
+	assign rql_hi_co_unused = 1'b0;
+	/* Fast 32b nibble-prefix decrementer for rqileft_next = rq_ileft - 1 (<= 10 cmos3) */
+	wire [7:0] rqi_nib_z;
+	wire [7:0] rqi_lo3_z;
+	wire [3:0] rqi_b8_z;
+	wire [7:0] rqi_bin;
+	genvar grq;
+	generate
+		for (grq = 0; grq < 8; grq = grq + 1) begin : g_rqi_z
+			assign rqi_nib_z[grq] = ~(|rq_ileft[grq*4 +: 4]);
+			assign rqi_lo3_z[grq] = ~(|rq_ileft[grq*4 +: 3]);
+		end
+		for (grq = 0; grq < 4; grq = grq + 1) begin : g_rqi_b8
+			assign rqi_b8_z[grq] = rqi_nib_z[2*grq+1] && rqi_nib_z[2*grq];
+		end
+		assign rqi_bin[0] = 1'b1;
+		assign rqi_bin[1] = rqi_nib_z[0];
+		assign rqi_bin[2] = rqi_b8_z[0];
+		assign rqi_bin[3] = rqi_b8_z[0] && rqi_nib_z[2];
+		assign rqi_bin[4] = rqi_b8_z[0] && rqi_b8_z[1];
+		assign rqi_bin[5] = (rqi_b8_z[0] && rqi_b8_z[1]) && rqi_nib_z[4];
+		assign rqi_bin[6] = (rqi_b8_z[0] && rqi_b8_z[1]) && rqi_b8_z[2];
+		assign rqi_bin[7] = (rqi_b8_z[0] && rqi_b8_z[1]) && (rqi_b8_z[2] && rqi_nib_z[6]);
+		for (grq = 0; grq < 8; grq = grq + 1) begin : g_rqi_sub
+			wire [3:0] rqi_n = rq_ileft[grq*4 +: 4];
+			wire rqi_b = rqi_bin[grq];
+			assign rqileft_next[grq*4 + 0] = rqi_n[0] ^ rqi_b;
+			assign rqileft_next[grq*4 + 1] = rqi_n[1] ^ (rqi_b && !rqi_n[0]);
+			assign rqileft_next[grq*4 + 2] = rqi_n[2] ^ (rqi_b && !rqi_n[1] && !rqi_n[0]);
+			assign rqileft_next[grq*4 + 3] = rqi_n[3] ^ (rqi_b && rqi_lo3_z[grq]);
+		end
+	endgenerate
+	assign rqi_bo_unused = 1'b0;
 
 	(* keep = "true" *) wire [5:0] rqi_is2_c = cmp32_const_chunks(rq_ileft, 32'd2);
 	wire rqi_is2 = &rqi_is2_c;
@@ -320,6 +439,9 @@ module atg_vf_index #(
 			LUT1 #(.INIT(2'b10)) u_b0 (.O(we_buf0_b[gb]), .I0(gb < 8 ? we_buf0_m0 : we_buf0_m1));
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_b1 (.O(we_buf1_b[gb]), .I0(gb < 8 ? we_buf1_m0 : we_buf1_m1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign we_buf0_b[gb] = gb < 8 ? we_buf0_m0 : we_buf0_m1;
+			assign we_buf1_b[gb] = gb < 8 ? we_buf1_m0 : we_buf1_m1;
 `else
 			assign we_buf0_b[gb] = bv_free0_r[gb] && (gb < 8 ? we_buf0_m0 : we_buf0_m1);
 			assign we_buf1_b[gb] = bv_free1_r[gb] && (gb < 8 ? we_buf1_m0 : we_buf1_m1);
@@ -349,6 +471,7 @@ module atg_vf_index #(
 	reg [31:0] e_v;
 	reg [31:0] e_n;
 	reg e_n_is1;
+	reg e_line_cross;
 	reg [31:0] e_inst, e_ileft;
 	reg e_ileft_is1;
 
@@ -357,6 +480,8 @@ module atg_vf_index #(
 `ifdef SYNTH_KINTEX7
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_es (.O(e_slot_b[gb]), .I0(e_slot));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign e_slot_b[gb] = e_slot;
 `else
 			assign e_slot_b[gb] = e_slot;
 `endif
@@ -391,7 +516,7 @@ module atg_vf_index #(
 	wire h1_all1 = e_slot ? buf1_all1[{w_idx, 1'b1}] : buf0_all1[{w_idx, 1'b1}];
 	wire raw_is_restart = ind && s_restart && (u32 ? (h0_all1 && h1_all1) : (e_a[1] ? h1_all1 : h0_all1));
 
-	(* keep = "true" *) wire e_have_walk = st_is_walk && (!ind || (e_slot ? bv[1] : bv[0]));
+	wire e_have_walk = st_is_walk && (!ind || (e_slot ? bv[1] : bv[0]));
 	wire out_free = !iv_valid_r || iv_ready;
 	wire take = e_have_walk && out_free;
 
@@ -411,21 +536,77 @@ module atg_vf_index #(
 	wire [31:0] eileft_next;
 	wire ad_co_unused, ev_co_unused, ei_co_unused, en_bo_unused, eil_bo_unused;
 
-	am_add #(.W(32)) ad (.a(e_a), .b(u32 ? 32'd4 : 32'd2), .ci(1'b0), .s(e_anext), .co(ad_co_unused));
+	wire ea_c2 = u32 ? 1'b1 : e_a[1];
+	wire ea_c3 = e_a[2] && ea_c2;
+	wire ea_c4 = e_a[3] && ea_c3;
+	wire ea_ci_hi = u32 ? (&e_a[4:2]) : (&e_a[4:1]);
+	assign e_anext[0] = e_a[0];
+	assign e_anext[1] = u32 ? e_a[1] : ~e_a[1];
+	assign e_anext[2] = e_a[2] ^ ea_c2;
+	assign e_anext[3] = e_a[3] ^ ea_c3;
+	assign e_anext[4] = e_a[4] ^ ea_c4;
+	am_add #(.W(27)) ad (.a(e_a[31:5]), .b(27'd0), .ci(ea_ci_hi), .s(e_anext[31:5]), .co(ad_co_unused));
 	am_add #(.W(32)) u_ev_inc (.a(e_v), .b(32'd0), .ci(1'b1), .s(ev_next), .co(ev_co_unused));
 	am_add #(.W(32)) u_einst_inc (.a(e_inst), .b(32'd0), .ci(1'b1), .s(einst_next), .co(ei_co_unused));
-	am_sub #(.W(32)) u_en_dec (.a(e_n), .b(32'd0), .bi(1'b1), .d(en_next), .bo(en_bo_unused));
-	am_sub #(.W(32)) u_eileft_dec (.a(e_ileft), .b(32'd0), .bi(1'b1), .d(eileft_next), .bo(eil_bo_unused));
+	/* Fast 32b nibble-prefix decrementers for en_next = e_n - 1 and eileft_next = e_ileft - 1 (<= 9 cmos3) */
+	wire [7:0] en_nib_z, en_lo3_z, eil_nib_z, eil_lo3_z;
+	wire [3:0] en_b8_z, eil_b8_z;
+	wire [7:0] en_bin, eil_bin;
+	genvar ged;
+	generate
+		for (ged = 0; ged < 8; ged = ged + 1) begin : g_ed_z
+			assign en_nib_z[ged]  = ~(|e_n[ged*4 +: 4]);
+			assign en_lo3_z[ged]  = ~(|e_n[ged*4 +: 3]);
+			assign eil_nib_z[ged] = ~(|e_ileft[ged*4 +: 4]);
+			assign eil_lo3_z[ged] = ~(|e_ileft[ged*4 +: 3]);
+		end
+		for (ged = 0; ged < 4; ged = ged + 1) begin : g_ed_b8
+			assign en_b8_z[ged]  = en_nib_z[2*ged+1]  && en_nib_z[2*ged];
+			assign eil_b8_z[ged] = eil_nib_z[2*ged+1] && eil_nib_z[2*ged];
+		end
+		assign en_bin[0] = 1'b1;
+		assign en_bin[1] = en_nib_z[0];
+		assign en_bin[2] = en_b8_z[0];
+		assign en_bin[3] = en_b8_z[0] && en_nib_z[2];
+		assign en_bin[4] = en_b8_z[0] && en_b8_z[1];
+		assign en_bin[5] = (en_b8_z[0] && en_b8_z[1]) && en_nib_z[4];
+		assign en_bin[6] = (en_b8_z[0] && en_b8_z[1]) && en_b8_z[2];
+		assign en_bin[7] = (en_b8_z[0] && en_b8_z[1]) && (en_b8_z[2] && en_nib_z[6]);
+		assign eil_bin[0] = 1'b1;
+		assign eil_bin[1] = eil_nib_z[0];
+		assign eil_bin[2] = eil_b8_z[0];
+		assign eil_bin[3] = eil_b8_z[0] && eil_nib_z[2];
+		assign eil_bin[4] = eil_b8_z[0] && eil_b8_z[1];
+		assign eil_bin[5] = (eil_b8_z[0] && eil_b8_z[1]) && eil_nib_z[4];
+		assign eil_bin[6] = (eil_b8_z[0] && eil_b8_z[1]) && eil_b8_z[2];
+		assign eil_bin[7] = (eil_b8_z[0] && eil_b8_z[1]) && (eil_b8_z[2] && eil_nib_z[6]);
+		for (ged = 0; ged < 8; ged = ged + 1) begin : g_ed_sub
+			wire [3:0] enn  = e_n[ged*4 +: 4];
+			wire [3:0] eiln = e_ileft[ged*4 +: 4];
+			wire enb  = en_bin[ged];
+			wire eilb = eil_bin[ged];
+			assign en_next[ged*4 + 0]     = enn[0]  ^ enb;
+			assign en_next[ged*4 + 1]     = enn[1]  ^ (enb  && !enn[0]);
+			assign en_next[ged*4 + 2]     = enn[2]  ^ (enb  && !enn[1]  && !enn[0]);
+			assign en_next[ged*4 + 3]     = enn[3]  ^ (enb  && en_lo3_z[ged]);
+			assign eileft_next[ged*4 + 0] = eiln[0] ^ eilb;
+			assign eileft_next[ged*4 + 1] = eiln[1] ^ (eilb && !eiln[0]);
+			assign eileft_next[ged*4 + 2] = eiln[2] ^ (eilb && !eiln[1] && !eiln[0]);
+			assign eileft_next[ged*4 + 3] = eiln[3] ^ (eilb && eil_lo3_z[ged]);
+		end
+	endgenerate
+	assign en_bo_unused  = 1'b0;
+	assign eil_bo_unused = 1'b0;
 
 	(* keep = "true" *) wire [5:0] en_is2_c = cmp32_const_chunks(e_n, 32'd2);
 	(* keep = "true" *) wire [5:0] eil_is2_c = cmp32_const_chunks(e_ileft, 32'd2);
 	wire en_is2 = &en_is2_c;
 	wire eil_is2 = &eil_is2_c;
 
-	/* Line boundary crossing: adding 4 (u32) or 2 (!u32) crosses 32-byte line iff at last index of line */
-	wire line_cross = u32 ? (&e_a[4:2]) : (&e_a[4:1]);
-	wire pop = take && ind && (inst_end || line_cross);
-	wire rq_new = !rq_pend && st_is_walk && ind && rq_more && (nalloc != 2'd2 || pop);
+	/* Line boundary crossing pre-registered in e_line_cross */
+	wire pop = st_is_walk && ind && (e_slot ? bv[1] : bv[0]) && out_free && (e_n_is1 || e_line_cross);
+	wire rq_cand = !rq_pend && st_is_walk && ind && rq_more;
+	wire rq_new = rq_cand && (!nalloc[1] || pop);
 
 	assign req_valid = rq_pend;
 	assign req_write = 1'b0;
@@ -435,14 +616,16 @@ module atg_vf_index #(
 	assign req_tag = {7'd0, rq_slot};
 	wire rq_take = rq_pend && req_ready;
 
-	wire alloc_pop = pop;
 	wire [1:0] inflight_next;
-	wire [1:0] nalloc_next;
-	wire if_co_unused, na_co_unused;
-	am_add #(.W(2)) u_inflight (.a(inflight), .b({rd_rsp && !rq_take, rq_take ^ rd_rsp}), .ci(1'b0),
-		.s(inflight_next), .co(if_co_unused));
-	am_add #(.W(2)) u_nalloc (.a(nalloc), .b({alloc_pop && !rq_new, rq_new ^ alloc_pop}), .ci(1'b0),
-		.s(nalloc_next), .co(na_co_unused));
+	assign inflight_next[1] = (inflight[1] && (rq_take || !rd_rsp)) ||
+		(inflight[0] && rq_take && !rd_rsp);
+	assign inflight_next[0] = (inflight[1] && !rq_take && rd_rsp) ||
+		(inflight[0] && (rq_take == rd_rsp)) ||
+		(!inflight[1] && !inflight[0] && rq_take && !rd_rsp);
+
+	wire rq_pend_next     = !rq_take && (rq_pend || rq_new);
+	wire rq_wrap_next     = st_is_init2 ? l0_eq_lend_w : (rq_take ? (rq_wrap_r ? l0_eq_lend : rql_eq_lm1_w) : rq_wrap_r);
+	wire rq_ileft_is1_nxt = st_is_init1 ? s_icount_is1 : ((rq_take && rq_wrap_r) ? rqi_is2 : rq_ileft_is1);
 
 	/* Buffered clock-enables and mux selects (<= 3 LUT levels, fanout <= 16) */
 	wire [1:0] st_init1_b;
@@ -451,6 +634,9 @@ module atg_vf_index #(
 	LUT1 #(.INIT(2'b10)) u_sti1_0 (.O(st_init1_b[0]), .I0(st_is_init1));
 	(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 	LUT1 #(.INIT(2'b10)) u_sti1_1 (.O(st_init1_b[1]), .I0(st_is_init1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign st_init1_b[0] = st_is_init1;
+	assign st_init1_b[1] = st_is_init1;
 `else
 	assign st_init1_b[0] = st_is_init1;
 	assign st_init1_b[1] = st_is_init1;
@@ -516,6 +702,30 @@ module atg_vf_index #(
 			LUT1 #(.INIT(2'b10)) u_srql (.O(sel_rql_b[gb]),   .I0(st_init1_b[1]));
 			(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
 			LUT1 #(.INIT(2'b10)) u_srqi (.O(sel_rqi_b[gb]),   .I0(st_init1_b[1]));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign ce_ka0_b[gb] = ce_kick;
+			assign ce_kcm1_b[gb] = ce_kick;
+			assign ce_a0_b[gb] = st_init1_b[0];
+			assign ce_l0_b[gb] = st_init1_b[0];
+			assign ce_lend_b[gb] = st_init1_b[0];
+			assign ce_lm1_b[gb] = st_is_init2;
+			assign ce_ea_b[gb] = ce_walk_step;
+			assign ce_ea_rep_b[gb] = ce_walk_step;
+			assign ce_ev_b[gb] = ce_walk_step;
+			assign ce_en_b[gb] = ce_walk_step;
+			assign ce_einst_b[gb] = ce_inst_step;
+			assign ce_eil_b[gb] = ce_inst_step;
+			assign ce_rql_b[gb] = ce_rql_step;
+			assign ce_rqi_b[gb] = ce_rqi_step;
+			assign ce_ivi_b[gb] = ce_iv_out;
+			assign ce_ivinst_b[gb] = ce_iv_out;
+			assign sel_ea_b[gb] = sel_walk_rst;
+			assign sel_ev_b[gb] = sel_walk_rst;
+			assign sel_en_b[gb] = sel_walk_rst;
+			assign sel_ei_b[gb] = st_is_init3;
+			assign sel_eil_b[gb] = st_is_init3;
+			assign sel_rql_b[gb] = st_init1_b[1];
+			assign sel_rqi_b[gb] = st_init1_b[1];
 `else
 			assign ce_ka0_b[gb]    = ce_kick;
 			assign ce_kcm1_b[gb]   = ce_kick;
@@ -602,8 +812,21 @@ module atg_vf_index #(
 			buf1_all1 <= rdata_h_all1;
 	end
 
-	/* Flattened next-state logic for bv and bv_free*_r to avoid chained priority trees */
+	/* Flattened next-state logic for bv, bv_free*_r, and nalloc to avoid chained priority trees */
 	wire drain_done = st_is_drain && !rq_pend && (rd_rsp ? (inflight == 2'd1) : (inflight == 2'd0));
+	wire [1:0] nalloc_next;
+	assign nalloc_next[1] = !drain_done && (
+		(nalloc[1] && (rq_cand || !pop)) ||
+		(nalloc[0] && rq_cand && !pop)
+	);
+	assign nalloc_next[0] = !drain_done && (
+		(nalloc[1] && !rq_cand && pop) ||
+		(nalloc[0] && (rq_cand == pop)) ||
+		(!nalloc[1] && !nalloc[0] && rq_cand && !pop)
+	);
+	wire rq_more_next = st_is_init3 ? ind :
+		(st_is_drain && drain_done) ? 1'b0 :
+		(rq_take && rq_wrap_r && rq_ileft_is1) ? 1'b0 : rq_more;
 	wire bv0_next = drain_done ? 1'b0 : (pop && !e_slot) ? 1'b0 : (rd_rsp_ok && !rsp_tag[0]) ? 1'b1 : bv[0];
 	wire bv1_next = drain_done ? 1'b0 : (pop &&  e_slot) ? 1'b0 : (rd_rsp_ok &&  rsp_tag[0]) ? 1'b1 : bv[1];
 	wire bv0_free_next = drain_done ? 1'b1 : (pop && !e_slot) ? 1'b1 : (rd_rsp_ok && !rsp_tag[0]) ? 1'b0 : bv_free0_r[0];
@@ -630,6 +853,7 @@ module atg_vf_index #(
 			rq_more <= 1'b0;
 			rq_slot <= 1'b0;
 			rq_l <= {LA_W{1'b0}};
+			rql_lo_all1 <= 1'b0;
 			rq_ileft <= 32'd0;
 			rq_ileft_is1 <= 1'b0;
 			rq_wrap_r <= 1'b0;
@@ -647,6 +871,7 @@ module atg_vf_index #(
 			e_v <= 32'd0;
 			e_n <= 32'd0;
 			e_n_is1 <= 1'b0;
+			e_line_cross <= 1'b0;
 			e_inst <= 32'd0;
 			e_ileft <= 32'd0;
 			e_ileft_is1 <= 1'b0;
@@ -663,8 +888,8 @@ module atg_vf_index #(
 
 			if (ce_ka0_b[0])  k_a0_r[15:0]     <= k_a0[15:0];
 			if (ce_ka0_b[1])  k_a0_r[31:16]    <= k_a0[31:16];
-			if (ce_kcm1_b[0]) k_cm1_r[15:0]    <= k_cm1[15:0];
-			if (ce_kcm1_b[1]) k_cm1_r[31:16]   <= k_cm1[31:16];
+			if (ce_kcm1_b[0]) k_cm1_r[15:0]    <= k_u32_b[2] ? {k_cm1[13:0], 2'b00} : {k_cm1[14:0], 1'b0};
+			if (ce_kcm1_b[1]) k_cm1_r[31:16]   <= k_u32_b[3] ? k_cm1[29:14]       : k_cm1[30:15];
 
 			if (ce_a0_b[0])   a0[15:0]         <= k_a0_r[15:0];
 			if (ce_a0_b[1])   a0[31:16]        <= k_a0_r[31:16];
@@ -675,25 +900,20 @@ module atg_vf_index #(
 			if (ce_lm1_b[0])  lend_m1[13:0]    <= lend_m1_w[13:0];
 			if (ce_lm1_b[1])  lend_m1[LA_W-1:14] <= lend_m1_w[LA_W-1:14];
 
-			if (ce_rql_b[0]) rq_l[13:0]        <= next_rql_val[13:0];
+			if (ce_rql_b[0]) begin
+				rq_l[13:0]   <= next_rql_val[13:0];
+				rql_lo_all1  <= rql_lo_all1_nxt;
+			end
 			if (ce_rql_b[1]) rq_l[LA_W-1:14]   <= next_rql_val[LA_W-1:14];
 			if (ce_rqi_b[0]) rq_ileft[15:0]    <= next_rqi_val[15:0];
 			if (ce_rqi_b[1]) rq_ileft[31:16]   <= next_rqi_val[31:16];
 
-			if (rq_take) begin
-				rq_pend <= 1'b0;
-				if (rq_wrap_r) begin
-					rq_wrap_r <= l0_eq_lend;
-					rq_ileft_is1 <= rqi_is2;
-					if (rq_ileft_is1)
-						rq_more <= 1'b0;
-				end else begin
-					rq_wrap_r <= rql_eq_lm1_w;
-				end
-			end else if (rq_new) begin
-				rq_pend <= 1'b1;
+			rq_pend      <= rq_pend_next;
+			rq_wrap_r    <= rq_wrap_next;
+			rq_ileft_is1 <= rq_ileft_is1_nxt;
+			rq_more      <= rq_more_next;
+			if (!rq_take && rq_new)
 				rq_slot <= !rq_slot;
-			end
 			nalloc <= nalloc_next;
 			if (pop)
 				e_slot <= e_slot; /* bv/bv_free*_r handled above by bv*_next */
@@ -705,6 +925,7 @@ module atg_vf_index #(
 					e_a_w_rep[wi] <= next_ea_val[3:2];
 				e_a4_rep <= {2{next_ea_val[4]}};
 				e_a1_rep <= {2{next_ea_val[1]}};
+				e_line_cross <= u32 ? (&next_ea_val[4:2]) : (&next_ea_val[4:1]);
 			end
 			if (ce_ea_rep_b[1]) begin
 				for (wi = 4; wi < 8; wi = wi + 1)
@@ -741,16 +962,13 @@ module atg_vf_index #(
 			end else if (st_is_init1) begin
 				st_is_init1 <= 1'b0;
 				st_is_init2 <= 1'b1;
-				rq_ileft_is1 <= s_icount_is1;
 			end else if (st_is_init2) begin
 				st_is_init2 <= 1'b0;
 				st_is_init3 <= 1'b1;
 				l0_eq_lend <= l0_eq_lend_w;
-				rq_wrap_r <= l0_eq_lend_w;
 			end else if (st_is_init3) begin
 				st_is_init3 <= 1'b0;
 				st_is_walk  <= 1'b1;
-				rq_more <= ind;
 				rq_slot <= 1'b1;
 				e_slot <= 1'b0;
 				e_n_is1 <= s_count_is1;
@@ -778,8 +996,6 @@ module atg_vf_index #(
 				if (drain_done) begin
 					st_is_drain <= 1'b0;
 					st_is_idle  <= 1'b1;
-					rq_more <= 1'b0;
-					nalloc <= 2'd0;
 				end
 			end
 		end
@@ -787,8 +1003,8 @@ module atg_vf_index #(
 
 	wire unused_ok = &{1'b0, rsp_tag[7:1], k_alast[LINE_SHIFT-1:0], e_a[0], e_a[31:5],
 		a0_co_unused, cm1_bo_unused, al_co_unused, lm1_bo_unused,
-		rql_co_unused, rqi_bo_unused, ad_co_unused, ev_co_unused,
-		ei_co_unused, en_bo_unused, eil_bo_unused, if_co_unused, na_co_unused};
+		rql_hi_co_unused, rqi_bo_unused, ad_co_unused, ev_co_unused,
+		ei_co_unused, en_bo_unused, eil_bo_unused};
 endmodule
 
 `default_nettype wire

@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -92,6 +92,9 @@ module atg_su_lds #(
 `ifdef SYNTH_KINTEX7
 	(* ram_style = "block" *)
 	/* synthesis syn_ramstyle = "block" */
+`elsif SYNTH_KINTEX_ULTRASCALE
+	(* ram_style = "block" *)
+	/* synthesis syn_ramstyle = "block" */
 `else
 	(* ram_style = "block" *)
 `endif
@@ -102,8 +105,32 @@ module atg_su_lds #(
 			ram[init_i] = 32'd0;
 	end
 	wire rst_p = !rst_n;
-	wire scrub_i = scrub;
-	wire lds_take_raw = !scrub_i && !sc_on && (st == IDLE) && mine && !ram_we_r;
+	wire scrub_sc, scrub_we, scrub_ctl;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_scsc  (.I0(scrub), .O(scrub_sc));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_scwe  (.I0(scrub), .O(scrub_we));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_scctl (.I0(scrub), .O(scrub_ctl));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign scrub_sc = scrub;
+	assign scrub_we = scrub;
+	assign scrub_ctl = scrub;
+`else
+	assign scrub_sc  = scrub;
+	assign scrub_we  = scrub;
+	assign scrub_ctl = scrub;
+`endif
+	wire lds_take_raw = !scrub_ctl && !sc_on && (st == IDLE) && mine && !ram_we_r;
+	wire lds_take_g0, lds_take_g1;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ltk_g0 (.I0(lds_take_raw), .O(lds_take_g0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ltk_g1 (.I0(lds_take_raw), .O(lds_take_g1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign lds_take_g0 = lds_take_raw;
+	assign lds_take_g1 = lds_take_raw;
+`else
+	assign lds_take_g0 = lds_take_raw;
+	assign lds_take_g1 = lds_take_raw;
+`endif
 	(* max_fanout = 12 *) reg [2:0] st;
 	(* keep = "true", dont_touch = "true" *) reg [NPHYS-1:0] lds_idle_rep;
 	wire [NPHYS*AW-1:0] radr;
@@ -122,6 +149,10 @@ module atg_su_lds #(
 	reg [SBE_W:0] rsbe;
 	(* shreg_extract = "no", max_fanout = 12 *) reg [LW-1:0] li, pli_1, pli_2, pli_3;
 	(* shreg_extract = "no", keep = "true" *) reg [LW-1:0] li_radr, li_lane, li_rdat_lo, li_rdat_hi, li_rcmp_lo, li_rcmp_hi, li_atom;
+	reg [NPHYS-1:0] li_radr_oh;
+	(* dont_touch = "true" *) reg [NPHYS-1:0] li_radr_oh_hi;
+	reg sc_done_r;
+	reg [31:0] asum_r, w_other_r;
 	(* shreg_extract = "no", max_fanout = 12 *) reg pval_1, pval_2, pval_3;
 	reg [AW-1:0] ram_addr_r;
 	(* max_fanout = 12 *) reg ram_we_r;
@@ -134,7 +165,7 @@ module atg_su_lds #(
 	(* max_fanout = 12 *) wire is_atom = x_uop[ATG_UOP_OP +: 8] == ATG_LDS_ATOM;
 	wire [NPHYS-1:0] xl = is_sts || is_atom ? x_mask[2*NPHYS-1:NPHYS] : x_mask[NPHYS-1:0];
 	(* max_fanout = 12 *) wire [31:0] imm = is_atom ? 32'd0 : x_uop[ATG_UOP_IMM +: 32];
-	/* Lane li's word address (parallel 4-lane group tree avoids 31-deep priority chain). */
+	/* Lane li's word address (parallel 4-lane group tree using pre-decoded 1-hot li_radr_oh). */
 	localparam integer NG_ADR = (NPHYS >= 32) ? 8 : (NPHYS >= 16) ? 4 : (NPHYS >= 8) ? 2 : 1;
 	wire [NG_ADR*AW-1:0] a_grp;
 	genvar gg_a, gl_a;
@@ -143,7 +174,7 @@ module atg_su_lds #(
 			wire [3:0] gm;
 			for (gl_a = 0; gl_a < 4; gl_a = gl_a + 1) begin : g_adr_ln
 				localparam integer LI_A = gg_a * 4 + gl_a;
-				assign gm[gl_a] = (LI_A < NPHYS) && (li_radr == LI_A[LW-1:0]);
+				assign gm[gl_a] = (LI_A < NPHYS) && ((NG_ADR > 1 && gg_a < (NG_ADR/2)) ? li_radr_oh[LI_A] : li_radr_oh_hi[LI_A]);
 			end
 			assign a_grp[gg_a*AW +: AW] =
 				(gm[0] ? radr[((gg_a*4 + 0) < NPHYS ? (gg_a*4 + 0) : 0)*AW +: AW] : {AW{1'b0}}) |
@@ -162,12 +193,63 @@ module atg_su_lds #(
 	(* max_fanout = 12 *) wire [AW-1:0] a = a_mux;
 	(* max_fanout = 12 *) wire lane_on = lanes[li_lane];
 	/* An atom lane's read-modify-write uses q_pipe (dedicated fabric register after BRAM q). */
-	wire [31:0] cur_rdat = {rdat[{li_rdat_hi, 5'd16} +: 16], rdat[{li_rdat_lo, 5'd0} +: 16]};
-	wire [31:0] cur_rcmp = {rcmp[{li_rcmp_hi, 5'd16} +: 16], rcmp[{li_rcmp_lo, 5'd0} +: 16]};
-	wire [31:0] asum;
-	wire as_co_unused;
-	am_addsub #(.W(32)) u_asum (.a(q_pipe), .b(atom_b), .sub(rsub == 4'd5), .s(asum),
-		.co(as_co_unused));
+	wire [LW-1:0] li_rdat_lo0, li_rdat_lo1, li_rdat_hi0, li_rdat_hi1;
+	wire [LW-1:0] li_rcmp_lo0, li_rcmp_lo1, li_rcmp_hi0, li_rcmp_hi1;
+`ifdef SYNTH_KINTEX7
+	genvar glrb;
+	generate
+		for (glrb = 0; glrb < LW; glrb = glrb + 1) begin : g_lird_buf
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_lrdl0 (.I0(li_rdat_lo[glrb]), .O(li_rdat_lo0[glrb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_lrdl1 (.I0(li_rdat_lo[glrb]), .O(li_rdat_lo1[glrb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_lrdh0 (.I0(li_rdat_hi[glrb]), .O(li_rdat_hi0[glrb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_lrdh1 (.I0(li_rdat_hi[glrb]), .O(li_rdat_hi1[glrb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_lrcl0 (.I0(li_rcmp_lo[glrb]), .O(li_rcmp_lo0[glrb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_lrcl1 (.I0(li_rcmp_lo[glrb]), .O(li_rcmp_lo1[glrb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_lrch0 (.I0(li_rcmp_hi[glrb]), .O(li_rcmp_hi0[glrb]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_lrch1 (.I0(li_rcmp_hi[glrb]), .O(li_rcmp_hi1[glrb]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar glrb;
+	generate
+		for (glrb = 0; glrb < LW; glrb = glrb + 1) begin : g_lird_buf
+			assign li_rdat_lo0[glrb] = li_rdat_lo[glrb];
+			assign li_rdat_lo1[glrb] = li_rdat_lo[glrb];
+			assign li_rdat_hi0[glrb] = li_rdat_hi[glrb];
+			assign li_rdat_hi1[glrb] = li_rdat_hi[glrb];
+			assign li_rcmp_lo0[glrb] = li_rcmp_lo[glrb];
+			assign li_rcmp_lo1[glrb] = li_rcmp_lo[glrb];
+			assign li_rcmp_hi0[glrb] = li_rcmp_hi[glrb];
+			assign li_rcmp_hi1[glrb] = li_rcmp_hi[glrb];
+		end
+	endgenerate
+`else
+	assign li_rdat_lo0 = li_rdat_lo;
+	assign li_rdat_lo1 = li_rdat_lo;
+	assign li_rdat_hi0 = li_rdat_hi;
+	assign li_rdat_hi1 = li_rdat_hi;
+	assign li_rcmp_lo0 = li_rcmp_lo;
+	assign li_rcmp_lo1 = li_rcmp_lo;
+	assign li_rcmp_hi0 = li_rcmp_hi;
+	assign li_rcmp_hi1 = li_rcmp_hi;
+`endif
+	wire [31:0] cur_rdat = {
+		rdat[{li_rdat_hi1, 5'd24} +: 8], rdat[{li_rdat_hi0, 5'd16} +: 8],
+		rdat[{li_rdat_lo1, 5'd8}  +: 8], rdat[{li_rdat_lo0, 5'd0}  +: 8]
+	};
+	wire [31:0] cur_rcmp = {
+		rcmp[{li_rcmp_hi1, 5'd24} +: 8], rcmp[{li_rcmp_hi0, 5'd16} +: 8],
+		rcmp[{li_rcmp_lo1, 5'd8}  +: 8], rcmp[{li_rcmp_lo0, 5'd0}  +: 8]
+	};
+	wire [15:0] asum_lo_s, asum_hi_s;
+	wire        asum_lo_co, asum_hi_co_unused;
+	(* dont_touch = "true" *) reg  [15:0] asum_lo_r;
+	(* dont_touch = "true" *) reg         asum_cy_r;
+	wire        atom_is_sub = (rsub == 4'd5);
+	wire [31:0] atom_b_as = atom_is_sub ? ~atom_b : atom_b;
+	am_add #(.W(16)) u_asum_lo (.a(q_pipe[15:0]),  .b(atom_b_as[15:0]),  .ci(atom_is_sub), .s(asum_lo_s), .co(asum_lo_co));
+	am_add #(.W(16)) u_asum_hi (.a(q_pipe[31:16]), .b(atom_b_as[31:16]), .ci(asum_cy_r),   .s(asum_hi_s), .co(asum_hi_co_unused));
+	wire [31:0] asum = {asum_hi_s, asum_lo_r};
 
 	/* Atomic comparisons (fanout = 2 each into the two 16-bit write-data slices). */
 `ifdef MUT_LDS_ATOM_NOCMP
@@ -175,7 +257,7 @@ module atg_su_lds #(
 `else
 	wire [31:0] atom_cmp_rhs = atom_c;
 `endif
-	/* Parallel 4-byte unsigned/signed compare (~7 cmos3 vs 32b subtractor borrow chain). */
+	/* Parallel 4-byte unsigned/signed compare registered at aph==3, reduced at aph==4 (<= 9 cmos3). */
 	wire [3:0] cmp_eq_b, cmp_lt_b;
 	genvar gcb;
 	generate
@@ -184,12 +266,22 @@ module atg_su_lds #(
 			assign cmp_lt_b[gcb] = (q_pipe[gcb*8 +: 8] <  atom_b[gcb*8 +: 8]);
 		end
 	endgenerate
-	wire cmp_ab_eq = &cmp_eq_b;
-	wire cmp_ult = cmp_lt_b[3] || (cmp_eq_b[3] && (cmp_lt_b[2] || (cmp_eq_b[2] && (cmp_lt_b[1] || (cmp_eq_b[1] && cmp_lt_b[0])))));
-	wire cmp_ugt = !cmp_ult && !cmp_ab_eq;
-	wire cmp_slt = (q_pipe[31] != atom_b[31]) ? q_pipe[31] : cmp_ult;
-	wire cmp_sgt = !cmp_slt && !cmp_ab_eq;
-	wire cmp_eq  = (q_pipe == atom_cmp_rhs);
+	reg [3:0] cmp_eq_b_r, cmp_lt_b_r;
+	reg       cmp_eq_r, cmp_sign_xor_r, cmp_old31_r;
+	reg       rsub_is_sgt_r, rsub_is_slt_r, rsub_is_ugt_r, rsub_is_ult_r, rsub_is_cas_r, rsub_is_const1_r;
+	wire cmp_ab_eq = &cmp_eq_b_r;
+	wire cmp_ult_t3 = cmp_lt_b_r[3];
+	wire cmp_ult_t2 = cmp_eq_b_r[3] && cmp_lt_b_r[2];
+	wire cmp_ult_t1 = cmp_eq_b_r[3] && cmp_eq_b_r[2] && cmp_lt_b_r[1];
+	wire cmp_ult_t0 = cmp_eq_b_r[3] && cmp_eq_b_r[2] && cmp_eq_b_r[1] && cmp_lt_b_r[0];
+	wire cmp_ult = cmp_ult_t3 || cmp_ult_t2 || cmp_ult_t1 || cmp_ult_t0;
+	wire cmp_want_ult   = rsub_is_ult_r || (rsub_is_slt_r && !cmp_sign_xor_r);
+	wire cmp_want_ugt   = rsub_is_ugt_r || (rsub_is_sgt_r && !cmp_sign_xor_r);
+	wire cmp_want_c1    = rsub_is_const1_r || (rsub_is_cas_r && !cmp_eq_r) ||
+		(cmp_sign_xor_r && ((rsub_is_sgt_r && !cmp_old31_r) || (rsub_is_slt_r && cmp_old31_r)));
+	wire use_old_flat   = cmp_want_c1 || (cmp_want_ult && cmp_ult) || (cmp_want_ugt && !cmp_ult && !cmp_ab_eq);
+	wire cmp_eq  = cmp_eq_r;
+	wire cmp_eq_w = (q_pipe == atom_cmp_rhs);
 	wire unused_cmp_diff = 1'b0;
 
 `ifdef MUT_LDS_ATOM_RAW
@@ -204,11 +296,11 @@ module atg_su_lds #(
 	wire [AW-1:0] sc_a;
 
 	atg_su_scrub #(.DEPTH(NW), .AW(AW)) sc (
-		.clk(clk), .rst_n(rst_n), .start(scrub_i), .on(sc_on), .a(sc_a)
+		.clk(clk), .rst_n(rst_n), .start(scrub_sc), .on(sc_on), .a(sc_a)
 	);
 
 	/* The word addresses of the group on x_*: (rs1 + imm) / 4, its low AW bits. */
-	(* dont_touch = "true" *) wire lds_atom_base = !scrub_i && !sc_on && (st == ACCESS) && ratom && (aph == 3'd3);
+	(* dont_touch = "true" *) wire lds_atom_base = !scrub_ctl && !sc_on && (st == ACCESS) && ratom && (aph == 3'd3);
 	wire [NPHYS*AW-1:0] xadr;
 	genvar l, glh;
 	generate
@@ -218,6 +310,11 @@ module atg_su_lds #(
 			genvar gbimm;
 			for (gbimm = 0; gbimm < AW+2; gbimm = gbimm + 1) begin : g_buf_imm
 				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_imm (.I0(imm[gbimm]), .O(imm_l[gbimm]));
+			end
+`elsif SYNTH_KINTEX_ULTRASCALE
+			genvar gbimm;
+			for (gbimm = 0; gbimm < AW+2; gbimm = gbimm + 1) begin : g_buf_imm
+				assign imm_l[gbimm] = imm[gbimm];
 			end
 `else
 			assign imm_l = imm[AW+1:0];
@@ -231,7 +328,9 @@ module atg_su_lds #(
 
 			wire lds_take_l;
 `ifdef SYNTH_KINTEX7
-			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_tk_a (.I0(lds_take_raw), .O(lds_take_l));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_tk_a (.I0((l < NPHYS/2) ? lds_take_g0 : lds_take_g1), .O(lds_take_l));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign lds_take_l = (l < NPHYS/2) ? lds_take_g0 : lds_take_g1;
 `else
 			assign lds_take_l  = lds_idle_rep[l];
 `endif
@@ -247,6 +346,10 @@ module atg_su_lds #(
 				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_tk_dat (.I0(lds_take_l), .O(lds_take_dat));
 				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_tk_cmp (.I0(lds_take_l), .O(lds_take_cmp));
 				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_tk_res (.I0(lds_take_l), .O(lds_take_res));
+`elsif SYNTH_KINTEX_ULTRASCALE
+				assign lds_take_dat = lds_take_l;
+				assign lds_take_cmp = lds_take_l;
+				assign lds_take_res = lds_take_l;
 `else
 				assign lds_take_dat = lds_take_l;
 				assign lds_take_cmp = lds_take_l;
@@ -274,13 +377,7 @@ module atg_su_lds #(
 
 		for (glh = 0; glh < 2; glh = glh + 1) begin : g_wd_half
 			(* dont_touch = "true" *) wire [3:0] rsub_h = rsub;
-			(* dont_touch = "true" *) wire use_old_h =
-				(rsub_h == 4'd3)  ? 1'b0 :
-				(rsub_h == 4'd6)  ? cmp_sgt :
-				(rsub_h == 4'd7)  ? cmp_slt :
-				(rsub_h == 4'd8)  ? cmp_ugt :
-				(rsub_h == 4'd9)  ? cmp_ult :
-				(rsub_h == 4'd10) ? !cmp_eq : 1'b1;
+			(* dont_touch = "true" *) wire use_old_h = use_old_flat;
 			wire [15:0] old_h = q_pipe[glh*16 +: 16];
 			wire [15:0] b_h   = atom_b[glh*16 +: 16];
 			(* dont_touch = "true" *) wire [15:0] w_other_h =
@@ -288,12 +385,31 @@ module atg_su_lds #(
 				(rsub_h == 4'd1) ? (old_h | b_h) :
 				(rsub_h == 4'd2) ? (old_h ^ b_h) :
 				(use_old_h ? old_h : b_h);
-			(* dont_touch = "true" *) wire is_addsub_h = (rsub_h == 4'd4 || rsub_h == 4'd5);
-			wire [15:0] w_atom_h = is_addsub_h ? asum[glh*16 +: 16] : w_other_h;
-			wire wd_zero_h = scrub_i || sc_on;
-			wire wd_atom_h = (st == ACCESS) && atom_active && (aph == 3'd3);
-			wire wd_sts_h  = (st == ACCESS) && !atom_active && !ratom && rsts && lane_on;
-			(* shreg_extract = "no" *) reg [15:0] ram_wd_h_r;
+			wire wd_zero_h, wd_atom_h, wd_sts_h, is_addsub_h, wr_atom_en_0, wr_atom_en_1;
+`ifdef SYNTH_KINTEX7
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ias  (.I0(rsub_h == 4'd4 || rsub_h == 4'd5),                    .O(is_addsub_h));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_wdz  (.I0(scrub_we || sc_on),                                .O(wd_zero_h));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_wda  (.I0((st == ACCESS) && atom_active && (aph == 3'd5)),       .O(wd_atom_h));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_wds  (.I0((st == ACCESS) && !atom_active && !ratom && rsts && lane_on), .O(wd_sts_h));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_wrat0 (.I0((st == ACCESS) && atom_active && (aph == 3'd4)),      .O(wr_atom_en_0));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_wrat1 (.I0((st == ACCESS) && atom_active && (aph == 3'd4)),      .O(wr_atom_en_1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+			assign is_addsub_h = rsub_h == 4'd4 || rsub_h == 4'd5;
+			assign wd_zero_h = scrub_we || sc_on;
+			assign wd_atom_h = (st == ACCESS) && atom_active && (aph == 3'd5);
+			assign wd_sts_h = (st == ACCESS) && !atom_active && !ratom && rsts && lane_on;
+			assign wr_atom_en_0 = (st == ACCESS) && atom_active && (aph == 3'd4);
+			assign wr_atom_en_1 = (st == ACCESS) && atom_active && (aph == 3'd4);
+`else
+			assign is_addsub_h = (rsub_h == 4'd4 || rsub_h == 4'd5);
+			assign wd_zero_h = scrub_we || sc_on;
+			assign wd_atom_h = (st == ACCESS) && atom_active && (aph == 3'd5);
+			assign wd_sts_h  = (st == ACCESS) && !atom_active && !ratom && rsts && lane_on;
+			assign wr_atom_en_0 = (st == ACCESS) && atom_active && (aph == 3'd4);
+			assign wr_atom_en_1 = (st == ACCESS) && atom_active && (aph == 3'd4);
+`endif
+			wire [15:0] w_atom_h = is_addsub_h ? asum_r[glh*16 +: 16] : w_other_r[glh*16 +: 16];
+			(* shreg_extract = "no", dont_touch = "true" *) reg [15:0] ram_wd_h_r;
 			always @(posedge clk or posedge rst_p) begin
 				if (rst_p)
 					ram_wd_h_r <= 16'd0;
@@ -305,13 +421,36 @@ module atg_su_lds #(
 					ram_wd_h_r <= cur_rdat[glh*16 +: 16];
 			end
 			assign ram_wd_r[glh*16 +: 16] = ram_wd_h_r;
+			always @(posedge clk) begin
+				if (wr_atom_en_0)
+					asum_r[glh*16 +: 16]    <= asum[glh*16 +: 16];
+				if (wr_atom_en_1)
+					w_other_r[glh*16 +: 16] <= w_other_h;
+			end
 		end
 	endgenerate
 
 	/* The next lane. */
-	wire [LW-1:0] li_next;
+	wire [LW-1:0] li_next, li_next_b;
 	wire li_co_unused;
 	am_add #(.W(LW)) u_li (.a(li), .b({LW{1'b0}}), .ci(1'b1), .s(li_next), .co(li_co_unused));
+`ifdef SYNTH_KINTEX7
+	genvar gli;
+	generate
+		for (gli = 0; gli < LW; gli = gli + 1) begin : g_libuf
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_lib (.I0(li_next[gli]), .O(li_next_b[gli]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar gli;
+	generate
+		for (gli = 0; gli < LW; gli = gli + 1) begin : g_libuf
+			assign li_next_b[gli] = li_next[gli];
+		end
+	endgenerate
+`else
+	assign li_next_b = li_next;
+`endif
 
 	wire [AW-1:0] sc_a_next;
 	wire sc_a_co_unused;
@@ -319,16 +458,29 @@ module atg_su_lds #(
 
 	assign scrub_busy = sc_on;
 
-	wire lds_idle_ce_a = !rst_p && !scrub_i && !sc_on && (st == IDLE) && mine && !ram_we_r;
-	wire lds_idle_ce_b = !rst_p && !scrub_i && !sc_on && (st == IDLE) && mine && !ram_we_r;
-	wire atom_bc_ce_raw = !rst_p && !scrub_i && !sc_on && (st == ACCESS) && atom_active && (aph == 3'd0);
+	wire lds_idle_ce_a0, lds_idle_ce_a1, lds_idle_ce_b;
+	wire atom_bc_ce_raw = !scrub_ctl && !sc_on && (st == ACCESS) && atom_active && (aph == 3'd0);
 	wire atom_bc_ce_0, atom_bc_ce_1, atom_bc_ce_2, atom_bc_ce_3;
 `ifdef SYNTH_KINTEX7
-	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_atb0 (.I0(atom_bc_ce_raw), .O(atom_bc_ce_0));
-	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_atb1 (.I0(atom_bc_ce_raw), .O(atom_bc_ce_1));
-	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_atc0 (.I0(atom_bc_ce_raw), .O(atom_bc_ce_2));
-	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_atc1 (.I0(atom_bc_ce_raw), .O(atom_bc_ce_3));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ldicea0 (.I0(lds_take_raw), .O(lds_idle_ce_a0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ldicea1 (.I0(lds_take_raw), .O(lds_idle_ce_a1));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_ldiceb  (.I0(lds_take_raw), .O(lds_idle_ce_b));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_atb0  (.I0(atom_bc_ce_raw), .O(atom_bc_ce_0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_atb1  (.I0(atom_bc_ce_raw), .O(atom_bc_ce_1));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_atc0  (.I0(atom_bc_ce_raw), .O(atom_bc_ce_2));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_b_atc1  (.I0(atom_bc_ce_raw), .O(atom_bc_ce_3));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign lds_idle_ce_a0 = lds_take_raw;
+	assign lds_idle_ce_a1 = lds_take_raw;
+	assign lds_idle_ce_b = lds_take_raw;
+	assign atom_bc_ce_0 = atom_bc_ce_raw;
+	assign atom_bc_ce_1 = atom_bc_ce_raw;
+	assign atom_bc_ce_2 = atom_bc_ce_raw;
+	assign atom_bc_ce_3 = atom_bc_ce_raw;
 `else
+	assign lds_idle_ce_a0 = lds_take_raw;
+	assign lds_idle_ce_a1 = lds_take_raw;
+	assign lds_idle_ce_b  = lds_take_raw;
 	assign atom_bc_ce_0 = atom_bc_ce_raw;
 	assign atom_bc_ce_1 = atom_bc_ce_raw;
 	assign atom_bc_ce_2 = atom_bc_ce_raw;
@@ -347,6 +499,9 @@ module atg_su_lds #(
 			li_rcmp_lo <= {LW{1'b0}};
 			li_rcmp_hi <= {LW{1'b0}};
 			li_atom <= {LW{1'b0}};
+			li_radr_oh <= {{(NPHYS-1){1'b0}}, 1'b1};
+			li_radr_oh_hi <= {{(NPHYS-1){1'b0}}, 1'b1};
+			sc_done_r <= 1'b0;
 			pli_1 <= {LW{1'b0}};
 			pli_2 <= {LW{1'b0}};
 			pli_3 <= {LW{1'b0}};
@@ -367,12 +522,21 @@ module atg_su_lds #(
 			rlast <= 1'b0;
 			rsbe <= {(SBE_W+1){1'b0}};
 		end else begin
-			if (lds_idle_ce_a) begin
+			if (lds_idle_ce_a0) begin
 				lanes <= xl;
 				rsts <= is_sts;
 				ratom <= is_atom;
 				rwrd <= x_uop[ATG_UOP_WRD];
+			end
+			if (lds_idle_ce_a1) begin
 				rsub <= x_uop[ATG_UOP_SUB +: 4];
+				rsub_is_sgt_r    <= (x_uop[ATG_UOP_SUB +: 4] == 4'd6);
+				rsub_is_slt_r    <= (x_uop[ATG_UOP_SUB +: 4] == 4'd7);
+				rsub_is_ugt_r    <= (x_uop[ATG_UOP_SUB +: 4] == 4'd8);
+				rsub_is_ult_r    <= (x_uop[ATG_UOP_SUB +: 4] == 4'd9);
+				rsub_is_cas_r    <= (x_uop[ATG_UOP_SUB +: 4] == 4'd10);
+				rsub_is_const1_r <= x_uop[ATG_UOP_SUB + 3] &&
+					(x_uop[ATG_UOP_SUB + 2] || (x_uop[ATG_UOP_SUB + 1] && x_uop[ATG_UOP_SUB + 0]));
 			end
 			if (lds_idle_ce_b) begin
 				rrd <= x_uop[ATG_UOP_RD +: 7];
@@ -388,12 +552,13 @@ module atg_su_lds #(
 			pli_2 <= pli_1;
 			pli_3 <= pli_2;
 			ram_we_r <= 1'b0;
+			sc_done_r <= !scrub_we && sc_on && ({{(32-AW){1'b0}}, sc_a_next} == NW - 1);
 
-			if (scrub_i) begin
+			if (scrub_we) begin
 				ram_we_r <= 1'b1;
 				ram_addr_r <= {AW{1'b0}};
 			end else if (sc_on) begin
-				if ({{(32-AW){1'b0}}, sc_a} != NW - 1) begin
+				if (!sc_done_r) begin
 					ram_we_r <= 1'b1;
 					ram_addr_r <= sc_a_next;
 				end
@@ -408,6 +573,8 @@ module atg_su_lds #(
 					li_rcmp_lo <= {LW{1'b0}};
 					li_rcmp_hi <= {LW{1'b0}};
 					li_atom <= {LW{1'b0}};
+					li_radr_oh <= {{(NPHYS-1){1'b0}}, 1'b1};
+			li_radr_oh_hi <= {{(NPHYS-1){1'b0}}, 1'b1};
 					aph <= 3'd0;
 					st <= xl == {NPHYS{1'b0}} ? BEAT : ACCESS;
 					lds_idle_rep <= {NPHYS{1'b0}};
@@ -421,20 +588,33 @@ module atg_su_lds #(
 					3'd1: aph <= 3'd2;
 					3'd2: aph <= 3'd3;
 					3'd3: begin
+						asum_lo_r  <= asum_lo_s;
+						asum_cy_r  <= asum_lo_co;
+						cmp_eq_b_r <= cmp_eq_b;
+						cmp_lt_b_r <= cmp_lt_b;
+						cmp_eq_r   <= cmp_eq_w;
+						cmp_sign_xor_r <= (q_pipe[31] != atom_b[31]);
+						cmp_old31_r    <= q_pipe[31];
+						aph <= 3'd4;
+					end
+					3'd4: aph <= 3'd5;
+					3'd5: begin
 						ram_we_r <= 1'b1;
 						ram_addr_r <= a;
-						aph <= 3'd4;
+						aph <= 3'd6;
 					end
 					default: begin
 						aph <= 3'd0;
 						li <= li_next;
 						li_radr <= li_next;
 						li_lane <= li_next;
-						li_rdat_lo <= li_next;
-						li_rdat_hi <= li_next;
-						li_rcmp_lo <= li_next;
-						li_rcmp_hi <= li_next;
-						li_atom <= li_next;
+						li_rdat_lo <= li_next_b;
+						li_rdat_hi <= li_next_b;
+						li_rcmp_lo <= li_next_b;
+						li_rcmp_hi <= li_next_b;
+						li_atom <= li_next_b;
+						li_radr_oh <= {li_radr_oh[NPHYS-2:0], 1'b0};
+						li_radr_oh_hi <= {li_radr_oh_hi[NPHYS-2:0], 1'b0};
 						if ({{(32-LW){1'b0}}, li_atom} == NPHYS - 1)
 							st <= DRAIN1;
 					end
@@ -451,11 +631,13 @@ module atg_su_lds #(
 					li <= li_next;
 					li_radr <= li_next;
 					li_lane <= li_next;
-					li_rdat_lo <= li_next;
-					li_rdat_hi <= li_next;
-					li_rcmp_lo <= li_next;
-					li_rcmp_hi <= li_next;
-					li_atom <= li_next;
+					li_rdat_lo <= li_next_b;
+					li_rdat_hi <= li_next_b;
+					li_rcmp_lo <= li_next_b;
+					li_rcmp_hi <= li_next_b;
+					li_atom <= li_next_b;
+					li_radr_oh <= {li_radr_oh[NPHYS-2:0], 1'b0};
+					li_radr_oh_hi <= {li_radr_oh_hi[NPHYS-2:0], 1'b0};
 					if ({{(32-LW){1'b0}}, li_atom} == NPHYS - 1)
 						st <= DRAIN1;
 				end

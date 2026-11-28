@@ -67,7 +67,7 @@ module atg_vf_conv (
 	`include "atg_rop_unorm8.vh"
 
 	/* Active-high reset nets */
-	wire rst = !rst_n;
+	(* keep = "true" *) wire rst = !rst_n;
 	(* keep = "true" *) wire rst_p = rst;
 	(* keep = "true" *) wire rst_c = rst;
 	(* keep = "true" *) wire rst_sys = rst;

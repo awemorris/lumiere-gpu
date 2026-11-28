@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -94,6 +94,43 @@ module atg_su_sb #(
 	wire [WARP_W-1:0] u_warp_r, u_warp_ev, u_warp_r0, u_warp_r1, u_warp_r2, u_warp_r3, u_warp_cnt;
 	wire [WARP_W-1:0] u_warp_m, u_warp_f, u_warp_c, u_warp_w, u_warp_out;
 
+`ifdef SYNTH_KINTEX7
+	genvar guwo;
+	generate
+		for (guwo = 0; guwo < WARP_W; guwo = guwo + 1) begin : g_uwo_buf
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uwr  (.I0(u_warp[guwo]), .O(u_warp_r[guwo]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uwev (.I0(u_warp[guwo]), .O(u_warp_ev[guwo]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uwr0 (.I0(u_warp[guwo]), .O(u_warp_r0[guwo]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uwr1 (.I0(u_warp[guwo]), .O(u_warp_r1[guwo]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uwr2 (.I0(u_warp[guwo]), .O(u_warp_r2[guwo]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uwr3 (.I0(u_warp[guwo]), .O(u_warp_r3[guwo]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uwct (.I0(u_warp[guwo]), .O(u_warp_cnt[guwo]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uwm  (.I0(u_warp[guwo]), .O(u_warp_m[guwo]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uwf  (.I0(u_warp[guwo]), .O(u_warp_f[guwo]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uwc  (.I0(u_warp[guwo]), .O(u_warp_c[guwo]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uww  (.I0(u_warp[guwo]), .O(u_warp_w[guwo]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uwo  (.I0(u_warp[guwo]), .O(u_warp_out[guwo]));
+		end
+	endgenerate
+`elsif SYNTH_KINTEX_ULTRASCALE
+	genvar guwo;
+	generate
+		for (guwo = 0; guwo < WARP_W; guwo = guwo + 1) begin : g_uwo_buf
+			assign u_warp_r[guwo] = u_warp[guwo];
+			assign u_warp_ev[guwo] = u_warp[guwo];
+			assign u_warp_r0[guwo] = u_warp[guwo];
+			assign u_warp_r1[guwo] = u_warp[guwo];
+			assign u_warp_r2[guwo] = u_warp[guwo];
+			assign u_warp_r3[guwo] = u_warp[guwo];
+			assign u_warp_cnt[guwo] = u_warp[guwo];
+			assign u_warp_m[guwo] = u_warp[guwo];
+			assign u_warp_f[guwo] = u_warp[guwo];
+			assign u_warp_c[guwo] = u_warp[guwo];
+			assign u_warp_w[guwo] = u_warp[guwo];
+			assign u_warp_out[guwo] = u_warp[guwo];
+		end
+	endgenerate
+`else
 	assign u_warp_r   = u_warp;
 	assign u_warp_ev  = u_warp;
 	assign u_warp_r0  = u_warp;
@@ -106,6 +143,7 @@ module atg_su_sb #(
 	assign u_warp_c   = u_warp;
 	assign u_warp_w   = u_warp;
 	assign u_warp_out = u_warp;
+`endif
 
 
 	/* The uop's fields. */
@@ -270,6 +308,13 @@ module atg_su_sb #(
 	wire        cnt_full;
 	wire        go_gate;
 	wire [NWARPS-1:0] pipe_wake;
+	wire        pipe_replay_long;
+	wire        pipe_replay_eff;
+	wire        pipe_replay;
+	wire        pipe_no_issue;
+	wire        pipe_fast_ready;
+	wire        pipe_ill_st3;
+	wire        pipe_wc_kind_st3;
 
 	generate
 	if (FAST_REL == 0) begin : g_pipe_issue
@@ -301,6 +346,92 @@ module atg_su_sb #(
 		wire [5:0] r_rd_p3_e, r_rd_p3_f, r_rd_p3_o;
 		wire       r_wide_e, r_wide_f, r_wide_o;
 
+		wire [WARP_W-1:0] r_warp_e, r_warp_f, r_warp_c, r_warp_c1, r_warp_w;
+
+		reg [SB_ENTRIES-1:0]   w_ev_r;
+		wire [SB_ENTRIES-1:0]  w_ev_r_hit, w_ev_r_free, w_ev_r_alloc;
+
+`ifdef SYNTH_KINTEX7
+		genvar gsb_b;
+		for (gsb_b = 0; gsb_b < 6; gsb_b = gsb_b + 1) begin : g_sb_rbuf
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rs1e  (.I0(r_rs1[gsb_b]),   .O(r_rs1_e[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rs1f  (.I0(r_rs1[gsb_b]),   .O(r_rs1_f[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rs2e  (.I0(r_rs2[gsb_b]),   .O(r_rs2_e[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rs2f  (.I0(r_rs2[gsb_b]),   .O(r_rs2_f[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rs3e  (.I0(r_rs3[gsb_b]),   .O(r_rs3_e[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rs3f  (.I0(r_rs3[gsb_b]),   .O(r_rs3_f[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rs1pe (.I0(r_rs1p[gsb_b]),  .O(r_rs1p_e[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rs1pf (.I0(r_rs1p[gsb_b]),  .O(r_rs1p_f[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rs3pe (.I0(r_rs3p[gsb_b]),  .O(r_rs3p_e[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rs3pf (.I0(r_rs3p[gsb_b]),  .O(r_rs3p_f[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rde   (.I0(r_rd[gsb_b]),    .O(r_rd_e[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rdf   (.I0(r_rd[gsb_b]),    .O(r_rd_f[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rdo   (.I0(r_rd[gsb_b]),    .O(r_rd_o[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rdp1e (.I0(r_rd_p1[gsb_b]), .O(r_rd_p1_e[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rdp1f (.I0(r_rd_p1[gsb_b]), .O(r_rd_p1_f[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rdp1o (.I0(r_rd_p1[gsb_b]), .O(r_rd_p1_o[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rdp2e (.I0(r_rd_p2[gsb_b]), .O(r_rd_p2_e[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rdp2f (.I0(r_rd_p2[gsb_b]), .O(r_rd_p2_f[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rdp2o (.I0(r_rd_p2[gsb_b]), .O(r_rd_p2_o[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rdp3e (.I0(r_rd_p3[gsb_b]), .O(r_rd_p3_e[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rdp3f (.I0(r_rd_p3[gsb_b]), .O(r_rd_p3_f[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rdp3o (.I0(r_rd_p3[gsb_b]), .O(r_rd_p3_o[gsb_b]));
+		end
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rwde (.I0(r_wide), .O(r_wide_e));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rwdf (.I0(r_wide), .O(r_wide_f));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rwdo (.I0(r_wide), .O(r_wide_o));
+		for (gsb_b = 0; gsb_b < WARP_W; gsb_b = gsb_b + 1) begin : g_sb_wbuf
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rwe (.I0(r_warp[gsb_b]), .O(r_warp_e[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rwf (.I0(r_warp[gsb_b]), .O(r_warp_f[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rwc  (.I0(r_warp[gsb_b]), .O(r_warp_c[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rwc1 (.I0(r_warp[gsb_b]), .O(r_warp_c1[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_rww (.I0(r_warp[gsb_b]), .O(r_warp_w[gsb_b]));
+		end
+		for (gsb_b = 0; gsb_b < SB_ENTRIES; gsb_b = gsb_b + 1) begin : g_sb_evbuf
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_evh (.I0(w_ev_r[gsb_b]), .O(w_ev_r_hit[gsb_b]));
+			(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_evf (.I0(w_ev_r[gsb_b]), .O(w_ev_r_free[gsb_b]));
+		end
+`elsif SYNTH_KINTEX_ULTRASCALE
+		genvar gsb_b;
+		for (gsb_b = 0; gsb_b < 6; gsb_b = gsb_b + 1) begin : g_sb_rbuf
+			assign r_rs1_e[gsb_b] = r_rs1[gsb_b];
+			assign r_rs1_f[gsb_b] = r_rs1[gsb_b];
+			assign r_rs2_e[gsb_b] = r_rs2[gsb_b];
+			assign r_rs2_f[gsb_b] = r_rs2[gsb_b];
+			assign r_rs3_e[gsb_b] = r_rs3[gsb_b];
+			assign r_rs3_f[gsb_b] = r_rs3[gsb_b];
+			assign r_rs1p_e[gsb_b] = r_rs1p[gsb_b];
+			assign r_rs1p_f[gsb_b] = r_rs1p[gsb_b];
+			assign r_rs3p_e[gsb_b] = r_rs3p[gsb_b];
+			assign r_rs3p_f[gsb_b] = r_rs3p[gsb_b];
+			assign r_rd_e[gsb_b] = r_rd[gsb_b];
+			assign r_rd_f[gsb_b] = r_rd[gsb_b];
+			assign r_rd_o[gsb_b] = r_rd[gsb_b];
+			assign r_rd_p1_e[gsb_b] = r_rd_p1[gsb_b];
+			assign r_rd_p1_f[gsb_b] = r_rd_p1[gsb_b];
+			assign r_rd_p1_o[gsb_b] = r_rd_p1[gsb_b];
+			assign r_rd_p2_e[gsb_b] = r_rd_p2[gsb_b];
+			assign r_rd_p2_f[gsb_b] = r_rd_p2[gsb_b];
+			assign r_rd_p2_o[gsb_b] = r_rd_p2[gsb_b];
+			assign r_rd_p3_e[gsb_b] = r_rd_p3[gsb_b];
+			assign r_rd_p3_f[gsb_b] = r_rd_p3[gsb_b];
+			assign r_rd_p3_o[gsb_b] = r_rd_p3[gsb_b];
+		end
+		assign r_wide_e = r_wide;
+		assign r_wide_f = r_wide;
+		assign r_wide_o = r_wide;
+		for (gsb_b = 0; gsb_b < WARP_W; gsb_b = gsb_b + 1) begin : g_sb_wbuf
+			assign r_warp_e[gsb_b] = r_warp[gsb_b];
+			assign r_warp_f[gsb_b] = r_warp[gsb_b];
+			assign r_warp_c[gsb_b] = r_warp[gsb_b];
+			assign r_warp_c1[gsb_b] = r_warp[gsb_b];
+			assign r_warp_w[gsb_b] = r_warp[gsb_b];
+		end
+		for (gsb_b = 0; gsb_b < SB_ENTRIES; gsb_b = gsb_b + 1) begin : g_sb_evbuf
+			assign w_ev_r_hit[gsb_b] = w_ev_r[gsb_b];
+			assign w_ev_r_free[gsb_b] = w_ev_r[gsb_b];
+		end
+`else
 		assign r_rs1_e = r_rs1; assign r_rs1_f = r_rs1;
 		assign r_rs2_e = r_rs2; assign r_rs2_f = r_rs2;
 		assign r_rs3_e = r_rs3; assign r_rs3_f = r_rs3;
@@ -312,20 +443,15 @@ module atg_su_sb #(
 		assign r_rd_p3_e = r_rd_p3; assign r_rd_p3_f = r_rd_p3; assign r_rd_p3_o = r_rd_p3;
 		assign r_wide_e = r_wide; assign r_wide_f = r_wide; assign r_wide_o = r_wide;
 
-
-		wire [WARP_W-1:0] r_warp_e, r_warp_f, r_warp_c, r_warp_w;
-
 		assign r_warp_e = r_warp;
 		assign r_warp_f = r_warp;
-		assign r_warp_c = r_warp;
+		assign r_warp_c  = r_warp;
+		assign r_warp_c1 = r_warp;
 		assign r_warp_w = r_warp;
-
-
-		reg [SB_ENTRIES-1:0]   w_ev_r;
-		wire [SB_ENTRIES-1:0]  w_ev_r_hit, w_ev_r_free, w_ev_r_alloc;
 
 		assign w_ev_r_hit   = w_ev_r;
 		assign w_ev_r_free  = w_ev_r;
+`endif
 		assign w_ev_r_alloc = w_ev_r;
 
 		reg [SB_ENTRIES*6-1:0] w_er0_r, w_er1_r, w_er2_r, w_er3_r;
@@ -352,8 +478,22 @@ module atg_su_sb #(
 					w_free_e_s1 = s1j[SBE_W:0];
 		end
 
+		/* Stage 2 -> 3 registers (OR-reduction & replay/issue flags) */
+		reg r_hz_long_r, r_hz_short_r;
+		reg r_replay_long_r, r_replay_eff_r, r_replay_r, r_no_issue_r, r_fast_ready_r;
+		reg r_ill_st3, r_wc_kind_st3, r_rel_s3;
+
+		wire hz_long_s2 = (|r_ehit_r12) || (|r_ehit_r345) || (|r_ehit_w);
+		wire hz_short_s2 = (|r_f_hit_r12) || (|r_f_hit_r345w) || (|r_c_hit_r12) || (|r_c_hit_r345w);
+		wire replay_long_s2 = !ill && (hz_long_s2 || r_cnt_full || (need_e && !r_have_free) || rq_wait);
+		wire replay_eff_s2 = replay_long_s2 || ((is_fence || is_end) && r_cnt_wait);
+		wire replay_s2 = replay_long_s2 || (!is_long && r_cnt_wait);
+		wire no_issue_s2 = ill || is_nop || is_wait || replay_eff_s2;
+		wire fast_ready_s2 = ill || is_nop || is_wait;
+
 		wire s0_en = u_valid && (st_issue == 2'd0) && !rst_p;
 		wire s1_en = u_valid && (st_issue == 2'd1) && !rst_p;
+		wire s2_en = u_valid && (st_issue == 2'd2) && !rst_p;
 
 		wire s0_we_0, s0_we_1, s0_we_2, s0_we_3, s0_we_4, s0_we_5, s0_we_6, s0_we_7;
 		wire s0_we_8a, s0_we_8b, s0_we_9a, s0_we_9b, s0_we_10a, s0_we_10b, s0_we_11a, s0_we_11b;
@@ -361,7 +501,61 @@ module atg_su_sb #(
 
 		wire s1_we_0, s1_we_1, s1_we_2a, s1_we_2b, s1_we_3a, s1_we_3b, s1_we_4, s1_we_5, s1_we_6;
 
-
+`ifdef SYNTH_KINTEX7
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w0   (.I0(s0_en), .O(s0_we_0));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w1   (.I0(s0_en), .O(s0_we_1));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w2   (.I0(s0_en), .O(s0_we_2));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w3   (.I0(s0_en), .O(s0_we_3));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w4   (.I0(s0_en), .O(s0_we_4));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w5   (.I0(s0_en), .O(s0_we_5));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w6   (.I0(s0_en), .O(s0_we_6));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w7   (.I0(s0_en), .O(s0_we_7));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w8a  (.I0(s0_en), .O(s0_we_8a));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w8b  (.I0(s0_en), .O(s0_we_8b));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w9a  (.I0(s0_en), .O(s0_we_9a));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w9b  (.I0(s0_en), .O(s0_we_9b));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w10a (.I0(s0_en), .O(s0_we_10a));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w10b (.I0(s0_en), .O(s0_we_10b));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w11a (.I0(s0_en), .O(s0_we_11a));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0w11b (.I0(s0_en), .O(s0_we_11b));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s0wcnt (.I0(s0_en), .O(s0_we_cnt));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s1w0   (.I0(s1_en), .O(s1_we_0));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s1w1   (.I0(s1_en), .O(s1_we_1));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s1w2a  (.I0(s1_en), .O(s1_we_2a));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s1w2b  (.I0(s1_en), .O(s1_we_2b));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s1w3a  (.I0(s1_en), .O(s1_we_3a));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s1w3b  (.I0(s1_en), .O(s1_we_3b));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s1w4   (.I0(s1_en), .O(s1_we_4));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s1w5   (.I0(s1_en), .O(s1_we_5));
+		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_s1w6   (.I0(s1_en), .O(s1_we_6));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		assign s0_we_0 = s0_en;
+		assign s0_we_1 = s0_en;
+		assign s0_we_2 = s0_en;
+		assign s0_we_3 = s0_en;
+		assign s0_we_4 = s0_en;
+		assign s0_we_5 = s0_en;
+		assign s0_we_6 = s0_en;
+		assign s0_we_7 = s0_en;
+		assign s0_we_8a = s0_en;
+		assign s0_we_8b = s0_en;
+		assign s0_we_9a = s0_en;
+		assign s0_we_9b = s0_en;
+		assign s0_we_10a = s0_en;
+		assign s0_we_10b = s0_en;
+		assign s0_we_11a = s0_en;
+		assign s0_we_11b = s0_en;
+		assign s0_we_cnt = s0_en;
+		assign s1_we_0 = s1_en;
+		assign s1_we_1 = s1_en;
+		assign s1_we_2a = s1_en;
+		assign s1_we_2b = s1_en;
+		assign s1_we_3a = s1_en;
+		assign s1_we_3b = s1_en;
+		assign s1_we_4 = s1_en;
+		assign s1_we_5 = s1_en;
+		assign s1_we_6 = s1_en;
+`else
 		assign s0_we_0   = s0_en;
 		assign s0_we_1   = s0_en;
 		assign s0_we_2   = s0_en;
@@ -389,6 +583,7 @@ module atg_su_sb #(
 		assign s1_we_4   = s1_en;
 		assign s1_we_5   = s1_en;
 		assign s1_we_6   = s1_en;
+`endif
 
 
 		integer sw, sj, sm;
@@ -402,6 +597,8 @@ module atg_su_sb #(
 					st_issue <= 2'd1;
 				end else if (st_issue == 2'd1) begin
 					st_issue <= 2'd2;
+				end else if (st_issue == 2'd2) begin
+					st_issue <= 2'd3;
 				end else begin
 					st_issue <= 2'd0;
 				end
@@ -451,7 +648,7 @@ module atg_su_sb #(
 			if (s0_we_7) begin
 				for (sw = 0; sw < NWARPS; sw = sw + 1) begin
 					if (u_warp_ev == sw[WARP_W-1:0]) begin
-						w_ev_r  <= ev_comb[sw*SB_ENTRIES +: SB_ENTRIES];
+						w_ev_r  <= e_valid[sw*SB_ENTRIES +: SB_ENTRIES];
 						w_ewd_r <= e_wide[sw*SB_ENTRIES +: SB_ENTRIES];
 					end
 				end
@@ -515,9 +712,9 @@ module atg_su_sb #(
 			if (s0_we_cnt) begin
 				for (sw = 0; sw < NWARPS; sw = sw + 1) begin
 					if (u_warp_cnt == sw[WARP_W-1:0]) begin
-						w_rcm_r <= cm_next[sw*CNT_W +: CNT_W];
-						w_rct_r <= ct_next[sw*CNT_W +: CNT_W];
-						w_rcx_r <= cx_next[sw*CNT_W +: CNT_W];
+						w_rcm_r <= cm[sw*CNT_W +: CNT_W];
+						w_rct_r <= ct[sw*CNT_W +: CNT_W];
+						w_rcx_r <= cx[sw*CNT_W +: CNT_W];
 					end
 				end
 			end
@@ -608,7 +805,7 @@ module atg_su_sb #(
 			end
 			if (s1_we_6) begin
 				for (sm = 0; sm < NSC; sm = sm + 1) begin
-					r_c_hit_r345w[sm] <= c_valid[sm] && (c_warp[sm*WARP_W +: WARP_W] == r_warp_c) && (
+					r_c_hit_r345w[sm] <= c_valid[sm] && (c_warp[sm*WARP_W +: WARP_W] == r_warp_c1) && (
 						(((SHORT_LAT + 1 - sm) > G + 1) && (
 							(r_src3 && (r_rs3_f  == c_rd[sm*6 +: 6])) ||
 							(r_src4 && (r_rs1p_f == c_rd[sm*6 +: 6])) ||
@@ -621,21 +818,47 @@ module atg_su_sb #(
 					);
 				end
 			end
+			if (s2_en) begin
+				r_hz_long_r     <= hz_long_s2;
+				r_hz_short_r    <= hz_short_s2;
+				r_replay_long_r <= replay_long_s2;
+				r_replay_eff_r  <= replay_eff_s2;
+				r_replay_r      <= replay_s2;
+				r_no_issue_r    <= no_issue_s2;
+				r_fast_ready_r  <= fast_ready_s2;
+				r_ill_st3       <= ill;
+				r_wc_kind_st3   <= wc_kind;
+				r_rel_s3        <= r_rel_s2 || (rel_valid && (rel_warp == r_warp_w));
+			end
 		end
 
-		assign hz_long   = (|r_ehit_r12) || (|r_ehit_r345) || (|r_ehit_w);
+		assign hz_long   = r_hz_long_r;
 		assign have_free = r_have_free;
 		assign free_e    = r_free_e;
-		assign hz_short  = (|r_f_hit_r12) || (|r_f_hit_r345w) || (|r_c_hit_r12) || (|r_c_hit_r345w);
+		assign hz_short  = r_hz_short_r;
 		assign cnt_wait  = r_cnt_wait;
 		assign cnt_full  = r_cnt_full;
-		assign go_gate   = (st_issue == 2'd2);
+		assign go_gate   = (st_issue == 2'd3);
+		assign pipe_replay_long = r_replay_long_r;
+		assign pipe_replay_eff  = r_replay_eff_r;
+		assign pipe_replay      = r_replay_r;
+		assign pipe_no_issue    = r_no_issue_r;
+		assign pipe_fast_ready  = r_fast_ready_r;
+		assign pipe_ill_st3     = r_ill_st3;
+		assign pipe_wc_kind_st3 = r_wc_kind_st3;
 		genvar gpw;
 		for (gpw = 0; gpw < NWARPS; gpw = gpw + 1) begin : g_pw
-			assign pipe_wake[gpw] = (st_issue == 2'd2) && r_rel_s2 && (r_warp_w == gpw[WARP_W-1:0]);
+			assign pipe_wake[gpw] = (st_issue == 2'd3) && r_rel_s3 && (r_warp_w == gpw[WARP_W-1:0]);
 		end
 	end else begin : g_comb_issue
 		assign pipe_wake = {NWARPS{1'b0}};
+		assign pipe_replay_long = 1'b0;
+		assign pipe_replay_eff  = 1'b0;
+		assign pipe_replay      = 1'b0;
+		assign pipe_no_issue    = 1'b0;
+		assign pipe_fast_ready  = 1'b0;
+		assign pipe_ill_st3     = 1'b0;
+		assign pipe_wc_kind_st3 = 1'b0;
 		/* Per-warp parallel long hazard checks and free entry search. */
 		wire [NWARPS-1:0] warp_hz_long;
 		wire [NWARPS-1:0] warp_have_free;
@@ -754,17 +977,17 @@ module atg_su_sb #(
 	end
 	endgenerate
 
-	wire replay_long = !ill && (hz_long || cnt_full || (need_e && !have_free) || rq_wait);
+	wire replay_long = (FAST_REL == 0) ? pipe_replay_long : (!ill && (hz_long || cnt_full || (need_e && !have_free) || rq_wait));
 	wire is_cnt_dep = is_fence || is_end;
-	wire replay_eff = replay_long || (is_cnt_dep && cnt_wait);
-	wire replay = replay_long || (!is_long && cnt_wait);
+	wire replay_eff = (FAST_REL == 0) ? pipe_replay_eff : (replay_long || (is_cnt_dep && cnt_wait));
+	wire replay = (FAST_REL == 0) ? pipe_replay : (replay_long || (!is_long && cnt_wait));
 	wire hold = wb_stall || hz_short || f_valid[NIF-1];
 	wire go = u_valid && go_gate && !hold;
-	wire no_issue = ill || is_nop || is_wait || replay_eff;
+	wire no_issue = (FAST_REL == 0) ? pipe_no_issue : (ill || is_nop || is_wait || replay_eff);
 	assign i_valid = go && !no_issue;
 	wire issued = i_valid && i_ready;
-	wire issued_long = go && !ill && !replay_long && i_ready;
-	wire fast_ready = i_ready || ill || is_nop || is_wait;
+	wire issued_long = go && !(FAST_REL == 0 ? pipe_ill_st3 : ill) && !replay_long && i_ready;
+	wire fast_ready = i_ready || ((FAST_REL == 0) ? pipe_fast_ready : (ill || is_nop || is_wait));
 	assign u_ready = go && fast_ready;
 	assign i_warp = u_warp_out;
 	assign i_pc = u_pc;
@@ -774,8 +997,10 @@ module atg_su_sb #(
 	wire issued_cand = !no_issue && i_ready;
 	assign fb_valid = u_valid && u_ready;
 	assign fb_warp = u_warp_out;
-	assign fb_kind = ill ? 2'd1 : replay ? 2'd2 : (issued_cand && wc_kind) ? 2'd1 : 2'd0;
-	assign fault = go && ill;
+	wire ill_eff = (FAST_REL == 0) ? pipe_ill_st3 : ill;
+	wire wc_kind_eff = (FAST_REL == 0) ? pipe_wc_kind_st3 : wc_kind;
+	assign fb_kind = ill_eff ? 2'd1 : replay ? 2'd2 : (issued_cand && wc_kind_eff) ? 2'd1 : 2'd0;
+	assign fault = go && ill_eff;
 	assign fault_pc = u_pc;
 	assign fault_warp = u_warp_out;
 
@@ -810,6 +1035,17 @@ module atg_su_sb #(
 	(* dont_touch = "true" *) wire [NE-1:0] alloc_e_en;
 	(* dont_touch = "true" *) wire [NE-1:0] alloc_e_en_hi;
 	wire [NE-1:0] alloc_v_en;
+	wire u_valid_al0, u_valid_al1;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uval0 (.I0(u_valid), .O(u_valid_al0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_uval1 (.I0(u_valid), .O(u_valid_al1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign u_valid_al0 = u_valid;
+	assign u_valid_al1 = u_valid;
+`else
+	assign u_valid_al0 = u_valid;
+	assign u_valid_al1 = u_valid;
+`endif
 	genvar gqe;
 	generate
 	if (FAST_REL == 0) begin : g_ewr_pipe
@@ -819,8 +1055,8 @@ module atg_su_sb #(
 		assign e_wr_r3   = g_pipe_issue.r_rd_p3_o;
 		assign e_wr_wide = g_pipe_issue.r_wide_o;
 		for (gqe = 0; gqe < NE; gqe = gqe + 1) begin : g_am
-			assign alloc_e_en[gqe]    = u_valid && go_gate && g_pipe_issue.r_alloc_mask[gqe];
-			assign alloc_e_en_hi[gqe] = u_valid && go_gate && g_pipe_issue.r_alloc_mask_hi[gqe];
+			assign alloc_e_en[gqe]    = u_valid_al0 && go_gate && g_pipe_issue.r_alloc_mask[gqe];
+			assign alloc_e_en_hi[gqe] = u_valid_al1 && go_gate && g_pipe_issue.r_alloc_mask_hi[gqe];
 			assign alloc_v_en[gqe]    = issued_long && g_pipe_issue.r_alloc_mask[gqe];
 		end
 	end else begin : g_ewr_comb
@@ -830,14 +1066,31 @@ module atg_su_sb #(
 		assign e_wr_r3   = rd_p3;
 		assign e_wr_wide = wide;
 		for (gqe = 0; gqe < NE; gqe = gqe + 1) begin : g_am
-			assign alloc_e_en[gqe]    = u_valid && go_gate && need_e && have_free && (alloc_idx == gqe[NE_W-1:0]);
-			assign alloc_e_en_hi[gqe] = u_valid && go_gate && need_e && have_free && (alloc_idx == gqe[NE_W-1:0]);
+			assign alloc_e_en[gqe]    = u_valid_al0 && go_gate && need_e && have_free && (alloc_idx == gqe[NE_W-1:0]);
+			assign alloc_e_en_hi[gqe] = u_valid_al1 && go_gate && need_e && have_free && (alloc_idx == gqe[NE_W-1:0]);
 			assign alloc_v_en[gqe]    = alloc && (alloc_idx == gqe[NE_W-1:0]);
 		end
 	end
 	endgenerate
 
-	wire [NIF-1:0] f_shift = x_end ? {1'b0, f_valid[NIF-1:1]} : f_valid;
+	wire x_end_ctl, x_end_w, x_end_rd0, x_end_rd1;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_xectl (.I0(x_end), .O(x_end_ctl));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_xew   (.I0(x_end), .O(x_end_w));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_xerd0 (.I0(x_end), .O(x_end_rd0));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_xerd1 (.I0(x_end), .O(x_end_rd1));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign x_end_ctl = x_end;
+	assign x_end_w = x_end;
+	assign x_end_rd0 = x_end;
+	assign x_end_rd1 = x_end;
+`else
+	assign x_end_ctl = x_end;
+	assign x_end_w   = x_end;
+	assign x_end_rd0 = x_end;
+	assign x_end_rd1 = x_end;
+`endif
+
 	integer q;
 	always @(posedge clk or posedge rst_p) begin
 		if (rst_p) begin
@@ -862,7 +1115,7 @@ module atg_su_sb #(
 			ct <= ct_next;
 			cx <= cx_next;
 
-			c_valid[0]    <= x_end && f_valid[0] && f_short[0];
+			c_valid[0]    <= x_end_ctl && f_valid[0] && f_short[0];
 			c_pipe_alu[0] <= f_pipe_alu[0];
 			c_pipe_fpu[0] <= f_pipe_fpu[0];
 			for (q = 1; q < NSC; q = q + 1) begin
@@ -871,26 +1124,24 @@ module atg_su_sb #(
 				c_pipe_fpu[q] <= c_pipe_fpu[q-1];
 			end
 
-			if (issued && !x_end)
-				f_valid <= {f_valid[NIF-2:0], 1'b1};
-			else if (!issued && x_end)
-				f_valid <= {1'b0, f_valid[NIF-1:1]};
-			else
-				f_valid <= f_valid;
+			f_valid <= x_end_ctl ?
+				(issued ? f_valid : {1'b0, f_valid[NIF-1:1]}) :
+				(issued ? {f_valid[NIF-2:0], 1'b1} : f_valid);
 
 			for (q = 0; q < NIF - 1; q = q + 1) begin
-				if (x_end && f_valid[q+1]) begin
-					f_pipe_alu[q] <= f_pipe_alu[q+1];
-					f_pipe_fpu[q] <= f_pipe_fpu[q+1];
-				end else if (!f_shift[q]) begin
-					f_pipe_alu[q] <= (unit == ATG_UNIT_ALU);
-					f_pipe_fpu[q] <= (unit == ATG_UNIT_FPU);
-				end
+				f_pipe_alu[q] <= x_end_ctl ?
+					(f_valid[q+1] ? f_pipe_alu[q+1] : (unit == ATG_UNIT_ALU)) :
+					(f_valid[q]   ? f_pipe_alu[q]   : (unit == ATG_UNIT_ALU));
+				f_pipe_fpu[q] <= x_end_ctl ?
+					(f_valid[q+1] ? f_pipe_fpu[q+1] : (unit == ATG_UNIT_FPU)) :
+					(f_valid[q]   ? f_pipe_fpu[q]   : (unit == ATG_UNIT_FPU));
 			end
-			if (!f_shift[NIF-1]) begin
-				f_pipe_alu[NIF-1] <= (unit == ATG_UNIT_ALU);
-				f_pipe_fpu[NIF-1] <= (unit == ATG_UNIT_FPU);
-			end
+			f_pipe_alu[NIF-1] <= x_end_ctl ?
+				(unit == ATG_UNIT_ALU) :
+				(f_valid[NIF-1] ? f_pipe_alu[NIF-1] : (unit == ATG_UNIT_ALU));
+			f_pipe_fpu[NIF-1] <= x_end_ctl ?
+				(unit == ATG_UNIT_FPU) :
+				(f_valid[NIF-1] ? f_pipe_fpu[NIF-1] : (unit == ATG_UNIT_FPU));
 		end
 	end
 
@@ -915,21 +1166,19 @@ module atg_su_sb #(
 		end
 
 		for (q = 0; q < NIF - 1; q = q + 1) begin
-			if (x_end && f_valid[q+1]) begin
-				f_warp[q*WARP_W +: WARP_W] <= f_warp[(q+1)*WARP_W +: WARP_W];
-				f_rd[q*7 +: 7]             <= f_rd[(q+1)*7 +: 7];
-				f_short[q]                 <= f_short[q+1];
-			end else if (!f_shift[q]) begin
-				f_warp[q*WARP_W +: WARP_W] <= u_warp_r;
-				f_rd[q*7 +: 7]             <= rd;
-				f_short[q]                 <= short_w;
-			end
+			f_warp[q*WARP_W +: WARP_W] <= x_end_w ?
+				(f_valid[q+1] ? f_warp[(q+1)*WARP_W +: WARP_W] : u_warp_r) :
+				(f_valid[q]   ? f_warp[q*WARP_W +: WARP_W]     : u_warp_r);
+			f_rd[q*7 +: 7] <= ((q < (NIF / 2)) ? x_end_rd0 : x_end_rd1) ?
+				(f_valid[q+1] ? f_rd[(q+1)*7 +: 7] : rd) :
+				(f_valid[q]   ? f_rd[q*7 +: 7]     : rd);
+			f_short[q] <= x_end_ctl ?
+				(f_valid[q+1] ? f_short[q+1] : short_w) :
+				(f_valid[q]   ? f_short[q]   : short_w);
 		end
-		if (!f_shift[NIF-1]) begin
-			f_warp[(NIF-1)*WARP_W +: WARP_W] <= u_warp_r;
-			f_rd[(NIF-1)*7 +: 7]             <= rd;
-			f_short[NIF-1]                   <= short_w;
-		end
+		f_warp[(NIF-1)*WARP_W +: WARP_W] <= (x_end_w || !f_valid[NIF-1])   ? u_warp_r : f_warp[(NIF-1)*WARP_W +: WARP_W];
+		f_rd[(NIF-1)*7 +: 7]             <= (x_end_rd1 || !f_valid[NIF-1]) ? rd       : f_rd[(NIF-1)*7 +: 7];
+		f_short[NIF-1]                   <= (x_end_ctl || !f_valid[NIF-1]) ? short_w  : f_short[NIF-1];
 	end
 
 	reg any_c;

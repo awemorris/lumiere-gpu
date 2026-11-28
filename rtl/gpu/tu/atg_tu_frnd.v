@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -41,7 +41,8 @@ module atg_tu_frnd (
 
 	wire [48:0] x;
 	wire [64:0] y;
-	wire [80:0] p;
+	wire [40:0] p_hi41;
+	wire [80:0] p = {8'd0, p_hi41, y14[31:0]};
 	reg [48:0] x13;
 	reg [39:0] rr13, rr14;
 	reg [64:0] y14;
@@ -50,7 +51,7 @@ module atg_tu_frnd (
 	am_add #(.W(49)) u_x (.a({9'd0, i_rr}), .b({1'b0, i_rr, 8'd0}), .ci(1'b0), .s(x),
 		.co(p_nc[0]));
 	am_add #(.W(65)) u_y (.a({16'd0, x13}), .b({x13, 16'd0}), .ci(1'b0), .s(y), .co(p_nc[1]));
-	am_add #(.W(81)) u_p (.a({16'd0, y14}), .b({9'd0, rr14, 32'd0}), .ci(1'b0), .s(p),
+	am_add #(.W(41)) u_p (.a({8'd0, y14[64:32]}), .b({1'b0, rr14}), .ci(1'b0), .s(p_hi41),
 		.co(p_nc[2]));
 
 	always @(posedge clk) begin
@@ -120,43 +121,58 @@ module atg_tu_frnd (
 	(* extract_reset = "no", shreg_extract = "no", max_fanout = 16 *) reg [80:0] np15, np16;
 	(* max_fanout = 16 *) reg [1:0] nc15, nc16;
 	(* keep = "true", max_fanout = 16 *) reg [6:0] lz16;
-	(* keep = "true", equivalent_register_removal = "no" *) reg [6:0] lz16_st;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [6:0] lz16_ne, lz16_st_lo, lz16_st_hi;
+	(* extract_reset = "no" *) reg [13:0] nib_nz16;
 	(* max_fanout = 16 *) reg z16, z17;
 
 	wire [83:0] lzv = {np15, 3'b000};
-	(* keep = "true" *) wire [19:0] lznv;
-	wire [1:0] lznl [0:19];
-	(* keep = "true" *) wire [4:0] lzbv;
-	(* keep = "true" *) wire [3:0] lzblo [0:4];
+	(* keep = "true" *) wire [13:0] c_nz;
+	(* keep = "true" *) wire [6:0] c_pos [0:13];
+	(* keep = "true" *) wire [4:0] g_nz;
+	(* keep = "true" *) wire [6:0] g_pos [0:4];
 	genvar gl;
 	generate
-	for (gl = 0; gl < 20; gl = gl + 1) begin : g_lzn
-		wire [3:0] nb = lzv[83 - gl*4 -: 4];
-		assign lznv[gl] = |nb;
-		assign lznl[gl] = nb[3] ? 2'd0 : nb[2] ? 2'd1 : nb[1] ? 2'd2 : 2'd3;
+	for (gl = 0; gl < 13; gl = gl + 1) begin : g_lzc6
+		wire [5:0] ch = lzv[83 - gl*6 -: 6];
+		localparam [6:0] P0 = gl * 6;
+		localparam [6:0] P1 = gl * 6 + 1;
+		localparam [6:0] P2 = gl * 6 + 2;
+		localparam [6:0] P3 = gl * 6 + 3;
+		localparam [6:0] P4 = gl * 6 + 4;
+		localparam [6:0] P5 = gl * 6 + 5;
+		assign c_nz[gl]  = |ch;
+		assign c_pos[gl] = ch[5] ? P0 : ch[4] ? P1 : ch[3] ? P2 :
+		                   ch[2] ? P3 : ch[1] ? P4 : P5;
 	end
-	for (gl = 0; gl < 5; gl = gl + 1) begin : g_lzb
-		assign lzbv[gl] = |lznv[gl*4 +: 4];
-		assign lzblo[gl] = lznv[gl*4] ? {2'd0, lznl[gl*4]} :
-			lznv[gl*4 + 1] ? {2'd1, lznl[gl*4 + 1]} :
-			lznv[gl*4 + 2] ? {2'd2, lznl[gl*4 + 2]} : {2'd3, lznl[gl*4 + 3]};
+	assign c_nz[13]  = |np15[2:0];
+	assign c_pos[13] = np15[2] ? 7'd78 : np15[1] ? 7'd79 : np15[0] ? 7'd80 : 7'd0;
+	for (gl = 0; gl < 4; gl = gl + 1) begin : g_lzc_grp
+		assign g_nz[gl]  = c_nz[gl*3] || c_nz[gl*3 + 1] || c_nz[gl*3 + 2];
+		assign g_pos[gl] = c_nz[gl*3] ? c_pos[gl*3] : c_nz[gl*3 + 1] ? c_pos[gl*3 + 1] : c_pos[gl*3 + 2];
 	end
+	assign g_nz[4]  = c_nz[12] || c_nz[13];
+	assign g_pos[4] = c_nz[12] ? c_pos[12] : c_pos[13];
 	endgenerate
-	(* keep = "true" *) wire [6:0] lz = lzbv[0] ? {3'd0, lzblo[0]} :
-		lzbv[1] ? {3'd1, lzblo[1]} :
-		lzbv[2] ? {3'd2, lzblo[2]} :
-		lzbv[3] ? {3'd3, lzblo[3]} :
-		lzbv[4] ? {3'd4, lzblo[4]} :
-		np15[0] ? 7'd80 : 7'd0;
+	(* keep = "true" *) wire g_nz01 = g_nz[0] || g_nz[1];
+	(* keep = "true" *) wire g_nz23 = g_nz[2] || g_nz[3];
+	(* keep = "true" *) wire [6:0] lz_lo01 = g_nz[0] ? g_pos[0] : g_pos[1];
+	(* keep = "true" *) wire [6:0] lz_lo23 = g_nz[2] ? g_pos[2] : g_pos[3];
+	wire [6:0] lz  = g_nz01 ? lz_lo01 : g_nz23 ? lz_lo23 : g_pos[4];
+	wire       z15 = !(g_nz01 || g_nz23 || g_nz[4]);
 
+	integer gi_fr;
 	always @(posedge clk) begin
 		np15 <= np;
 		nc15 <= ncode;
 		np16 <= np15;
 		nc16 <= nc15;
 		lz16 <= lz;
-		lz16_st <= lz;
-		z16 <= np15 == 81'd0;
+		lz16_ne <= lz;
+		lz16_st_lo <= lz;
+		lz16_st_hi <= lz;
+		for (gi_fr = 0; gi_fr < 14; gi_fr = gi_fr + 1)
+			nib_nz16[gi_fr] <= |np15[gi_fr*4 +: 4];
+		z16 <= z15;
 	end
 
 	/* eb + 80 and eb + 81 of the code */
@@ -168,27 +184,40 @@ module atg_tu_frnd (
 	wire [7:0] ne0, ne1;
 
 	am_shift #(.W(81), .SW(7)) u_ny (.a(np16), .amt(lz16), .left(1'b1), .arith(1'b0), .y(ny));
-	am_sub #(.W(8)) u_ne0 (.a(eb80), .b({1'b0, lz16_st}), .bi(1'b0), .d(ne0), .bo(p_nc[3]));
-	am_sub #(.W(8)) u_ne1 (.a(eb81), .b({1'b0, lz16_st}), .bi(1'b0), .d(ne1), .bo(p_nc[4]));
+	am_sub #(.W(8)) u_ne0 (.a(eb80), .b({1'b0, lz16_ne}), .bi(1'b0), .d(ne0), .bo(p_nc[3]));
+	am_sub #(.W(8)) u_ne1 (.a(eb81), .b({1'b0, lz16_ne}), .bi(1'b0), .d(ne1), .bo(p_nc[4]));
 
-	(* keep = "true" *) wire [13:0] nib_st;
+	(* keep = "true" *) wire [13:0] b_term, lz_eq;
+	(* keep = "true" *) wire [12:0] nib_nz_term;
 	generate
 	for (gl = 0; gl < 14; gl = gl + 1) begin : g_nst
-		(* keep = "true" *) wire [3:0] ng = {
-			|np16[gl*4 +: 4], |np16[gl*4 +: 3], |np16[gl*4 +: 2], np16[gl*4]
-		};
 		localparam [3:0] GINV = 4'd13 - gl[3:0];
-		assign nib_st[gl] = (gl < 13 && lz16_st[5:2] < GINV) ? ng[3] :
-			(lz16_st[5:2] == GINV) ? ng[~lz16_st[1:0]] : 1'b0;
+		wire [6:0] lz_s = (gl < 7) ? lz16_st_lo : lz16_st_hi;
+		assign b_term[gl] = (lz_s[1:0] == 2'd0) ? (|np16[gl*4 +: 4]) :
+		                    (lz_s[1:0] == 2'd1) ? (|np16[gl*4 +: 3]) :
+		                    (lz_s[1:0] == 2'd2) ? (|np16[gl*4 +: 2]) : np16[gl*4];
+		assign lz_eq[gl]  = !lz_s[6] && (lz_s[5:2] == GINV);
+		if (gl < 13) begin : g_nz_t
+			assign nib_nz_term[gl] = !lz_s[6] && (lz_s[5:2] < GINV) && nib_nz16[gl];
+		end
 	end
 	endgenerate
+	(* keep = "true" *) wire [4:0] b_grp;
+	assign b_grp[0] = (lz_eq[0]  & b_term[0])  | (lz_eq[1]  & b_term[1])  | (lz_eq[2]  & b_term[2]);
+	assign b_grp[1] = (lz_eq[3]  & b_term[3])  | (lz_eq[4]  & b_term[4])  | (lz_eq[5]  & b_term[5]);
+	assign b_grp[2] = (lz_eq[6]  & b_term[6])  | (lz_eq[7]  & b_term[7])  | (lz_eq[8]  & b_term[8]);
+	assign b_grp[3] = (lz_eq[9]  & b_term[9])  | (lz_eq[10] & b_term[10]) | (lz_eq[11] & b_term[11]);
+	assign b_grp[4] = (lz_eq[12] & b_term[12]) | (lz_eq[13] & b_term[13]);
+	(* keep = "true" *) wire [2:0] nz_grp = {|nib_nz_term[12:10], |nib_nz_term[9:5], |nib_nz_term[4:0]};
+	(* keep = "true" *) wire b_any  = |b_grp;
+	(* keep = "true" *) wire nz_any = |nz_grp;
 
 	(* extract_reset = "no", max_fanout = 16 *) reg [24:0] ny17;	/* bits 80:56 */
 	reg nst17;
 	(* max_fanout = 16 *) reg [7:0] ne0_17, ne1_17;
 	always @(posedge clk) begin
 		ny17 <= ny[80:56];
-		nst17 <= !lz16_st[6] && (|nib_st);
+		nst17 <= b_any || nz_any;
 		z17 <= z16;
 		ne0_17 <= ne0;
 		ne1_17 <= ne1;

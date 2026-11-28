@@ -28,7 +28,8 @@ module atg_zcu106_clk #(
 	parameter real CLKIN_PERIOD = 10.000,	/* 100 MHz pl_clk0 default */
 	parameter real CLKFBOUT_MULT = 12.000,	/* VCO = 1200 MHz */
 	parameter real CLKOUT0_DIV = 3.000,	/* 400 MHz clk_gpu */
-	parameter integer CLKOUT1_DIV = 6	/* 200 MHz clk_axi */
+	parameter integer CLKOUT1_DIV = 6,	/* 200 MHz clk_axi */
+	parameter integer CLKOUT2_DIV = 16	/* 75 MHz pclk */
 ) (
 	input wire clk_in,
 	input wire rst_in,	/* active-high raw reset (e.g. !pl_resetn0 or CPU_RESET) */
@@ -36,10 +37,12 @@ module atg_zcu106_clk #(
 	output wire rst_n_gpu,
 	output wire clk_axi,
 	output wire rst_n_axi,
+	output wire pclk,
+	output wire prst_n,
 	output wire locked
 );
 	wire clkfb_out, clkfb_in;
-	wire clk_gpu_unbuf, clk_axi_unbuf;
+	wire clk_gpu_unbuf, clk_axi_unbuf, clk_px_unbuf;
 	wire mmcm_locked;
 
 	MMCME4_BASE #(
@@ -54,6 +57,9 @@ module atg_zcu106_clk #(
 		.CLKOUT1_DIVIDE(CLKOUT1_DIV),
 		.CLKOUT1_PHASE(0.000),
 		.CLKOUT1_DUTY_CYCLE(0.500),
+		.CLKOUT2_DIVIDE(CLKOUT2_DIV),
+		.CLKOUT2_PHASE(0.000),
+		.CLKOUT2_DUTY_CYCLE(0.500),
 		.STARTUP_WAIT("FALSE")
 	) mmcm_gpu (
 		.CLKIN1(clk_in),
@@ -66,7 +72,7 @@ module atg_zcu106_clk #(
 		.CLKOUT0B(),
 		.CLKOUT1(clk_axi_unbuf),
 		.CLKOUT1B(),
-		.CLKOUT2(),
+		.CLKOUT2(clk_px_unbuf),
 		.CLKOUT2B(),
 		.CLKOUT3(),
 		.CLKOUT3B(),
@@ -91,6 +97,11 @@ module atg_zcu106_clk #(
 		.O(clk_axi)
 	);
 
+	BUFG bufg_px (
+		.I(clk_px_unbuf),
+		.O(pclk)
+	);
+
 	assign locked = mmcm_locked;
 
 	/* Reset synchronizers: assert immediately on reset or loss of lock */
@@ -108,6 +119,13 @@ module atg_zcu106_clk #(
 		.rst_n(raw_rst_n),
 		.d(1'b1),
 		.q(rst_n_axi)
+	);
+
+	am_sync sync_rst_px (
+		.clk(pclk),
+		.rst_n(raw_rst_n),
+		.d(1'b1),
+		.q(prst_n)
 	);
 
 endmodule

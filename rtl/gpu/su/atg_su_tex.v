@@ -1,5 +1,5 @@
 /*
- * Lumiere GPU
+ * Amaterrace GPU
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
@@ -101,6 +101,9 @@ module atg_su_tex #(
 	wire rst_p = !rst_n;
 
 	(* fsm_encoding = "none" *) reg [1:0] st;
+	(* dont_touch = "true" *) reg [1:0] st_b;
+	(* dont_touch = "true" *) reg [1:0] st_c;
+	(* dont_touch = "true" *) reg [1:0] st_d;
 	(* keep = "true", dont_touch = "true" *) reg [4*NQ-1:0] st_idle_ql;
 	(* keep = "true", dont_touch = "true" *) reg [4*NQ-1:0] st_dref_ql;
 	reg [QW-1:0] q, lastq;
@@ -131,13 +134,24 @@ module atg_su_tex #(
 	end
 	wire take = mine && x_ready;
 	wire take_idle = (st == IDLE) && rq_ready && mine;
-	wire take_dref = (st == DREF) && rq_ready && mine;
+	wire take_dref = (st_c == DREF) && rq_ready && mine;
+	wire take_dref_b, take_dref_c;
+`ifdef SYNTH_KINTEX7
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tdrb (.I0(take_dref), .O(take_dref_b));
+	(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_tdrc (.I0(take_dref), .O(take_dref_c));
+`elsif SYNTH_KINTEX_ULTRASCALE
+	assign take_dref_b = take_dref;
+	assign take_dref_c = take_dref;
+`else
+	assign take_dref_b = take_dref;
+	assign take_dref_c = take_dref;
+`endif
 	/* The record goes to the return half with the group's last pass. */
-	wire push = take && (st == DREF || !wide);
+	wire push = take && (st_c == DREF || !wide);
 
-	assign x_ready = (st == IDLE || st == DREF) && rq_ready;
+	assign x_ready = (st_c == IDLE || st_c == DREF) && rq_ready;
 	wire [3:0] qmask = lanes[q*4 +: 4];
-	assign tx_valid = st == SEND && qmask != 4'd0;
+	assign tx_valid = st_d == SEND && qmask != 4'd0;
 	assign tx_mask = qmask;
 
 	/* Quad q's coordinates (640 bits = 4 lanes in quad × 10 16-bit half-words per lane),
@@ -158,6 +172,16 @@ module atg_su_tex #(
 		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_tdl (.I0(take_dref), .O(td_l));
 		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_thl (.I0(three), .O(th_l));
 		(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_cfl (.I0(cform), .O(cf_l));
+`elsif SYNTH_KINTEX_ULTRASCALE
+		genvar gqw_l;
+		for (gqw_l = 0; gqw_l < QW; gqw_l = gqw_l + 1) begin : g_q_l_buf
+			assign q_lane_0[gqw_l] = q[gqw_l];
+			assign q_lane_1[gqw_l] = q[gqw_l];
+		end
+		assign ti_l = take_idle;
+		assign td_l = take_dref;
+		assign th_l = three;
+		assign cf_l = cform;
 `else
 		assign q_lane_0 = q;
 		assign q_lane_1 = q;
@@ -185,6 +209,20 @@ module atg_su_tex #(
 				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_tds (.I0(td_l), .O(td_s[gq_b]));
 				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_ths (.I0(th_l), .O(th_s[gq_b]));
 				(* dont_touch = "true" *) LUT1 #(.INIT(2'b10)) u_buf_cfs (.I0(cf_l), .O(cf_s[gq_b]));
+			end
+`elsif SYNTH_KINTEX_ULTRASCALE
+			genvar gqw_s;
+			for (gqw_s = 0; gqw_s < QW; gqw_s = gqw_s + 1) begin : g_q_s_buf
+				wire q_in = (ghw < 5) ? q_lane_0[gqw_s] : q_lane_1[gqw_s];
+				assign q_sl_lo[gqw_s] = q_in;
+				assign q_sl_hi[gqw_s] = q_in;
+			end
+			genvar gq_b;
+			for (gq_b = 0; gq_b < NQ; gq_b = gq_b + 1) begin : g_q_ctl_buf
+				assign ti_s[gq_b] = ti_l;
+				assign td_s[gq_b] = td_l;
+				assign th_s[gq_b] = th_l;
+				assign cf_s[gq_b] = cf_l;
 			end
 `else
 			assign q_sl_lo = (ghw < 5) ? q_lane_0 : q_lane_1;
@@ -254,6 +292,9 @@ module atg_su_tex #(
 	always @(posedge clk or posedge rst_p) begin
 		if (rst_p) begin
 			st <= IDLE;
+			st_b <= IDLE;
+			st_c <= IDLE;
+			st_d <= IDLE;
 			st_idle_ql <= {(4*NQ){1'b1}};
 			st_dref_ql <= {(4*NQ){1'b0}};
 			lanes <= {NPHYS{1'b0}};
@@ -283,41 +324,75 @@ module atg_su_tex #(
 			if (take_idle_c) begin
 				tx_off <= x_uop[ATG_UOP_IMM +: 12];
 			end
-			case (st)
+			case (st_b)
 			IDLE: if (take_idle) begin
-				lanes <= exec;
 				last <= x_last;
 				q <= {QW{1'b0}};
 				lastq <= ql;
 				if (wide) begin
 					st <= DREF;
-					st_idle_ql <= {(4*NQ){1'b0}};
-					st_dref_ql <= {(4*NQ){1'b1}};
+					st_b <= DREF;
+					st_c <= DREF;
+					st_d <= DREF;
 				end else if (qm != {NQ{1'b0}}) begin
 					st <= SEND;
-					st_idle_ql <= {(4*NQ){1'b0}};
+					st_b <= SEND;
+					st_c <= SEND;
+					st_d <= SEND;
 				end
 			end
-			DREF: if (take_dref) begin
-				lanes <= exec;
+			DREF: if (take_dref_b) begin
 				last <= x_last;
 				lastq <= ql;
-				st_dref_ql <= {(4*NQ){1'b0}};
 				if (qm != {NQ{1'b0}}) begin
 					st <= SEND;
+					st_b <= SEND;
+					st_c <= SEND;
+					st_d <= SEND;
 				end else begin
 					st <= IDLE;
-					st_idle_ql <= {(4*NQ){1'b1}};
+					st_b <= IDLE;
+					st_c <= IDLE;
+					st_d <= IDLE;
 				end
 			end
 			SEND: if (!tx_valid || tx_ready) begin
 				q <= q_next;
 				if (q == lastq) begin
 					st <= IDLE;
-					st_idle_ql <= {(4*NQ){1'b1}};
+					st_b <= IDLE;
+					st_c <= IDLE;
+					st_d <= IDLE;
 				end
 			end
-			default: st <= IDLE;
+			default: begin
+				st <= IDLE;
+				st_b <= IDLE;
+				st_c <= IDLE;
+				st_d <= IDLE;
+			end
+			endcase
+			case (st_c)
+			IDLE: if (take_idle) begin
+				lanes <= exec;
+				if (wide) begin
+					st_idle_ql <= {(4*NQ){1'b0}};
+					st_dref_ql <= {(4*NQ){1'b1}};
+				end else if (qm != {NQ{1'b0}}) begin
+					st_idle_ql <= {(4*NQ){1'b0}};
+				end
+			end
+			DREF: if (take_dref_c) begin
+				lanes <= exec;
+				st_dref_ql <= {(4*NQ){1'b0}};
+				if (qm == {NQ{1'b0}})
+					st_idle_ql <= {(4*NQ){1'b1}};
+			end
+			SEND: if (!tx_valid || tx_ready) begin
+				if (q == lastq)
+					st_idle_ql <= {(4*NQ){1'b1}};
+			end
+			default: ;
 			endcase
 		end
 	end

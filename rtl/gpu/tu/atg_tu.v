@@ -189,7 +189,9 @@ module atg_tu #(
 	wire [49:0] tc_ctl;
 	wire [127:0] tc_value;
 
+`ifndef SYNTH_ASIC
 	(* keep_hierarchy = "yes" *)
+`endif
 	atg_tu_addr #(
 		.ENABLE_BILINEAR(ENABLE_BILINEAR),
 		.ENABLE_TRILINEAR(ENABLE_TRILINEAR),
@@ -212,7 +214,9 @@ module atg_tu #(
 		.ta_last(ta_last)
 	);
 
+`ifndef SYNTH_ASIC
 	(* keep_hierarchy = "yes" *)
+`endif
 	atg_tu_cache #(
 		.ADDR_W(ADDR_W),
 		.LINE_BYTES(LINE_BYTES),
@@ -250,7 +254,9 @@ module atg_tu #(
 	wire [2:0] f_fifo_count;
 	wire f_fifo_in_ready;
 
+`ifndef SYNTH_ASIC
 	(* keep_hierarchy = "yes" *)
+`endif
 	atg_tu_outq #(.W(529)) u_ffilt_outq (
 		.clk(clk), .rst_n(rst_n),
 		.in_valid(f_tr_valid_raw),
@@ -269,57 +275,89 @@ module atg_tu #(
 	/* Order FIFO: records the path (0: filter, 1: ffilt) of each committed quad */
 	wire f32 = (ENABLE_FFILT != 0) && tc_ctl[20];
 	wire order_in_valid = tc_valid && tc_ready && !tc_ctl[4];
-	wire order_in_ready;
 	wire order_out_valid, order_out_ready;
-	wire order_path;
 	wire [4:0] order_count;
 
-	(* keep_hierarchy = "yes" *)
-	am_fifo #(.W(1), .DEPTH_LOG2(4)) u_order_fifo (
-		.clk(clk), .rst_n(rst_n),
-		.in_valid(order_in_valid),
-		.in_ready(order_in_ready),
-		.in_data(f32),
-		.out_valid(order_out_valid),
-		.out_ready(order_out_ready),
-		.out_data(order_path),
-		.count(order_count)
-	);
-
-	/* Replicated scalar order storage to cap per-FF fanout on cur_f32_* <= 32 */
-	reg [3:0] ord_wp, ord_rp;
-	wire [3:0] ord_wp_next, ord_rp_next;
-	wire ord_wp_co_unused, ord_rp_co_unused;
+	/* Inline 16-entry order storage (2-way banked mem for <= 17 FO) + registered head copies */
+	(* keep = "true" *) wire rst_sync = !rst_n;
+	(* keep = "true", equivalent_register_removal = "no" *) reg [3:0] ord_wp_a, ord_wp_b, ord_rp_a, ord_rp_b;
+	reg [4:0] ord_cnt_r;
+	reg       ord_valid_r;
+	wire order_in_ready = !ord_cnt_r[4];
+	assign order_out_valid = ord_valid_r;
+	assign order_count = ord_cnt_r;
+	wire [3:0] ord_wp_next_a = ord_wp_a ^ {&ord_wp_a[2:0], &ord_wp_a[1:0], ord_wp_a[0], 1'b1};
+	wire [3:0] ord_wp_next_b = ord_wp_b ^ {&ord_wp_b[2:0], &ord_wp_b[1:0], ord_wp_b[0], 1'b1};
+	wire [3:0] ord_rp_next_a = ord_rp_a ^ {&ord_rp_a[2:0], &ord_rp_a[1:0], ord_rp_a[0], 1'b1};
+	wire [3:0] ord_rp_next_b = ord_rp_b ^ {&ord_rp_b[2:0], &ord_rp_b[1:0], ord_rp_b[0], 1'b1};
+	wire [4:0] ord_cnt_inc = ord_cnt_r ^ {&ord_cnt_r[3:0], &ord_cnt_r[2:0], &ord_cnt_r[1:0], ord_cnt_r[0], 1'b1};
+	wire [4:0] ord_cnt_dec = ord_cnt_r ^ {!(&ord_cnt_r[3:0]) ? 1'b0 : 1'b1,
+	                                      (ord_cnt_r[2:0] == 3'd0), (ord_cnt_r[1:0] == 2'd0), !ord_cnt_r[0], 1'b1};
 	wire order_push = order_in_valid && order_in_ready;
 	wire order_pop  = order_out_valid && order_out_ready;
-	am_add #(.W(4)) u_ord_wp (.a(ord_wp), .b(4'd0), .ci(1'b1), .s(ord_wp_next), .co(ord_wp_co_unused));
-	am_add #(.W(4)) u_ord_rp (.a(ord_rp), .b(4'd0), .ci(1'b1), .s(ord_rp_next), .co(ord_rp_co_unused));
-	always @(posedge clk or negedge rst_n) begin
-		if (!rst_n) begin
-			ord_wp <= 4'd0;
-			ord_rp <= 4'd0;
+	(* keep = "true" *) wire order_push_a = order_push;
+	(* keep = "true" *) wire order_push_b = order_push;
+	(* keep = "true" *) wire order_pop_a0 = order_pop;
+	(* keep = "true" *) wire order_pop_a1 = order_pop;
+	(* keep = "true" *) wire order_pop_rp = order_pop;
+	(* keep = "true" *) wire order_pop_b  = order_pop;
+	always @(posedge clk or posedge rst_sync) begin
+		if (rst_sync) begin
+			ord_wp_a    <= 4'd0;
+			ord_wp_b    <= 4'd0;
+			ord_rp_a    <= 4'd0;
+			ord_rp_b    <= 4'd0;
+			ord_cnt_r   <= 5'd0;
+			ord_valid_r <= 1'b0;
 		end else begin
-			if (order_push) ord_wp <= ord_wp_next;
-			if (order_pop)  ord_rp <= ord_rp_next;
+			if (order_push_a) ord_wp_a <= ord_wp_next_a;
+			if (order_push_b) ord_wp_b <= ord_wp_next_b;
+			if (order_pop_rp) ord_rp_a <= ord_rp_next_a;
+			if (order_pop_b)  ord_rp_b <= ord_rp_next_b;
+			if (order_push && !order_pop) begin
+				ord_cnt_r   <= ord_cnt_inc;
+				ord_valid_r <= 1'b1;
+			end else if (!order_push && order_pop) begin
+				ord_cnt_r   <= ord_cnt_dec;
+				if (ord_cnt_r == 5'd1)
+					ord_valid_r <= 1'b0;
+			end
 		end
 	end
-	wire [17:0] ord_path_rep;
+	wire [33:0] ord_path_rep;
+	(* keep = "true" *) wire ord_take_new_a0 = (!ord_valid_r && order_push_a) || (order_pop_a0 && (ord_cnt_r == 5'd1) && order_push_a);
+	(* keep = "true" *) wire ord_take_new_a1 = (!ord_valid_r && order_push_a) || (order_pop_a1 && (ord_cnt_r == 5'd1) && order_push_a);
+	(* keep = "true" *) wire ord_take_new_b  = (!ord_valid_r && order_push_b) || (order_pop_b  && (ord_cnt_r == 5'd1) && order_push_b);
+	(* keep = "true", equivalent_register_removal = "no" *) reg [15:0] ord_mem_a, ord_mem_b;
+	always @(posedge clk) begin
+		if (order_push_a) ord_mem_a[ord_wp_a] <= f32;
+		if (order_push_b) ord_mem_b[ord_wp_b] <= f32;
+	end
 	genvar gof;
 	generate
-		for (gof = 0; gof < 18; gof = gof + 1) begin : g_ord_rep
-			(* keep = "true" *) reg [15:0] ord_mem;
-			always @(posedge clk) begin
-				if (order_push)
-					ord_mem[ord_wp] <= f32;
+		for (gof = 0; gof < 34; gof = gof + 1) begin : g_ord_rep
+			wire take_n = (gof < 9) ? ord_take_new_a0 : (gof < 17) ? ord_take_new_a1 : ord_take_new_b;
+			wire pop_n  = (gof < 9) ? order_pop_a0    : (gof < 17) ? order_pop_a1    : order_pop_b;
+			wire mem_rd = (gof < 17) ? ord_mem_a[ord_rp_next_a] : ord_mem_b[ord_rp_next_b];
+			(* keep = "true", dont_touch = "true" *) reg head_bit;
+			always @(posedge clk or posedge rst_sync) begin
+				if (rst_sync)
+					head_bit <= 1'b0;
+				else if (take_n)
+					head_bit <= f32;
+				else if (pop_n)
+					head_bit <= mem_rd;
 			end
-			assign ord_path_rep[gof] = ord_mem[ord_rp];
+			assign ord_path_rep[gof] = head_bit;
 		end
 	endgenerate
 
 	wire order_can_take = tc_ctl[4] || order_in_ready;
 	assign tc_ready = (f32 ? f_ready : u_ready) && order_can_take;
 
+`ifndef SYNTH_ASIC
 	(* keep_hierarchy = "yes" *)
+`endif
 	atg_tu_filter #(
 		.ENABLE_BILINEAR(ENABLE_BILINEAR)
 	) filter (
@@ -333,7 +371,9 @@ module atg_tu #(
 
 	generate
 	if (ENABLE_FFILT != 0) begin : g_ffilt
+`ifndef SYNTH_ASIC
 		(* keep_hierarchy = "yes" *)
+`endif
 		atg_tu_ffilt ffilt (
 			.clk(clk), .rst_n(rst_n),
 			.tc_valid(tc_valid && f32 && order_can_take), .tc_ready(f_ready), .tc_texels(tc_texels),
@@ -352,21 +392,21 @@ module atg_tu #(
 	end
 	endgenerate
 
-	/* In-order return based on order_fifo (using replicated scalar FFs per slice group) */
-	wire cur_is_f32 = ord_path_rep[17];
+	/* In-order return based on order_fifo (using replicated scalar FFs per 16b slice) */
+	wire cur_is_f32 = ord_path_rep[33];
 	genvar gs;
 	generate
 	for (gs = 0; gs < 32; gs = gs + 1) begin : g_tr_mux
-		assign tr_data[gs*16 +: 16] = ord_path_rep[gs / 2] ? f_tr_data[gs*16 +: 16] : u_tr_data[gs*16 +: 16];
+		assign tr_data[gs*16 +: 16] = ord_path_rep[gs] ? f_tr_data[gs*16 +: 16] : u_tr_data[gs*16 +: 16];
 	end
 	endgenerate
-	assign tr_valid = order_out_valid && (ord_path_rep[17] ? f_tr_valid : u_tr_valid);
-	assign tr_tag   = ord_path_rep[16] ? f_tr_tag : u_tr_tag;
-	assign tr_last  = ord_path_rep[17] ? f_tr_last : u_tr_last;
+	assign tr_valid = order_out_valid && (ord_path_rep[33] ? f_tr_valid : u_tr_valid);
+	assign tr_tag   = ord_path_rep[32] ? f_tr_tag : u_tr_tag;
+	assign tr_last  = ord_path_rep[33] ? f_tr_last : u_tr_last;
 
 	wire tr_fire = tr_valid && tr_ready;
-	assign u_tr_ready = tr_fire && !cur_is_f32;
-	assign f_tr_ready = tr_fire && cur_is_f32;
+	assign u_tr_ready = order_out_valid && !cur_is_f32 && tr_ready;
+	assign f_tr_ready = order_out_valid &&  cur_is_f32 && tr_ready;
 	assign order_out_ready = tr_fire;
 
 	assign busy = ta_valid || tc_valid || tr_valid || desc_busy ||
@@ -413,7 +453,7 @@ module atg_tu #(
 	end
 	endgenerate
 
-	wire unused_tu_ok = &{1'b0, f_fifo_count, order_count, order_path, ord_wp_co_unused, ord_rp_co_unused,
+	wire unused_tu_ok = &{1'b0, f_fifo_count, order_count,
 		aniso_req_ready, aniso_samp_valid,
 		aniso_samp_u, aniso_samp_v, aniso_samp_weight, aniso_res_valid, aniso_res_texel,
 		tc_bord, tc_lo, f_tr_ready_raw};

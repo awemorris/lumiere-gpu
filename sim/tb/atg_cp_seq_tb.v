@@ -1022,7 +1022,7 @@ module atg_cp_seq_tb;
 		s_valid = 1;
 		@(negedge clk);
 		s_valid = 0;
-		repeat (3) @(negedge clk);
+		repeat (4) @(negedge clk);
 		if (!s_seen) begin
 			errors = errors + 1;
 			$display("FAIL atg_cp_seq.badop: DRAW without a VF");
@@ -1036,7 +1036,7 @@ module atg_cp_seq_tb;
 		s_valid = 1;
 		@(negedge clk);
 		s_valid = 0;
-		repeat (3) @(negedge clk);
+		repeat (4) @(negedge clk);
 		if (!s_seen) begin
 			errors = errors + 1;
 			$display("FAIL atg_cp_seq.badop: DISP_SET without HAS_DISP");
@@ -1050,7 +1050,7 @@ module atg_cp_seq_tb;
 		s_valid = 1;
 		@(negedge clk);
 		s_valid = 0;
-		repeat (3) @(negedge clk);
+		repeat (4) @(negedge clk);
 		if (!s_seen) begin
 			errors = errors + 1;
 			$display("FAIL atg_cp_seq.badop: CMD_DRAW_MESH_TASKS without HAS_MESH");
@@ -1064,7 +1064,7 @@ module atg_cp_seq_tb;
 		s_valid = 1;
 		@(negedge clk);
 		s_valid = 0;
-		repeat (3) @(negedge clk);
+		repeat (4) @(negedge clk);
 		if (!s_seen) begin
 			errors = errors + 1;
 			$display("FAIL atg_cp_seq.badop: CMD_EXECUTE_COMMANDS without HAS_SECONDARY_RING");
